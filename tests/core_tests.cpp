@@ -28,9 +28,14 @@ class TestRunner {
 
     template <typename Func>
     void run(const std::string_view name, Func&& func) {
+        const auto failures_before = failures_;
         try {
             func();
-            std::cout << "PASS: " << name << '\n';
+            if (failures_ == failures_before) {
+                std::cout << "PASS: " << name << '\n';
+            } else {
+                std::cerr << "FAIL: " << name << '\n';
+            }
         } catch (const std::exception& error) {
             ++failures_;
             std::cerr << "FAIL: " << name << ": " << error.what() << '\n';

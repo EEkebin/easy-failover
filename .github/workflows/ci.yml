@@ -43,7 +43,7 @@ jobs:
         run: cmake --build build --config "${BUILD_TYPE}" --parallel
 
       - name: Run tests
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --output-on-failure --no-tests=error
 
       - name: Smoke test version
         run: ./build/easy-failover --version
