@@ -81,7 +81,8 @@ Expected workflow:
 
 ```sh
 git checkout -b feature/my-change
-git commit
+git add .
+git commit -m "Describe your change"
 git push -u origin feature/my-change
 ```
 
