@@ -1,6 +1,6 @@
 # Frontend Roadmap
 
-easyFailover may eventually include an optional Next.js dashboard under `web/`.
+easy-failover may eventually include an optional Next.js dashboard under `web/`.
 No frontend implementation exists yet.
 
 The dashboard should talk to a future local API exposed by the agent. The API should be disabled
