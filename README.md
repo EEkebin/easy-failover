@@ -72,6 +72,22 @@ project on Linux and runs smoke checks for `--version`, config validation, and d
 Release automation runs on tags matching `v*` and can also be started manually. Tagged releases
 build a Linux x86_64 tarball and publish it to the GitHub release.
 
+## Contribution Workflow
+
+The `main` branch is protected. Changes should be made on a feature branch and merged through a
+pull request after the required CI check passes.
+
+Expected workflow:
+
+```sh
+git checkout -b feature/my-change
+git commit
+git push -u origin feature/my-change
+```
+
+Pull requests must pass the `Linux smoke build` status check before merging. The repository uses
+squash merging to keep `main` linear and readable.
+
 ## Future Dashboard
 
 A future optional Next.js dashboard may be added under `web/` in this same repository. It is not
