@@ -1,5 +1,7 @@
 # easyFailover
 
+[![CI](https://github.com/EEkebin/easy-failover/actions/workflows/ci.yml/badge.svg)](https://github.com/EEkebin/easy-failover/actions/workflows/ci.yml)
+
 easyFailover is a lightweight C++ Linux agent for automatic virtual IP failover between nodes.
 
 This repository is named `easy-failover`, and the binary is named `easy-failover`.
@@ -61,6 +63,14 @@ Example systemd service name:
 ```text
 easy-failover.service
 ```
+
+## Automation
+
+GitHub Actions runs CI on pull requests and pushes to `main`. The current CI job builds the
+project on Linux and runs smoke checks for `--version`, config validation, and dry-run mode.
+
+Release automation runs on tags matching `v*` and can also be started manually. Tagged releases
+build a Linux x86_64 tarball and publish it to the GitHub release.
 
 ## Future Dashboard
 
