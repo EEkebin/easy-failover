@@ -86,8 +86,12 @@ void testConfigValidationRequiredFields(TestRunner& runner) {
     config.priority = 0;
     config.vip.address.clear();
     config.vip.interface.clear();
+    config.heartbeat.bind.clear();
     config.heartbeat.interval_ms = 0;
     config.heartbeat.timeout_ms = 0;
+    config.health.command.clear();
+    config.health.interval_ms = 0;
+    config.health.timeout_ms = 0;
     config.peers = {PeerConfig{.id = "", .address = ""}};
     config.api.enabled = true;
     config.api.bind.clear();
@@ -97,15 +101,55 @@ void testConfigValidationRequiredFields(TestRunner& runner) {
     runner.expect(contains(errors, "priority must be positive"), "positive priority should be required");
     runner.expect(contains(errors, "vip.address must not be empty"), "VIP address should be required");
     runner.expect(contains(errors, "vip.interface must not be empty"), "VIP interface should be required");
+    runner.expect(contains(errors, "heartbeat.bind must not be empty"),
+                  "heartbeat bind should be required");
     runner.expect(contains(errors, "heartbeat.interval_ms must be positive"),
                   "heartbeat interval should be required");
     runner.expect(contains(errors, "heartbeat.timeout_ms must be positive"),
                   "heartbeat timeout should be required");
+    runner.expect(contains(errors, "health.command must not be empty"),
+                  "health command should be required");
+    runner.expect(contains(errors, "health.interval_ms must be positive"),
+                  "health interval should be required");
+    runner.expect(contains(errors, "health.timeout_ms must be positive"),
+                  "health timeout should be required");
     runner.expect(contains(errors, "peers[].id must not be empty"), "peer id should be required");
     runner.expect(contains(errors, "peers[].address must not be empty"),
                   "peer address should be required");
     runner.expect(contains(errors, "api.bind must not be empty when api.enabled is true"),
                   "API bind should be required when API is enabled");
+}
+
+void testInvalidHeartbeatConfigFixture(TestRunner& runner) {
+    const auto config = loadConfigFromFile("tests/fixtures/config/invalid-heartbeat.toml");
+    const auto errors = config.validate();
+
+    runner.expect(contains(errors, "heartbeat.bind must not be empty"),
+                  "invalid heartbeat fixture should require bind");
+    runner.expect(contains(errors, "heartbeat.interval_ms must be positive"),
+                  "invalid heartbeat fixture should require positive interval");
+    runner.expect(contains(errors, "heartbeat.timeout_ms must be positive"),
+                  "invalid heartbeat fixture should require positive timeout");
+}
+
+void testInvalidHealthConfigFixture(TestRunner& runner) {
+    const auto config = loadConfigFromFile("tests/fixtures/config/invalid-health.toml");
+    const auto errors = config.validate();
+
+    runner.expect(contains(errors, "health.command must not be empty"),
+                  "invalid health fixture should require command");
+    runner.expect(contains(errors, "health.interval_ms must be positive"),
+                  "invalid health fixture should require positive interval");
+    runner.expect(contains(errors, "health.timeout_ms must be positive"),
+                  "invalid health fixture should require positive timeout");
+}
+
+void testInvalidApiConfigFixture(TestRunner& runner) {
+    const auto config = loadConfigFromFile("tests/fixtures/config/invalid-api.toml");
+    const auto errors = config.validate();
+
+    runner.expect(contains(errors, "api.bind must not be empty when api.enabled is true"),
+                  "invalid API fixture should require bind when enabled");
 }
 
 void testSampleConfigLoads(TestRunner& runner) {
@@ -181,6 +225,15 @@ int main() {
     });
     runner.run("config validation reports required fields", [&runner] {
         testConfigValidationRequiredFields(runner);
+    });
+    runner.run("invalid heartbeat config fixture reports validation errors", [&runner] {
+        testInvalidHeartbeatConfigFixture(runner);
+    });
+    runner.run("invalid health config fixture reports validation errors", [&runner] {
+        testInvalidHealthConfigFixture(runner);
+    });
+    runner.run("invalid API config fixture reports validation errors", [&runner] {
+        testInvalidApiConfigFixture(runner);
     });
     runner.run("sample config loads", [&runner] { testSampleConfigLoads(runner); });
     runner.run("election chooses highest healthy priority", [&runner] {
