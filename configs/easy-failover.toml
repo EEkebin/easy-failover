@@ -1,0 +1,33 @@
+node_id = "node-a"
+priority = 100
+
+[vip]
+address = "10.0.0.50/24"
+interface = "eth0"
+
+[heartbeat]
+bind = "0.0.0.0:7432"
+interval_ms = 1000
+timeout_ms = 3000
+
+[health]
+command = "curl -fsS http://127.0.0.1:8080/health"
+interval_ms = 1000
+timeout_ms = 2000
+
+[election]
+require_quorum = false
+preempt = true
+
+[api]
+enabled = false
+bind = "127.0.0.1:8743"
+read_only = true
+
+[[peers]]
+id = "node-b"
+address = "10.0.0.12:7432"
+
+[[peers]]
+id = "node-c"
+address = "10.0.0.13:7432"

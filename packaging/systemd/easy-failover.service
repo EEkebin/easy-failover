@@ -1,0 +1,19 @@
+[Unit]
+Description=easyFailover virtual IP failover agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/easy-failover --config /etc/easy-failover/config.toml
+Restart=always
+RestartSec=2s
+
+# TODO: Add least-privilege hardening once real VIP movement exists.
+# TODO: Use CAP_NET_ADMIN and CAP_NET_RAW instead of broad root privileges where possible.
+# TODO: Evaluate ProtectSystem=strict with explicit writable paths.
+# TODO: Enable NoNewPrivileges=true after validating required capabilities.
+
+[Install]
+WantedBy=multi-user.target
