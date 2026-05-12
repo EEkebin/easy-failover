@@ -36,7 +36,7 @@ int main(int argc, char** argv) {
     bool dry_run = false;
     bool show_version = false;
 
-    CLI::App app{"easyFailover virtual IP failover agent"};
+    CLI::App app{"easy-failover virtual IP failover agent"};
     argv = app.ensure_utf8(argv);
 
     app.add_option("--config", config_path, "Path to TOML config file")

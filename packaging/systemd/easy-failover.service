@@ -1,5 +1,5 @@
 [Unit]
-Description=easyFailover virtual IP failover agent
+Description=easy-failover virtual IP failover agent
 After=network-online.target
 Wants=network-online.target
 

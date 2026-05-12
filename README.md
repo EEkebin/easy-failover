@@ -1,8 +1,8 @@
-# easyFailover
+# easy-failover
 
 [![CI](https://github.com/EEkebin/easy-failover/actions/workflows/ci.yml/badge.svg)](https://github.com/EEkebin/easy-failover/actions/workflows/ci.yml)
 
-easyFailover is a lightweight C++ Linux agent for automatic virtual IP failover between nodes.
+easy-failover is a lightweight C++ Linux agent for automatic virtual IP failover between nodes.
 
 This repository is named `easy-failover`, and the binary is named `easy-failover`.
 The project is licensed under Apache-2.0.
@@ -36,6 +36,7 @@ Future planned targets:
 ```sh
 cmake -S . -B build
 cmake --build build
+ctest --test-dir build --output-on-failure
 ```
 
 ## Run
@@ -67,7 +68,8 @@ easy-failover.service
 ## Automation
 
 GitHub Actions runs CI on pull requests and pushes to `main`. The current CI job builds the
-project on Linux and runs smoke checks for `--version`, config validation, and dry-run mode.
+project on Linux, runs CTest, and runs smoke checks for `--version`, config validation, and dry-run
+mode.
 
 Release automation runs on tags matching `v*` and can also be started manually. Tagged releases
 build a Linux x86_64 tarball and publish it to the GitHub release.

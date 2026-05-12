@@ -12,6 +12,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 include(FetchContent)
+include(CTest)
 
 FetchContent_Declare(
     spdlog
@@ -33,26 +34,46 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(spdlog CLI11 tomlplusplus)
 
-add_executable(
-    easy-failover
-    src/main.cpp
+function(easy_failover_target_warnings target)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(
+            ${target}
+            PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+    endif()
+endfunction()
+
+add_library(
+    easy-failover-core STATIC
     src/config/Config.cpp
     src/core/Election.cpp
     src/core/FailoverNode.cpp
     src/platform/linux/LinuxVipManager.cpp)
 
-target_include_directories(easy-failover PRIVATE src)
+target_include_directories(easy-failover-core PUBLIC src)
+
+target_link_libraries(
+    easy-failover-core
+    PUBLIC spdlog::spdlog tomlplusplus::tomlplusplus)
+
+easy_failover_target_warnings(easy-failover-core)
+
+add_executable(easy-failover src/main.cpp)
 
 target_link_libraries(
     easy-failover
-    PRIVATE CLI11::CLI11 spdlog::spdlog tomlplusplus::tomlplusplus)
+    PRIVATE CLI11::CLI11 easy-failover-core)
 
-if(MSVC)
-    target_compile_options(easy-failover PRIVATE /W4 /permissive-)
-else()
-    target_compile_options(
-        easy-failover
-        PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+easy_failover_target_warnings(easy-failover)
+
+if(BUILD_TESTING)
+    add_executable(easy-failover-tests tests/core_tests.cpp)
+    target_link_libraries(easy-failover-tests PRIVATE easy-failover-core)
+    easy_failover_target_warnings(easy-failover-tests)
+
+    add_test(NAME easy-failover-core-tests COMMAND easy-failover-tests)
+    set_tests_properties(easy-failover-core-tests PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 endif()
 
 install(TARGETS easy-failover RUNTIME DESTINATION bin)
