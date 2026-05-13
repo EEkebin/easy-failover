@@ -26,32 +26,28 @@ FailoverDecision decideFailoverAction(const LocalNodeStatus& local,
     }
 
     const auto winner = chooseHighestPriorityHealthyNode(candidates);
-    if (!winner.has_value()) {
-        return FailoverDecision{.action = FailoverAction::EnterFault,
-                                .selected_master = std::nullopt,
-                                .reason = "no healthy failover candidates"};
-    }
+    const auto& selected = winner.value();
 
-    if (winner->node_id == local.node_id) {
+    if (selected.node_id == local.node_id) {
         if (local.state == NodeState::Master) {
             return FailoverDecision{.action = FailoverAction::StayMaster,
-                                    .selected_master = winner->node_id,
+                                    .selected_master = selected.node_id,
                                     .reason = "local node remains highest-priority healthy candidate"};
         }
 
         return FailoverDecision{.action = FailoverAction::BecomeMaster,
-                                .selected_master = winner->node_id,
+                                .selected_master = selected.node_id,
                                 .reason = "local node is highest-priority healthy candidate"};
     }
 
     if (local.state == NodeState::Master) {
         return FailoverDecision{.action = FailoverAction::BecomeBackup,
-                                .selected_master = winner->node_id,
+                                .selected_master = selected.node_id,
                                 .reason = "peer is highest-priority healthy candidate"};
     }
 
     return FailoverDecision{.action = FailoverAction::StayBackup,
-                            .selected_master = winner->node_id,
+                            .selected_master = selected.node_id,
                             .reason = "peer remains highest-priority healthy candidate"};
 }
 
