@@ -361,7 +361,7 @@ void testLinuxHealthRunnerFailingCommandIsUnhealthy(TestRunner& runner) {
 
 void testLinuxHealthRunnerMissingCommandIsUnhealthy(TestRunner& runner) {
     HealthConfig config;
-    config.command = "easy_failover_missing_health_command_hopefully_not_present";
+    config.command = "/nonexistent/easy_failover_health_command";
     config.timeout_ms = 1000;
 
     LinuxHealthCommandRunner command_runner;
