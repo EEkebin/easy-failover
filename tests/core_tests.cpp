@@ -1,5 +1,6 @@
 #include "config/Config.hpp"
 #include "core/Election.hpp"
+#include "core/FailoverDecision.hpp"
 
 #include <algorithm>
 #include <exception>
@@ -13,8 +14,12 @@ namespace {
 
 using easyfailover::CandidateNode;
 using easyfailover::Config;
+using easyfailover::FailoverAction;
+using easyfailover::LocalNodeStatus;
 using easyfailover::PeerConfig;
+using easyfailover::PeerStatus;
 using easyfailover::chooseHighestPriorityHealthyNode;
+using easyfailover::decideFailoverAction;
 using easyfailover::loadConfigFromFile;
 
 class TestRunner {
@@ -274,6 +279,103 @@ void testElectionReturnsNoWinnerWithoutHealthyNodes(TestRunner& runner) {
     runner.expect(!winner.has_value(), "no healthy candidates should produce no winner");
 }
 
+LocalNodeStatus localStatus(const std::string& node_id, const int priority, const bool healthy,
+                            const easyfailover::NodeState state) {
+    return LocalNodeStatus{
+        .node_id = node_id,
+        .priority = priority,
+        .healthy = healthy,
+        .state = state,
+    };
+}
+
+PeerStatus peerStatus(const std::string& node_id, const int priority, const bool healthy,
+                      const bool heartbeat_seen) {
+    return PeerStatus{
+        .node_id = node_id,
+        .priority = priority,
+        .healthy = healthy,
+        .heartbeat_seen = heartbeat_seen,
+    };
+}
+
+void testUnhealthyLocalEntersFault(TestRunner& runner) {
+    const auto local = localStatus("node-a", 100, false, easyfailover::NodeState::Backup);
+    const std::vector<PeerStatus> peers{peerStatus("node-b", 200, true, true)};
+
+    const auto decision = decideFailoverAction(local, peers);
+    runner.expect(decision.action == FailoverAction::EnterFault,
+                  "unhealthy local node should enter fault");
+    runner.expect(!decision.selected_master.has_value(), "fault decision should not select a master");
+}
+
+void testHealthyLocalWithoutLivePeersBecomesMaster(TestRunner& runner) {
+    const auto local = localStatus("node-a", 100, true, easyfailover::NodeState::Backup);
+    const std::vector<PeerStatus> peers;
+
+    const auto decision = decideFailoverAction(local, peers);
+    runner.expect(decision.action == FailoverAction::BecomeMaster,
+                  "healthy local node should become master when no peers are live");
+    runner.expect(decision.selected_master == "node-a", "local node should be selected as master");
+}
+
+void testLocalWinnerStaysMaster(TestRunner& runner) {
+    const auto local = localStatus("node-a", 200, true, easyfailover::NodeState::Master);
+    const std::vector<PeerStatus> peers{peerStatus("node-b", 100, true, true)};
+
+    const auto decision = decideFailoverAction(local, peers);
+    runner.expect(decision.action == FailoverAction::StayMaster,
+                  "winning local master should stay master");
+    runner.expect(decision.selected_master == "node-a", "local master should remain selected");
+}
+
+void testPeerWinnerKeepsLocalBackup(TestRunner& runner) {
+    const auto local = localStatus("node-a", 100, true, easyfailover::NodeState::Backup);
+    const std::vector<PeerStatus> peers{peerStatus("node-b", 200, true, true)};
+
+    const auto decision = decideFailoverAction(local, peers);
+    runner.expect(decision.action == FailoverAction::StayBackup,
+                  "backup should stay backup when peer wins");
+    runner.expect(decision.selected_master == "node-b", "winning peer should be selected");
+}
+
+void testPeerWinnerDemotesLocalMaster(TestRunner& runner) {
+    const auto local = localStatus("node-a", 100, true, easyfailover::NodeState::Master);
+    const std::vector<PeerStatus> peers{peerStatus("node-b", 200, true, true)};
+
+    const auto decision = decideFailoverAction(local, peers);
+    runner.expect(decision.action == FailoverAction::BecomeBackup,
+                  "local master should become backup when peer wins");
+    runner.expect(decision.selected_master == "node-b", "winning peer should be selected");
+}
+
+void testDecisionIgnoresUnhealthyAndMissingHeartbeatPeers(TestRunner& runner) {
+    const auto local = localStatus("node-a", 100, true, easyfailover::NodeState::Backup);
+    const std::vector<PeerStatus> peers{
+        peerStatus("node-b", 500, false, true),
+        peerStatus("node-c", 400, true, false),
+    };
+
+    const auto decision = decideFailoverAction(local, peers);
+    runner.expect(decision.action == FailoverAction::BecomeMaster,
+                  "ignored peers should allow local node to win");
+    runner.expect(decision.selected_master == "node-a", "local node should be selected");
+}
+
+void testDecisionTieBreaksByLowestNodeId(TestRunner& runner) {
+    const auto local = localStatus("node-b", 100, true, easyfailover::NodeState::Backup);
+    const std::vector<PeerStatus> peers{
+        peerStatus("node-a", 100, true, true),
+        peerStatus("node-c", 100, true, true),
+    };
+
+    const auto decision = decideFailoverAction(local, peers);
+    runner.expect(decision.action == FailoverAction::StayBackup,
+                  "local backup should stay backup when peer wins tie-break");
+    runner.expect(decision.selected_master == "node-a",
+                  "lexicographically lowest node_id should win tie-break");
+}
+
 } // namespace
 
 int main() {
@@ -318,6 +420,21 @@ int main() {
     });
     runner.run("election returns no winner without healthy nodes", [&runner] {
         testElectionReturnsNoWinnerWithoutHealthyNodes(runner);
+    });
+    runner.run("unhealthy local enters fault", [&runner] { testUnhealthyLocalEntersFault(runner); });
+    runner.run("healthy local without live peers becomes master", [&runner] {
+        testHealthyLocalWithoutLivePeersBecomesMaster(runner);
+    });
+    runner.run("local winner stays master", [&runner] { testLocalWinnerStaysMaster(runner); });
+    runner.run("peer winner keeps local backup", [&runner] { testPeerWinnerKeepsLocalBackup(runner); });
+    runner.run("peer winner demotes local master", [&runner] {
+        testPeerWinnerDemotesLocalMaster(runner);
+    });
+    runner.run("decision ignores unhealthy and missing-heartbeat peers", [&runner] {
+        testDecisionIgnoresUnhealthyAndMissingHeartbeatPeers(runner);
+    });
+    runner.run("decision tie-breaks by lowest node id", [&runner] {
+        testDecisionTieBreaksByLowestNodeId(runner);
     });
 
     if (runner.failures() != 0) {
