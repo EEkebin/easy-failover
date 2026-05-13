@@ -287,16 +287,27 @@ void testElectionEmptyCandidatesReturnsNoWinner(TestRunner& runner) {
 }
 
 void testElectionTieBreakIsIndependentOfInputOrder(TestRunner& runner) {
-    const std::vector<CandidateNode> candidates{
+    std::vector<CandidateNode> candidates{
         CandidateNode{.node_id = "node-z", .priority = 100, .healthy = true},
         CandidateNode{.node_id = "node-a", .priority = 100, .healthy = true},
         CandidateNode{.node_id = "node-m", .priority = 100, .healthy = true},
     };
 
-    const auto winner = chooseHighestPriorityHealthyNode(candidates);
-    runner.expect(winner.has_value(), "healthy tied candidates should produce a winner");
-    runner.expect(winner->node_id == "node-a",
-                  "tie-break should choose lexicographically lowest node_id");
+    std::sort(candidates.begin(), candidates.end(),
+              [](const CandidateNode& left, const CandidateNode& right) {
+                  return left.node_id < right.node_id;
+              });
+
+    do {
+        const auto winner = chooseHighestPriorityHealthyNode(candidates);
+        runner.expect(winner.has_value(), "healthy tied candidates should produce a winner");
+        runner.expect(winner->node_id == "node-a",
+                      "tie-break should choose lexicographically lowest node_id regardless of input order");
+    } while (std::next_permutation(
+        candidates.begin(), candidates.end(),
+        [](const CandidateNode& left, const CandidateNode& right) {
+            return left.node_id < right.node_id;
+        }));
 }
 
 void testElectionDuplicateNodeIdsUseHighestPriorityDuplicate(TestRunner& runner) {
