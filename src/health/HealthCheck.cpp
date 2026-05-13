@@ -1,4 +1,5 @@
 #include "health/HealthCheck.hpp"
+#include "config/Config.hpp"
 
 namespace easyfailover {
 
