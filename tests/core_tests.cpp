@@ -381,6 +381,8 @@ void testLinuxHealthRunnerTimeoutIsUnhealthy(TestRunner& runner) {
 
     runner.expect(result.status == HealthStatus::Unhealthy,
                   "Linux runner timeout should be unhealthy");
+    runner.expect(result.detail == "health command timed out",
+                  "Linux runner timeout should report timeout detail");
 }
 
 void testElectionChoosesHighestHealthyPriority(TestRunner& runner) {
