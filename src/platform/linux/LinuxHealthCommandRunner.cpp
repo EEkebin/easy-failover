@@ -96,8 +96,21 @@ CommandResult LinuxHealthCommandRunner::run(const std::string& command,
         close(exec_error_pipe[0]);
         static_cast<void>(setpgid(0, 0));
         execl("/bin/sh", "sh", "-c", command.c_str(), static_cast<char*>(nullptr));
+        // execl failed: write errno back to parent, retrying on EINTR/partial writes.
         const int exec_errno = errno;
-        static_cast<void>(write(exec_error_pipe[1], &exec_errno, sizeof(exec_errno)));
+        const char* buf = reinterpret_cast<const char*>(&exec_errno);
+        size_t remaining = sizeof(exec_errno);
+        while (remaining > 0) {
+            const ssize_t written = write(exec_error_pipe[1], buf, remaining);
+            if (written > 0) {
+                buf += written;
+                remaining -= static_cast<size_t>(written);
+            } else if (written == -1 && errno == EINTR) {
+                continue;
+            } else {
+                break; // unrecoverable write error; parent will still exit nonzero
+            }
+        }
         _exit(kProcessErrorExitCode);
     }
 
