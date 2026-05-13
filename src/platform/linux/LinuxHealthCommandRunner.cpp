@@ -142,6 +142,15 @@ CommandResult LinuxHealthCommandRunner::run(const std::string& command,
             .error = "failed to exec health command: " + std::string(std::strerror(child_exec_errno))};
     }
 
+    if (total > 0) {
+        // Partial read before EOF: exec-error protocol failure.
+        while (waitpid(child_pid, nullptr, 0) == -1 && errno == EINTR) {
+        }
+        return CommandResult{.exit_code = kProcessErrorExitCode,
+                             .timed_out = false,
+                             .error = "exec-error protocol failure: partial errno received"};
+    }
+
     static_cast<void>(setpgid(child_pid, child_pid));
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds{timeout_ms};
