@@ -1,0 +1,10 @@
+node_id = "node-a"
+priority = "high"
+
+[vip]
+address = "10.0.0.50/24"
+interface = "eth0"
+
+[[peers]]
+id = "node-b"
+address = "10.0.0.12:7432"

@@ -55,9 +55,9 @@ Run in dry-run mode:
 
 ## Configuration
 
-The sample config lives at `configs/easy-failover.toml`. See
-[`docs/config-reference.md`](docs/config-reference.md) for the current TOML schema and validation
-rules.
+The sample config lives at `configs/easy-failover.toml`. A minimal config only needs the VIP and
+peer/server pool. See [`docs/config-reference.md`](docs/config-reference.md) for the current TOML
+schema, defaults, and validation rules.
 
 Example production config path:
 
