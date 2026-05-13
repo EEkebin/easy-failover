@@ -1,6 +1,7 @@
 #include "config/Config.hpp"
 #include "core/Election.hpp"
 #include "core/FailoverDecision.hpp"
+#include "health/HealthCheck.hpp"
 
 #include <algorithm>
 #include <exception>
@@ -13,13 +14,18 @@
 namespace {
 
 using easyfailover::CandidateNode;
+using easyfailover::CommandResult;
 using easyfailover::Config;
 using easyfailover::FailoverAction;
+using easyfailover::HealthCommandRunner;
+using easyfailover::HealthConfig;
+using easyfailover::HealthStatus;
 using easyfailover::LocalNodeStatus;
 using easyfailover::PeerConfig;
 using easyfailover::PeerStatus;
 using easyfailover::chooseHighestPriorityHealthyNode;
 using easyfailover::decideFailoverAction;
+using easyfailover::evaluateHealthCheck;
 using easyfailover::loadConfigFromFile;
 
 class TestRunner {
@@ -61,6 +67,22 @@ class TestRunner {
 bool contains(const std::vector<std::string>& values, const std::string_view expected) {
     return std::find(values.begin(), values.end(), expected) != values.end();
 }
+
+class FakeHealthCommandRunner final : public HealthCommandRunner {
+  public:
+    [[nodiscard]] CommandResult run(const std::string& command,
+                                    const std::int64_t timeout_ms) override {
+        was_called = true;
+        observed_command = command;
+        observed_timeout_ms = timeout_ms;
+        return result;
+    }
+
+    CommandResult result;
+    bool was_called = false;
+    std::string observed_command;
+    std::int64_t observed_timeout_ms = 0;
+};
 
 Config validConfig() {
     Config config;
@@ -232,6 +254,83 @@ void testSampleConfigLoads(TestRunner& runner) {
     runner.expect(config.api.read_only, "sample API read-only flag should load");
     runner.expect(config.peers.size() == 2, "sample peers should load");
     runner.expect(config.validate().empty(), "loaded sample config should validate");
+}
+
+void testHealthCheckEmptyCommandIsHealthy(TestRunner& runner) {
+    HealthConfig config;
+    config.command.clear();
+
+    FakeHealthCommandRunner command_runner;
+    const auto result = evaluateHealthCheck(config, command_runner);
+
+    runner.expect(result.status == HealthStatus::Healthy,
+                  "empty health command should be treated as healthy");
+    runner.expect(!command_runner.was_called, "empty health command should not invoke runner");
+}
+
+void testHealthCheckPassesCommandAndTimeout(TestRunner& runner) {
+    HealthConfig config;
+    config.command = "curl -fsS http://127.0.0.1:8080/health";
+    config.timeout_ms = 2500;
+
+    FakeHealthCommandRunner command_runner;
+    command_runner.result = CommandResult{.exit_code = 0, .timed_out = false, .error = ""};
+    static_cast<void>(evaluateHealthCheck(config, command_runner));
+
+    runner.expect(command_runner.was_called, "configured health command should invoke runner");
+    runner.expect(command_runner.observed_command == config.command,
+                  "health command should be passed to runner");
+    runner.expect(command_runner.observed_timeout_ms == config.timeout_ms,
+                  "health timeout should be passed to runner");
+}
+
+void testHealthCheckSuccessfulExitIsHealthy(TestRunner& runner) {
+    HealthConfig config;
+    config.command = "true";
+
+    FakeHealthCommandRunner command_runner;
+    command_runner.result = CommandResult{.exit_code = 0, .timed_out = false, .error = ""};
+
+    const auto result = evaluateHealthCheck(config, command_runner);
+    runner.expect(result.status == HealthStatus::Healthy,
+                  "zero health command exit code should be healthy");
+}
+
+void testHealthCheckNonzeroExitIsUnhealthy(TestRunner& runner) {
+    HealthConfig config;
+    config.command = "false";
+
+    FakeHealthCommandRunner command_runner;
+    command_runner.result = CommandResult{.exit_code = 1, .timed_out = false, .error = ""};
+
+    const auto result = evaluateHealthCheck(config, command_runner);
+    runner.expect(result.status == HealthStatus::Unhealthy,
+                  "nonzero health command exit code should be unhealthy");
+}
+
+void testHealthCheckTimeoutIsUnhealthy(TestRunner& runner) {
+    HealthConfig config;
+    config.command = "sleep 10";
+
+    FakeHealthCommandRunner command_runner;
+    command_runner.result = CommandResult{.exit_code = 0, .timed_out = true, .error = ""};
+
+    const auto result = evaluateHealthCheck(config, command_runner);
+    runner.expect(result.status == HealthStatus::Unhealthy,
+                  "timed out health command should be unhealthy");
+}
+
+void testHealthCheckRunnerErrorIsUnhealthy(TestRunner& runner) {
+    HealthConfig config;
+    config.command = "missing-health-command";
+
+    FakeHealthCommandRunner command_runner;
+    command_runner.result =
+        CommandResult{.exit_code = 127, .timed_out = false, .error = "command not found"};
+
+    const auto result = evaluateHealthCheck(config, command_runner);
+    runner.expect(result.status == HealthStatus::Unhealthy,
+                  "runner error should make health check unhealthy");
 }
 
 void testElectionChoosesHighestHealthyPriority(TestRunner& runner) {
@@ -489,6 +588,24 @@ int main() {
         testConfigRejectsInvalidOptionalTableType(runner);
     });
     runner.run("sample config loads", [&runner] { testSampleConfigLoads(runner); });
+    runner.run("health check empty command is healthy", [&runner] {
+        testHealthCheckEmptyCommandIsHealthy(runner);
+    });
+    runner.run("health check passes command and timeout", [&runner] {
+        testHealthCheckPassesCommandAndTimeout(runner);
+    });
+    runner.run("health check successful exit is healthy", [&runner] {
+        testHealthCheckSuccessfulExitIsHealthy(runner);
+    });
+    runner.run("health check nonzero exit is unhealthy", [&runner] {
+        testHealthCheckNonzeroExitIsUnhealthy(runner);
+    });
+    runner.run("health check timeout is unhealthy", [&runner] {
+        testHealthCheckTimeoutIsUnhealthy(runner);
+    });
+    runner.run("health check runner error is unhealthy", [&runner] {
+        testHealthCheckRunnerErrorIsUnhealthy(runner);
+    });
     runner.run("election chooses highest healthy priority", [&runner] {
         testElectionChoosesHighestHealthyPriority(runner);
     });
