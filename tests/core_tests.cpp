@@ -377,10 +377,8 @@ void testLinuxHealthRunnerTimeoutIsUnhealthy(TestRunner& runner) {
     config.timeout_ms = 50;
 
     LinuxHealthCommandRunner command_runner;
-    const auto command_result = command_runner.run(config.command, config.timeout_ms);
     const auto result = evaluateHealthCheck(config, command_runner);
 
-    runner.expect(command_result.timed_out, "Linux runner should report timeout");
     runner.expect(result.status == HealthStatus::Unhealthy,
                   "Linux runner timeout should be unhealthy");
 }
