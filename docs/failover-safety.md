@@ -6,7 +6,7 @@ It does not send heartbeats, confirm quorum, fence peers, or change network stat
 
 ## Split-Brain Risk
 
-Split brain happens when two or more nodes believe they should own the same VIP at the same time.
+Split-brain happens when two or more nodes believe they should own the same VIP at the same time.
 For a VIP failover agent, that can route traffic to the wrong host, create ARP or neighbor cache
 conflicts, and hide service failures behind inconsistent ownership.
 
