@@ -90,6 +90,9 @@ preempt = true
 Current election logic only chooses the highest-priority healthy candidate and breaks ties by the
 lexicographically lowest `node_id`.
 
+Quorum and split-brain protections are design requirements before real VIP movement is implemented.
+See [`failover-safety.md`](failover-safety.md) for the current safety notes.
+
 ## API
 
 ```toml
