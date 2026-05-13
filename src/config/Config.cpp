@@ -27,7 +27,7 @@ std::optional<T> typedValueIfPresent(const toml::table& table, const std::string
     return value;
 }
 
-std::string requiredString(const toml::table& table, const std::string_view key) {
+std::string stringValueOrEmpty(const toml::table& table, const std::string_view key) {
     return typedValueIfPresent<std::string>(table, key).value_or(std::string{});
 }
 
@@ -132,8 +132,8 @@ Config loadConfigFromFile(const std::string& path) {
     config.priority = static_cast<int>(optionalInt(root, "priority", config.priority));
 
     const auto& vip = requiredTable(root, "vip");
-    config.vip.address = requiredString(vip, "address");
-    config.vip.interface = requiredString(vip, "interface");
+    config.vip.address = stringValueOrEmpty(vip, "address");
+    config.vip.interface = stringValueOrEmpty(vip, "interface");
 
     if (const auto* heartbeat = optionalTable(root, "heartbeat"); heartbeat != nullptr) {
         config.heartbeat.bind = optionalString(*heartbeat, "bind", config.heartbeat.bind);
@@ -169,8 +169,8 @@ Config loadConfigFromFile(const std::string& path) {
             }
 
             PeerConfig peer;
-            peer.id = requiredString(*peer_table, "id");
-            peer.address = requiredString(*peer_table, "address");
+            peer.id = stringValueOrEmpty(*peer_table, "id");
+            peer.address = stringValueOrEmpty(*peer_table, "address");
             config.peers.emplace_back(std::move(peer));
         }
     }
