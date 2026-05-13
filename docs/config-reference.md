@@ -74,7 +74,8 @@ timeout_ms = 2000
 - `interval_ms`: optional positive health-check interval in milliseconds. Defaults to `1000`.
 - `timeout_ms`: optional positive health-check timeout in milliseconds. Defaults to `2000`.
 
-Health-check command execution is not implemented yet.
+Linux health-check command execution exists behind an internal runner. It is not wired into a
+daemon loop or failover decisions yet.
 
 ## Election
 

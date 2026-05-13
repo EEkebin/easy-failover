@@ -2,6 +2,7 @@
 #include "core/Election.hpp"
 #include "core/FailoverDecision.hpp"
 #include "health/HealthCheck.hpp"
+#include "platform/linux/LinuxHealthCommandRunner.hpp"
 
 #include <algorithm>
 #include <exception>
@@ -20,6 +21,7 @@ using easyfailover::FailoverAction;
 using easyfailover::HealthCommandRunner;
 using easyfailover::HealthConfig;
 using easyfailover::HealthStatus;
+using easyfailover::LinuxHealthCommandRunner;
 using easyfailover::LocalNodeStatus;
 using easyfailover::PeerConfig;
 using easyfailover::PeerStatus;
@@ -333,6 +335,56 @@ void testHealthCheckRunnerErrorIsUnhealthy(TestRunner& runner) {
                   "runner error should make health check unhealthy");
 }
 
+void testLinuxHealthRunnerSuccessfulCommandIsHealthy(TestRunner& runner) {
+    HealthConfig config;
+    config.command = "true";
+    config.timeout_ms = 1000;
+
+    LinuxHealthCommandRunner command_runner;
+    const auto result = evaluateHealthCheck(config, command_runner);
+
+    runner.expect(result.status == HealthStatus::Healthy,
+                  "Linux runner should treat true as healthy");
+}
+
+void testLinuxHealthRunnerFailingCommandIsUnhealthy(TestRunner& runner) {
+    HealthConfig config;
+    config.command = "false";
+    config.timeout_ms = 1000;
+
+    LinuxHealthCommandRunner command_runner;
+    const auto result = evaluateHealthCheck(config, command_runner);
+
+    runner.expect(result.status == HealthStatus::Unhealthy,
+                  "Linux runner should treat false as unhealthy");
+}
+
+void testLinuxHealthRunnerMissingCommandIsUnhealthy(TestRunner& runner) {
+    HealthConfig config;
+    config.command = "easy_failover_missing_health_command_hopefully_not_present";
+    config.timeout_ms = 1000;
+
+    LinuxHealthCommandRunner command_runner;
+    const auto result = evaluateHealthCheck(config, command_runner);
+
+    runner.expect(result.status == HealthStatus::Unhealthy,
+                  "Linux runner should treat missing command as unhealthy");
+}
+
+void testLinuxHealthRunnerTimeoutIsUnhealthy(TestRunner& runner) {
+    HealthConfig config;
+    config.command = "sleep 2";
+    config.timeout_ms = 50;
+
+    LinuxHealthCommandRunner command_runner;
+    const auto command_result = command_runner.run(config.command, config.timeout_ms);
+    const auto result = evaluateHealthCheck(config, command_runner);
+
+    runner.expect(command_result.timed_out, "Linux runner should report timeout");
+    runner.expect(result.status == HealthStatus::Unhealthy,
+                  "Linux runner timeout should be unhealthy");
+}
+
 void testElectionChoosesHighestHealthyPriority(TestRunner& runner) {
     const std::vector<CandidateNode> candidates{
         CandidateNode{.node_id = "node-a", .priority = 100, .healthy = true},
@@ -605,6 +657,18 @@ int main() {
     });
     runner.run("health check runner error is unhealthy", [&runner] {
         testHealthCheckRunnerErrorIsUnhealthy(runner);
+    });
+    runner.run("Linux health runner successful command is healthy", [&runner] {
+        testLinuxHealthRunnerSuccessfulCommandIsHealthy(runner);
+    });
+    runner.run("Linux health runner failing command is unhealthy", [&runner] {
+        testLinuxHealthRunnerFailingCommandIsUnhealthy(runner);
+    });
+    runner.run("Linux health runner missing command is unhealthy", [&runner] {
+        testLinuxHealthRunnerMissingCommandIsUnhealthy(runner);
+    });
+    runner.run("Linux health runner timeout is unhealthy", [&runner] {
+        testLinuxHealthRunnerTimeoutIsUnhealthy(runner);
     });
     runner.run("election chooses highest healthy priority", [&runner] {
         testElectionChoosesHighestHealthyPriority(runner);
