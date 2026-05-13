@@ -443,7 +443,7 @@ void testDecisionTieBreaksByLowestNodeId(TestRunner& runner) {
                   "lexicographically lowest node_id should win tie-break");
 }
 
-void testDecisionTieBreaksInFavorOfLocalNode(TestRunner& runner) {
+void testDecisionSelectsLocalNodeWhenLocalWinsTieBreak(TestRunner& runner) {
     const auto local = localStatus("node-a", 100, true, easyfailover::NodeState::Backup);
     const std::vector<PeerStatus> peers{
         peerStatus("node-b", 100, true, true),
@@ -531,8 +531,8 @@ int main() {
     runner.run("decision tie-breaks by lowest node id", [&runner] {
         testDecisionTieBreaksByLowestNodeId(runner);
     });
-    runner.run("decision tie-breaks in favor of local node", [&runner] {
-        testDecisionTieBreaksInFavorOfLocalNode(runner);
+    runner.run("decision selects local node when local wins tie-break", [&runner] {
+        testDecisionSelectsLocalNodeWhenLocalWinsTieBreak(runner);
     });
 
     if (runner.failures() != 0) {
