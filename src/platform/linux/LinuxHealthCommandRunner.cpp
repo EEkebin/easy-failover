@@ -4,6 +4,7 @@
 #include <chrono>
 #include <csignal>
 #include <cstring>
+#include <fcntl.h>
 #include <string>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -65,17 +66,67 @@ void terminateProcessGroup(const pid_t child_pid) {
 
 CommandResult LinuxHealthCommandRunner::run(const std::string& command,
                                             const std::int64_t timeout_ms) {
+    // Create a pipe so the child can report execl errno back to the parent.
+    // FD_CLOEXEC on the write end ensures it is closed automatically on a
+    // successful exec, giving the parent an EOF that signals exec success.
+    int exec_error_pipe[2];
+    if (pipe(exec_error_pipe) == -1) {
+        return CommandResult{.exit_code = kProcessErrorExitCode,
+                             .timed_out = false,
+                             .error = errnoMessage("failed to create exec-error pipe")};
+    }
+    if (fcntl(exec_error_pipe[1], F_SETFD, FD_CLOEXEC) == -1) {
+        close(exec_error_pipe[0]);
+        close(exec_error_pipe[1]);
+        return CommandResult{.exit_code = kProcessErrorExitCode,
+                             .timed_out = false,
+                             .error = errnoMessage("failed to configure exec-error pipe")};
+    }
+
     const pid_t child_pid = fork();
     if (child_pid == -1) {
+        close(exec_error_pipe[0]);
+        close(exec_error_pipe[1]);
         return CommandResult{.exit_code = kProcessErrorExitCode,
                              .timed_out = false,
                              .error = errnoMessage("failed to fork health command")};
     }
 
     if (child_pid == 0) {
+        close(exec_error_pipe[0]);
         static_cast<void>(setpgid(0, 0));
         execl("/bin/sh", "sh", "-c", command.c_str(), static_cast<char*>(nullptr));
+        const int exec_errno = errno;
+        static_cast<void>(write(exec_error_pipe[1], &exec_errno, sizeof(exec_errno)));
         _exit(kProcessErrorExitCode);
+    }
+
+    // Parent: close write end and check whether exec succeeded.
+    close(exec_error_pipe[1]);
+    int child_exec_errno = 0;
+    ssize_t total = 0;
+    while (total < static_cast<ssize_t>(sizeof(child_exec_errno))) {
+        const ssize_t n = read(exec_error_pipe[0],
+                               reinterpret_cast<char*>(&child_exec_errno) + total,
+                               sizeof(child_exec_errno) - static_cast<size_t>(total));
+        if (n > 0) {
+            total += n;
+        } else if (n == 0) {
+            break; // EOF: exec succeeded
+        } else if (errno != EINTR) {
+            break; // unexpected read error
+        }
+    }
+    close(exec_error_pipe[0]);
+
+    if (total == static_cast<ssize_t>(sizeof(child_exec_errno))) {
+        // exec failed: reap the child and surface the errno.
+        while (waitpid(child_pid, nullptr, 0) == -1 && errno == EINTR) {
+        }
+        return CommandResult{
+            .exit_code = kProcessErrorExitCode,
+            .timed_out = false,
+            .error = "failed to exec health command: " + std::string(std::strerror(child_exec_errno))};
     }
 
     static_cast<void>(setpgid(child_pid, child_pid));
