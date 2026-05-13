@@ -24,7 +24,7 @@ address = "10.0.0.50/24"
 interface = "eth0"
 ```
 
-- `address`: required non-empty virtual IP address with prefix length.
+- `address`: required non-empty virtual IP address string; CIDR/prefix-length format (for example `10.0.0.50/24`) is recommended but not currently validated.
 - `interface`: required non-empty Linux network interface name.
 
 No real VIP movement is implemented yet. Current VIP manager methods only log intended actions.
