@@ -1,12 +1,12 @@
 #pragma once
 
-#include "config/Config.hpp"
-
 #include <cstdint>
 #include <string>
 #include <string_view>
 
 namespace easyfailover {
+
+struct HealthConfig;
 
 enum class HealthStatus { Healthy, Unhealthy };
 
