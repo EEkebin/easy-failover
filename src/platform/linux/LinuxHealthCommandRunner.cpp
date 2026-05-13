@@ -139,6 +139,8 @@ CommandResult LinuxHealthCommandRunner::run(const std::string& command,
     close(exec_error_pipe[1]);
     int child_exec_errno = 0;
     ssize_t total = 0;
+    bool pipe_read_failed = false;
+    int pipe_read_errno = 0;
     while (total < static_cast<ssize_t>(sizeof(child_exec_errno))) {
         const ssize_t n = read(exec_error_pipe[0],
                                reinterpret_cast<char*>(&child_exec_errno) + total,
@@ -146,8 +148,12 @@ CommandResult LinuxHealthCommandRunner::run(const std::string& command,
         if (n > 0) {
             total += n;
         } else if (n == 0) {
-            break; // EOF: exec succeeded
-        } else if (errno != EINTR) {
+            break; // EOF: exec succeeded (FD_CLOEXEC closed write end on successful exec)
+        } else if (errno == EINTR) {
+            continue; // interrupted; retry
+        } else {
+            pipe_read_errno = errno;
+            pipe_read_failed = true;
             break; // unexpected read error
         }
     }
@@ -180,6 +186,17 @@ CommandResult LinuxHealthCommandRunner::run(const std::string& command,
         return CommandResult{.exit_code = kProcessErrorExitCode,
                              .timed_out = false,
                              .error = "exec-error protocol failure: partial errno received"};
+    }
+
+    if (pipe_read_failed) {
+        // read() failed with a non-EINTR error before any bytes were received;
+        // we cannot determine whether exec succeeded or failed.
+        while (waitpid(child_pid, nullptr, 0) == -1 && errno == EINTR) {
+        }
+        return CommandResult{.exit_code = kProcessErrorExitCode,
+                             .timed_out = false,
+                             .error = "failed to read exec-error pipe: " +
+                                      std::string(std::strerror(pipe_read_errno))};
     }
 
     // Parent-side setpgid is a race-condition fix: if the child hasn't called
