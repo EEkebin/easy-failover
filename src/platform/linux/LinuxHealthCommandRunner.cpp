@@ -4,7 +4,9 @@
 #include <chrono>
 #include <csignal>
 #include <cstring>
+#include <climits>
 #include <fcntl.h>
+#include <poll.h>
 #include <string>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -67,6 +69,11 @@ void terminateProcessGroup(const pid_t child_pid, const bool use_pgid) {
 
 CommandResult LinuxHealthCommandRunner::run(const std::string& command,
                                             const std::int64_t timeout_ms) {
+    // Start the timeout clock at function entry so health.timeout_ms bounds the
+    // entire run() call, including exec startup and the pipe handshake below.
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds{timeout_ms};
+
     // Create a pipe so the child can report execl errno back to the parent.
     // FD_CLOEXEC on the write end ensures it is closed automatically on a
     // successful exec, giving the parent an EOF that signals exec success.
@@ -135,8 +142,51 @@ CommandResult LinuxHealthCommandRunner::run(const std::string& command,
         _exit(kProcessErrorExitCode);
     }
 
-    // Parent: close write end and check whether exec succeeded.
+    // Parent: close write end and wait for exec result within the deadline.
     close(exec_error_pipe[1]);
+
+    // Poll the exec-error pipe with the remaining timeout budget so that the
+    // exec handshake doesn't silently exceed health.timeout_ms.
+    {
+        while (true) {
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= deadline) {
+                close(exec_error_pipe[0]);
+                terminateProcessGroup(child_pid, true);
+                return CommandResult{.exit_code = kTimeoutExitCode,
+                                     .timed_out = true,
+                                     .error = "health command timed out"};
+            }
+            const auto remaining_ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
+            const int poll_ms =
+                remaining_ms > INT_MAX ? INT_MAX : static_cast<int>(remaining_ms);
+            struct pollfd pfd{};
+            pfd.fd    = exec_error_pipe[0];
+            pfd.events = POLLIN;
+            const int ret = poll(&pfd, 1, poll_ms);
+            if (ret > 0) {
+                break; // data (or EOF) available; proceed to the read loop
+            }
+            if (ret == 0) {
+                // Timed out waiting for exec result.
+                close(exec_error_pipe[0]);
+                terminateProcessGroup(child_pid, true);
+                return CommandResult{.exit_code = kTimeoutExitCode,
+                                     .timed_out = true,
+                                     .error = "health command timed out"};
+            }
+            if (errno != EINTR) {
+                close(exec_error_pipe[0]);
+                terminateProcessGroup(child_pid, true);
+                return CommandResult{.exit_code = kProcessErrorExitCode,
+                                     .timed_out = false,
+                                     .error = errnoMessage("failed to poll exec-error pipe")};
+            }
+            // EINTR: retry with an updated remaining time.
+        }
+    }
+
     int child_exec_errno = 0;
     ssize_t total = 0;
     bool pipe_read_failed = false;
