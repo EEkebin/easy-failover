@@ -53,6 +53,12 @@ Run in dry-run mode:
 ./build/easy-failover --config configs/easy-failover.toml --dry-run
 ```
 
+## Configuration
+
+The sample config lives at `configs/easy-failover.toml`. See
+[`docs/config-reference.md`](docs/config-reference.md) for the current TOML schema and validation
+rules.
+
 Example production config path:
 
 ```text

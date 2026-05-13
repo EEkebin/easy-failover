@@ -46,11 +46,23 @@ std::vector<std::string> Config::validate() const {
     if (vip.interface.empty()) {
         errors.emplace_back("vip.interface must not be empty");
     }
+    if (heartbeat.bind.empty()) {
+        errors.emplace_back("heartbeat.bind must not be empty");
+    }
     if (heartbeat.interval_ms <= 0) {
         errors.emplace_back("heartbeat.interval_ms must be positive");
     }
     if (heartbeat.timeout_ms <= 0) {
         errors.emplace_back("heartbeat.timeout_ms must be positive");
+    }
+    if (health.command.empty()) {
+        errors.emplace_back("health.command must not be empty");
+    }
+    if (health.interval_ms <= 0) {
+        errors.emplace_back("health.interval_ms must be positive");
+    }
+    if (health.timeout_ms <= 0) {
+        errors.emplace_back("health.timeout_ms must be positive");
     }
     for (const auto& peer : peers) {
         if (peer.id.empty()) {
