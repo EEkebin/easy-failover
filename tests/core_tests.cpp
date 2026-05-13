@@ -184,6 +184,33 @@ void testConfigRequiresAtLeastOnePeer(TestRunner& runner) {
                   "config without peers should fail validation");
 }
 
+void testConfigRejectsInvalidOptionalScalarType(TestRunner& runner) {
+    bool threw = false;
+    try {
+        static_cast<void>(loadConfigFromFile("tests/fixtures/config/invalid-priority-type.toml"));
+    } catch (const std::runtime_error& error) {
+        threw = true;
+        runner.expect(std::string{error.what()}.find("Invalid type for config key: priority") !=
+                          std::string::npos,
+                      "invalid optional scalar type should report config key");
+    }
+    runner.expect(threw, "invalid optional scalar type should throw");
+}
+
+void testConfigRejectsInvalidOptionalTableType(TestRunner& runner) {
+    bool threw = false;
+    try {
+        static_cast<void>(
+            loadConfigFromFile("tests/fixtures/config/invalid-heartbeat-table-type.toml"));
+    } catch (const std::runtime_error& error) {
+        threw = true;
+        runner.expect(std::string{error.what()}.find("Invalid type for TOML table: heartbeat") !=
+                          std::string::npos,
+                      "invalid optional table type should report table key");
+    }
+    runner.expect(threw, "invalid optional table type should throw");
+}
+
 void testSampleConfigLoads(TestRunner& runner) {
     const auto config = loadConfigFromFile("configs/easy-failover.toml");
 
@@ -272,6 +299,12 @@ int main() {
     });
     runner.run("config requires at least one peer", [&runner] {
         testConfigRequiresAtLeastOnePeer(runner);
+    });
+    runner.run("config rejects invalid optional scalar type", [&runner] {
+        testConfigRejectsInvalidOptionalScalarType(runner);
+    });
+    runner.run("config rejects invalid optional table type", [&runner] {
+        testConfigRejectsInvalidOptionalTableType(runner);
     });
     runner.run("sample config loads", [&runner] { testSampleConfigLoads(runner); });
     runner.run("election chooses highest healthy priority", [&runner] {

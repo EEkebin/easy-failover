@@ -2,6 +2,7 @@
 
 #include "platform/Hostname.hpp"
 
+#include <optional>
 #include <stdexcept>
 #include <string_view>
 
@@ -11,26 +12,51 @@ namespace easyfailover {
 
 namespace {
 
+template <typename T>
+std::optional<T> typedValueIfPresent(const toml::table& table, const std::string_view key) {
+    const auto* node = table.get(key);
+    if (node == nullptr) {
+        return std::nullopt;
+    }
+
+    const auto value = node->value<T>();
+    if (!value.has_value()) {
+        throw std::runtime_error("Invalid type for config key: " + std::string{key});
+    }
+
+    return value;
+}
+
 std::string requiredString(const toml::table& table, const std::string_view key) {
-    return table[key].value_or(std::string{});
+    return typedValueIfPresent<std::string>(table, key).value_or(std::string{});
 }
 
 std::string optionalString(const toml::table& table, const std::string_view key,
                            const std::string& fallback) {
-    return table[key].value_or(fallback);
+    return typedValueIfPresent<std::string>(table, key).value_or(fallback);
 }
 
 std::int64_t optionalInt(const toml::table& table, const std::string_view key,
                          const std::int64_t fallback) {
-    return table[key].value_or(std::int64_t{fallback});
+    return typedValueIfPresent<std::int64_t>(table, key).value_or(fallback);
 }
 
 bool optionalBool(const toml::table& table, const std::string_view key, const bool fallback) {
-    return table[key].value_or(fallback);
+    return typedValueIfPresent<bool>(table, key).value_or(fallback);
 }
 
 const toml::table* optionalTable(const toml::table& root, const std::string_view key) {
-    return root[key].as_table();
+    const auto* node = root.get(key);
+    if (node == nullptr) {
+        return nullptr;
+    }
+
+    const auto* table = node->as_table();
+    if (table == nullptr) {
+        throw std::runtime_error("Invalid type for TOML table: " + std::string{key});
+    }
+
+    return table;
 }
 
 const toml::table& requiredTable(const toml::table& root, const std::string_view key) {
