@@ -48,6 +48,7 @@ add_library(
     easy-failover-core STATIC
     src/config/Config.cpp
     src/core/Election.cpp
+    src/core/FailoverDecision.cpp
     src/core/FailoverNode.cpp
     src/platform/linux/LinuxHostname.cpp
     src/platform/linux/LinuxVipManager.cpp)
