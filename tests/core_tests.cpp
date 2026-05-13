@@ -279,6 +279,62 @@ void testElectionReturnsNoWinnerWithoutHealthyNodes(TestRunner& runner) {
     runner.expect(!winner.has_value(), "no healthy candidates should produce no winner");
 }
 
+void testElectionEmptyCandidatesReturnsNoWinner(TestRunner& runner) {
+    const std::vector<CandidateNode> candidates;
+
+    const auto winner = chooseHighestPriorityHealthyNode(candidates);
+    runner.expect(!winner.has_value(), "empty candidate list should produce no winner");
+}
+
+void testElectionTieBreakIsIndependentOfInputOrder(TestRunner& runner) {
+    const std::vector<CandidateNode> candidates{
+        CandidateNode{.node_id = "node-z", .priority = 100, .healthy = true},
+        CandidateNode{.node_id = "node-a", .priority = 100, .healthy = true},
+        CandidateNode{.node_id = "node-m", .priority = 100, .healthy = true},
+    };
+
+    const auto winner = chooseHighestPriorityHealthyNode(candidates);
+    runner.expect(winner.has_value(), "healthy tied candidates should produce a winner");
+    runner.expect(winner->node_id == "node-a",
+                  "tie-break should choose lexicographically lowest node_id");
+}
+
+void testElectionDuplicateNodeIdsUseHighestPriorityDuplicate(TestRunner& runner) {
+    const std::vector<CandidateNode> candidates{
+        CandidateNode{.node_id = "node-a", .priority = 100, .healthy = true},
+        CandidateNode{.node_id = "node-a", .priority = 200, .healthy = true},
+        CandidateNode{.node_id = "node-b", .priority = 150, .healthy = true},
+    };
+
+    const auto winner = chooseHighestPriorityHealthyNode(candidates);
+    runner.expect(winner.has_value(), "duplicate candidate ids should still produce a winner");
+    runner.expect(winner->node_id == "node-a", "highest-priority duplicate should win");
+    runner.expect(winner->priority == 200, "winning duplicate should keep its priority");
+}
+
+void testElectionNonPositivePriorityCurrentBehavior(TestRunner& runner) {
+    const std::vector<CandidateNode> candidates{
+        CandidateNode{.node_id = "node-a", .priority = 0, .healthy = true},
+        CandidateNode{.node_id = "node-b", .priority = -10, .healthy = true},
+    };
+
+    const auto winner = chooseHighestPriorityHealthyNode(candidates);
+    runner.expect(winner.has_value(), "healthy non-positive priority candidates can still win");
+    runner.expect(winner->node_id == "node-a", "priority zero should beat lower healthy priority");
+}
+
+void testElectionUnhealthyDuplicateDoesNotOverrideHealthyDuplicate(TestRunner& runner) {
+    const std::vector<CandidateNode> candidates{
+        CandidateNode{.node_id = "node-a", .priority = 1000, .healthy = false},
+        CandidateNode{.node_id = "node-a", .priority = 100, .healthy = true},
+    };
+
+    const auto winner = chooseHighestPriorityHealthyNode(candidates);
+    runner.expect(winner.has_value(), "healthy duplicate should produce a winner");
+    runner.expect(winner->node_id == "node-a", "healthy duplicate should win");
+    runner.expect(winner->priority == 100, "unhealthy duplicate priority should be ignored");
+}
+
 LocalNodeStatus localStatus(const std::string& node_id, const int priority, const bool healthy,
                             const easyfailover::NodeState state) {
     return LocalNodeStatus{
@@ -376,6 +432,19 @@ void testDecisionTieBreaksByLowestNodeId(TestRunner& runner) {
                   "lexicographically lowest node_id should win tie-break");
 }
 
+void testDecisionTieBreaksInFavorOfLocalNode(TestRunner& runner) {
+    const auto local = localStatus("node-a", 100, true, easyfailover::NodeState::Backup);
+    const std::vector<PeerStatus> peers{
+        peerStatus("node-b", 100, true, true),
+        peerStatus("node-c", 100, true, true),
+    };
+
+    const auto decision = decideFailoverAction(local, peers);
+    runner.expect(decision.action == FailoverAction::BecomeMaster,
+                  "local node should become master when it wins tie-break");
+    runner.expect(decision.selected_master == "node-a", "local node should be selected");
+}
+
 } // namespace
 
 int main() {
@@ -421,6 +490,21 @@ int main() {
     runner.run("election returns no winner without healthy nodes", [&runner] {
         testElectionReturnsNoWinnerWithoutHealthyNodes(runner);
     });
+    runner.run("election empty candidates returns no winner", [&runner] {
+        testElectionEmptyCandidatesReturnsNoWinner(runner);
+    });
+    runner.run("election tie-break is independent of input order", [&runner] {
+        testElectionTieBreakIsIndependentOfInputOrder(runner);
+    });
+    runner.run("election duplicate node ids use highest-priority duplicate", [&runner] {
+        testElectionDuplicateNodeIdsUseHighestPriorityDuplicate(runner);
+    });
+    runner.run("election non-positive priority current behavior", [&runner] {
+        testElectionNonPositivePriorityCurrentBehavior(runner);
+    });
+    runner.run("election unhealthy duplicate does not override healthy duplicate", [&runner] {
+        testElectionUnhealthyDuplicateDoesNotOverrideHealthyDuplicate(runner);
+    });
     runner.run("unhealthy local enters fault", [&runner] { testUnhealthyLocalEntersFault(runner); });
     runner.run("healthy local without live peers becomes master", [&runner] {
         testHealthyLocalWithoutLivePeersBecomesMaster(runner);
@@ -435,6 +519,9 @@ int main() {
     });
     runner.run("decision tie-breaks by lowest node id", [&runner] {
         testDecisionTieBreaksByLowestNodeId(runner);
+    });
+    runner.run("decision tie-breaks in favor of local node", [&runner] {
+        testDecisionTieBreaksInFavorOfLocalNode(runner);
     });
 
     if (runner.failures() != 0) {
