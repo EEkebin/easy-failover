@@ -12,15 +12,15 @@ struct VipConfig {
 };
 
 struct HeartbeatConfig {
-    std::string bind;
-    std::int64_t interval_ms = 0;
-    std::int64_t timeout_ms = 0;
+    std::string bind = "0.0.0.0:7432";
+    std::int64_t interval_ms = 1000;
+    std::int64_t timeout_ms = 3000;
 };
 
 struct HealthConfig {
     std::string command;
-    std::int64_t interval_ms = 0;
-    std::int64_t timeout_ms = 0;
+    std::int64_t interval_ms = 1000;
+    std::int64_t timeout_ms = 2000;
 };
 
 struct ElectionConfig {
@@ -30,7 +30,7 @@ struct ElectionConfig {
 
 struct ApiConfig {
     bool enabled = false;
-    std::string bind;
+    std::string bind = "127.0.0.1:8743";
     bool read_only = true;
 };
 
@@ -41,7 +41,7 @@ struct PeerConfig {
 
 struct Config {
     std::string node_id;
-    int priority = 0;
+    int priority = 100;
     VipConfig vip;
     HeartbeatConfig heartbeat;
     HealthConfig health;

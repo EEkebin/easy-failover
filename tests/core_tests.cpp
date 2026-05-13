@@ -89,7 +89,6 @@ void testConfigValidationRequiredFields(TestRunner& runner) {
     config.heartbeat.bind.clear();
     config.heartbeat.interval_ms = 0;
     config.heartbeat.timeout_ms = 0;
-    config.health.command.clear();
     config.health.interval_ms = 0;
     config.health.timeout_ms = 0;
     config.peers = {PeerConfig{.id = "", .address = ""}};
@@ -107,8 +106,6 @@ void testConfigValidationRequiredFields(TestRunner& runner) {
                   "heartbeat interval should be required");
     runner.expect(contains(errors, "heartbeat.timeout_ms must be positive"),
                   "heartbeat timeout should be required");
-    runner.expect(contains(errors, "health.command must not be empty"),
-                  "health command should be required");
     runner.expect(contains(errors, "health.interval_ms must be positive"),
                   "health interval should be required");
     runner.expect(contains(errors, "health.timeout_ms must be positive"),
@@ -136,8 +133,6 @@ void testInvalidHealthConfigFixture(TestRunner& runner) {
     const auto config = loadConfigFromFile("tests/fixtures/config/invalid-health.toml");
     const auto errors = config.validate();
 
-    runner.expect(contains(errors, "health.command must not be empty"),
-                  "invalid health fixture should require command");
     runner.expect(contains(errors, "health.interval_ms must be positive"),
                   "invalid health fixture should require positive interval");
     runner.expect(contains(errors, "health.timeout_ms must be positive"),
@@ -150,6 +145,43 @@ void testInvalidApiConfigFixture(TestRunner& runner) {
 
     runner.expect(contains(errors, "api.bind must not be empty when api.enabled is true"),
                   "invalid API fixture should require bind when enabled");
+}
+
+void testMinimalConfigAppliesDefaults(TestRunner& runner) {
+    const auto config = loadConfigFromFile("tests/fixtures/config/minimal.toml");
+
+    runner.expect(!config.node_id.empty(), "minimal config should default node_id from hostname");
+    runner.expect(config.priority == 100, "minimal config should default priority");
+    runner.expect(config.vip.address == "10.0.0.50/24", "minimal config should load VIP address");
+    runner.expect(config.vip.interface == "eth0", "minimal config should load VIP interface");
+    runner.expect(config.heartbeat.bind == "0.0.0.0:7432",
+                  "minimal config should default heartbeat bind");
+    runner.expect(config.heartbeat.interval_ms == 1000,
+                  "minimal config should default heartbeat interval");
+    runner.expect(config.heartbeat.timeout_ms == 3000,
+                  "minimal config should default heartbeat timeout");
+    runner.expect(config.health.command.empty(),
+                  "minimal config should default to no health command");
+    runner.expect(config.health.interval_ms == 1000,
+                  "minimal config should default health interval");
+    runner.expect(config.health.timeout_ms == 2000,
+                  "minimal config should default health timeout");
+    runner.expect(!config.election.require_quorum,
+                  "minimal config should default quorum requirement off");
+    runner.expect(config.election.preempt, "minimal config should default preemption on");
+    runner.expect(!config.api.enabled, "minimal config should default API disabled");
+    runner.expect(config.api.bind == "127.0.0.1:8743", "minimal config should default API bind");
+    runner.expect(config.api.read_only, "minimal config should default API read-only");
+    runner.expect(config.peers.size() == 2, "minimal config should load peers");
+    runner.expect(config.validate().empty(), "minimal config with defaults should validate");
+}
+
+void testConfigRequiresAtLeastOnePeer(TestRunner& runner) {
+    const auto config = loadConfigFromFile("tests/fixtures/config/no-peers.toml");
+    const auto errors = config.validate();
+
+    runner.expect(contains(errors, "at least one peer must be configured"),
+                  "config without peers should fail validation");
 }
 
 void testSampleConfigLoads(TestRunner& runner) {
@@ -234,6 +266,12 @@ int main() {
     });
     runner.run("invalid API config fixture reports validation errors", [&runner] {
         testInvalidApiConfigFixture(runner);
+    });
+    runner.run("minimal config applies defaults", [&runner] {
+        testMinimalConfigAppliesDefaults(runner);
+    });
+    runner.run("config requires at least one peer", [&runner] {
+        testConfigRequiresAtLeastOnePeer(runner);
     });
     runner.run("sample config loads", [&runner] { testSampleConfigLoads(runner); });
     runner.run("election chooses highest healthy priority", [&runner] {

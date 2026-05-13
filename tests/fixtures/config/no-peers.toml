@@ -1,0 +1,3 @@
+[vip]
+address = "10.0.0.50/24"
+interface = "eth0"

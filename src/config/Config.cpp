@@ -1,5 +1,7 @@
 #include "config/Config.hpp"
 
+#include "platform/Hostname.hpp"
+
 #include <stdexcept>
 #include <string_view>
 
@@ -13,16 +15,26 @@ std::string requiredString(const toml::table& table, const std::string_view key)
     return table[key].value_or(std::string{});
 }
 
-std::int64_t requiredInt(const toml::table& table, const std::string_view key) {
-    return table[key].value_or<std::int64_t>(0);
+std::string optionalString(const toml::table& table, const std::string_view key,
+                           const std::string& fallback) {
+    return table[key].value_or(fallback);
+}
+
+std::int64_t optionalInt(const toml::table& table, const std::string_view key,
+                         const std::int64_t fallback) {
+    return table[key].value_or(std::int64_t{fallback});
 }
 
 bool optionalBool(const toml::table& table, const std::string_view key, const bool fallback) {
     return table[key].value_or(fallback);
 }
 
+const toml::table* optionalTable(const toml::table& root, const std::string_view key) {
+    return root[key].as_table();
+}
+
 const toml::table& requiredTable(const toml::table& root, const std::string_view key) {
-    const auto* table = root[key].as_table();
+    const auto* table = optionalTable(root, key);
     if (table == nullptr) {
         throw std::runtime_error("Missing required TOML table: " + std::string{key});
     }
@@ -55,9 +67,6 @@ std::vector<std::string> Config::validate() const {
     if (heartbeat.timeout_ms <= 0) {
         errors.emplace_back("heartbeat.timeout_ms must be positive");
     }
-    if (health.command.empty()) {
-        errors.emplace_back("health.command must not be empty");
-    }
     if (health.interval_ms <= 0) {
         errors.emplace_back("health.interval_ms must be positive");
     }
@@ -71,6 +80,9 @@ std::vector<std::string> Config::validate() const {
         if (peer.address.empty()) {
             errors.emplace_back("peers[].address must not be empty");
         }
+    }
+    if (peers.empty()) {
+        errors.emplace_back("at least one peer must be configured");
     }
     if (api.enabled && api.bind.empty()) {
         errors.emplace_back("api.bind must not be empty when api.enabled is true");
@@ -89,31 +101,39 @@ Config loadConfigFromFile(const std::string& path) {
     }
 
     Config config;
-    config.node_id = requiredString(root, "node_id");
-    config.priority = static_cast<int>(requiredInt(root, "priority"));
+    config.node_id = getSystemHostname().value_or(std::string{});
+    config.node_id = optionalString(root, "node_id", config.node_id);
+    config.priority = static_cast<int>(optionalInt(root, "priority", config.priority));
 
     const auto& vip = requiredTable(root, "vip");
     config.vip.address = requiredString(vip, "address");
     config.vip.interface = requiredString(vip, "interface");
 
-    const auto& heartbeat = requiredTable(root, "heartbeat");
-    config.heartbeat.bind = requiredString(heartbeat, "bind");
-    config.heartbeat.interval_ms = requiredInt(heartbeat, "interval_ms");
-    config.heartbeat.timeout_ms = requiredInt(heartbeat, "timeout_ms");
+    if (const auto* heartbeat = optionalTable(root, "heartbeat"); heartbeat != nullptr) {
+        config.heartbeat.bind = optionalString(*heartbeat, "bind", config.heartbeat.bind);
+        config.heartbeat.interval_ms =
+            optionalInt(*heartbeat, "interval_ms", config.heartbeat.interval_ms);
+        config.heartbeat.timeout_ms =
+            optionalInt(*heartbeat, "timeout_ms", config.heartbeat.timeout_ms);
+    }
 
-    const auto& health = requiredTable(root, "health");
-    config.health.command = requiredString(health, "command");
-    config.health.interval_ms = requiredInt(health, "interval_ms");
-    config.health.timeout_ms = requiredInt(health, "timeout_ms");
+    if (const auto* health = optionalTable(root, "health"); health != nullptr) {
+        config.health.command = optionalString(*health, "command", config.health.command);
+        config.health.interval_ms = optionalInt(*health, "interval_ms", config.health.interval_ms);
+        config.health.timeout_ms = optionalInt(*health, "timeout_ms", config.health.timeout_ms);
+    }
 
-    const auto& election = requiredTable(root, "election");
-    config.election.require_quorum = optionalBool(election, "require_quorum", false);
-    config.election.preempt = optionalBool(election, "preempt", true);
+    if (const auto* election = optionalTable(root, "election"); election != nullptr) {
+        config.election.require_quorum =
+            optionalBool(*election, "require_quorum", config.election.require_quorum);
+        config.election.preempt = optionalBool(*election, "preempt", config.election.preempt);
+    }
 
-    const auto& api = requiredTable(root, "api");
-    config.api.enabled = optionalBool(api, "enabled", false);
-    config.api.bind = requiredString(api, "bind");
-    config.api.read_only = optionalBool(api, "read_only", true);
+    if (const auto* api = optionalTable(root, "api"); api != nullptr) {
+        config.api.enabled = optionalBool(*api, "enabled", config.api.enabled);
+        config.api.bind = optionalString(*api, "bind", config.api.bind);
+        config.api.read_only = optionalBool(*api, "read_only", config.api.read_only);
+    }
 
     if (const auto* peers = root["peers"].as_array(); peers != nullptr) {
         for (const auto& peer_node : *peers) {

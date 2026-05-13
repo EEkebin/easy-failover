@@ -49,6 +49,7 @@ add_library(
     src/config/Config.cpp
     src/core/Election.cpp
     src/core/FailoverNode.cpp
+    src/platform/linux/LinuxHostname.cpp
     src/platform/linux/LinuxVipManager.cpp)
 
 target_include_directories(easy-failover-core PUBLIC src)
