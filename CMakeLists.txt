@@ -50,6 +50,7 @@ add_library(
     src/core/Election.cpp
     src/core/FailoverDecision.cpp
     src/core/FailoverNode.cpp
+    src/health/HealthCheck.cpp
     src/platform/linux/LinuxHostname.cpp
     src/platform/linux/LinuxVipManager.cpp)
 
