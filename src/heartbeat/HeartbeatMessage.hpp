@@ -13,7 +13,7 @@ constexpr int kHeartbeatMessageVersion = 1;
 struct HeartbeatMessage {
     int version = kHeartbeatMessageVersion;
     std::string node_id;
-    int priority = 0;
+    int priority = 1;
     bool healthy = false;
     NodeState state = NodeState::Backup;
 };
