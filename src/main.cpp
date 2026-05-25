@@ -84,8 +84,8 @@ int main(int argc, char** argv) {
         easyfailover::LinuxVipManager vip_manager;
         if (dry_run) {
             spdlog::info("dry-run mode enabled; no network state will be changed");
-            vip_manager.addVip(config.vip.address, config.vip.interface);
-            vip_manager.announceVip(config.vip.address, config.vip.interface);
+            static_cast<void>(vip_manager.addVip(config.vip.address, config.vip.interface));
+            static_cast<void>(vip_manager.announceVip(config.vip.address, config.vip.interface));
         } else {
             spdlog::info("real VIP movement is not implemented yet; no network state changed");
         }
