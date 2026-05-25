@@ -15,6 +15,10 @@ class LinuxVipManager final : public VipManager {
     LinuxVipManager();
     explicit LinuxVipManager(NetworkCommandRunner& command_runner,
                              LinuxVipManagerOptions options = {});
+    LinuxVipManager(const LinuxVipManager&) = delete;
+    LinuxVipManager& operator=(const LinuxVipManager&) = delete;
+    LinuxVipManager(LinuxVipManager&&) = delete;
+    LinuxVipManager& operator=(LinuxVipManager&&) = delete;
 
     [[nodiscard]] VipOperationResult addVip(const std::string& address,
                                             const std::string& interface) override;
