@@ -23,6 +23,7 @@ using easyfailover::HealthCommandRunner;
 using easyfailover::HealthConfig;
 using easyfailover::HealthStatus;
 using easyfailover::HeartbeatMessage;
+using easyfailover::kHeartbeatMessageVersion;
 using easyfailover::LinuxHealthCommandRunner;
 using easyfailover::LocalNodeStatus;
 using easyfailover::NodeState;
@@ -405,7 +406,8 @@ void testHeartbeatMessageRoundTrip(TestRunner& runner) {
         return;
     }
 
-    runner.expect(result.message->version == 1, "heartbeat version should round trip");
+    runner.expect(result.message->version == kHeartbeatMessageVersion,
+                  "heartbeat version should round trip");
     runner.expect(result.message->node_id == "node-a", "heartbeat node_id should round trip");
     runner.expect(result.message->priority == 150, "heartbeat priority should round trip");
     runner.expect(result.message->healthy, "heartbeat health should round trip");
@@ -461,6 +463,18 @@ void testHeartbeatMessageRejectsInvalidFields(TestRunner& runner) {
     runner.expect(!invalid_priority.message.has_value(), "invalid priority should fail");
     runner.expect(invalid_priority.error == "heartbeat.priority must be positive",
                   "invalid priority should report a stable error");
+
+    const auto out_of_range_priority = parseHeartbeatMessage(
+        "version = 1\n"
+        "type = \"heartbeat\"\n"
+        "node_id = \"node-a\"\n"
+        "priority = 2147483648\n"
+        "healthy = true\n"
+        "state = \"backup\"\n");
+    runner.expect(!out_of_range_priority.message.has_value(),
+                  "out-of-range priority should fail");
+    runner.expect(out_of_range_priority.error == "heartbeat.priority must be within int range",
+                  "out-of-range priority should report a stable error");
 
     const auto invalid_state = parseHeartbeatMessage(
         "version = 1\n"
