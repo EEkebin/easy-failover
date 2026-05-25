@@ -43,8 +43,10 @@ constexpr auto kTerminateGracePeriod = std::chrono::milliseconds{100};
 }
 
 void terminateProcessGroup(const pid_t child_pid, const bool use_pgid) {
-    const pid_t target = use_pgid ? -child_pid : child_pid;
-    static_cast<void>(kill(target, SIGTERM));
+    if (use_pgid) {
+        static_cast<void>(kill(-child_pid, SIGTERM));
+    }
+    static_cast<void>(kill(child_pid, SIGTERM));
 
     const auto deadline = std::chrono::steady_clock::now() + kTerminateGracePeriod;
     while (std::chrono::steady_clock::now() < deadline) {
@@ -60,9 +62,34 @@ void terminateProcessGroup(const pid_t child_pid, const bool use_pgid) {
         std::this_thread::sleep_for(kPollInterval);
     }
 
-    static_cast<void>(kill(target, SIGKILL));
+    if (use_pgid) {
+        static_cast<void>(kill(-child_pid, SIGKILL));
+    }
+    static_cast<void>(kill(child_pid, SIGKILL));
     while (waitpid(child_pid, nullptr, 0) == -1 && errno == EINTR) {
     }
+}
+
+[[nodiscard]] int remainingPollMilliseconds(
+    const std::chrono::steady_clock::time_point deadline) {
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= deadline) {
+        return 0;
+    }
+
+    const auto remaining_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
+    if (remaining_ms > INT_MAX) {
+        return INT_MAX;
+    }
+
+    return static_cast<int>(remaining_ms);
+}
+
+[[nodiscard]] CommandResult timeoutResult() {
+    return CommandResult{.exit_code = kTimeoutExitCode,
+                         .timed_out = true,
+                         .error = "health command timed out"};
 }
 
 } // namespace
@@ -145,53 +172,39 @@ CommandResult LinuxHealthCommandRunner::run(const std::string& command,
     // Parent: close write end and wait for exec result within the deadline.
     close(exec_error_pipe[1]);
 
-    // Poll the exec-error pipe with the remaining timeout budget so that the
-    // exec handshake doesn't silently exceed health.timeout_ms.
-    {
-        while (true) {
-            const auto now = std::chrono::steady_clock::now();
-            if (now >= deadline) {
-                close(exec_error_pipe[0]);
-                terminateProcessGroup(child_pid, true);
-                return CommandResult{.exit_code = kTimeoutExitCode,
-                                     .timed_out = true,
-                                     .error = "health command timed out"};
-            }
-            const auto remaining_ms =
-                std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
-            const int poll_ms =
-                remaining_ms > INT_MAX ? INT_MAX : static_cast<int>(remaining_ms);
-            struct pollfd pfd{};
-            pfd.fd    = exec_error_pipe[0];
-            pfd.events = POLLIN;
-            const int ret = poll(&pfd, 1, poll_ms);
-            if (ret > 0) {
-                break; // data (or EOF) available; proceed to the read loop
-            }
-            if (ret == 0) {
-                // Timed out waiting for exec result.
-                close(exec_error_pipe[0]);
-                terminateProcessGroup(child_pid, true);
-                return CommandResult{.exit_code = kTimeoutExitCode,
-                                     .timed_out = true,
-                                     .error = "health command timed out"};
-            }
-            if (errno != EINTR) {
-                close(exec_error_pipe[0]);
-                terminateProcessGroup(child_pid, true);
-                return CommandResult{.exit_code = kProcessErrorExitCode,
-                                     .timed_out = false,
-                                     .error = errnoMessage("failed to poll exec-error pipe")};
-            }
-            // EINTR: retry with an updated remaining time.
-        }
-    }
-
     int child_exec_errno = 0;
     ssize_t total = 0;
     bool pipe_read_failed = false;
     int pipe_read_errno = 0;
     while (total < static_cast<ssize_t>(sizeof(child_exec_errno))) {
+        const int poll_ms = remainingPollMilliseconds(deadline);
+        if (poll_ms == 0) {
+            close(exec_error_pipe[0]);
+            terminateProcessGroup(child_pid, true);
+            return timeoutResult();
+        }
+
+        struct pollfd pfd{};
+        pfd.fd = exec_error_pipe[0];
+        pfd.events = POLLIN;
+
+        const int ret = poll(&pfd, 1, poll_ms);
+        if (ret == 0) {
+            close(exec_error_pipe[0]);
+            terminateProcessGroup(child_pid, true);
+            return timeoutResult();
+        }
+        if (ret == -1) {
+            if (errno == EINTR) {
+                continue;
+            }
+            close(exec_error_pipe[0]);
+            terminateProcessGroup(child_pid, true);
+            return CommandResult{.exit_code = kProcessErrorExitCode,
+                                 .timed_out = false,
+                                 .error = errnoMessage("failed to poll exec-error pipe")};
+        }
+
         const ssize_t n = read(exec_error_pipe[0],
                                reinterpret_cast<char*>(&child_exec_errno) + total,
                                sizeof(child_exec_errno) - static_cast<size_t>(total));
@@ -241,8 +254,7 @@ CommandResult LinuxHealthCommandRunner::run(const std::string& command,
     if (pipe_read_failed) {
         // read() failed with a non-EINTR error before any bytes were received;
         // we cannot determine whether exec succeeded or failed.
-        while (waitpid(child_pid, nullptr, 0) == -1 && errno == EINTR) {
-        }
+        terminateProcessGroup(child_pid, true);
         return CommandResult{.exit_code = kProcessErrorExitCode,
                              .timed_out = false,
                              .error = "failed to read exec-error pipe: " +
@@ -260,7 +272,6 @@ CommandResult LinuxHealthCommandRunner::run(const std::string& command,
         use_pgid = false;
     }
 
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds{timeout_ms};
     while (true) {
         int status = 0;
         const pid_t wait_result = waitpid(child_pid, &status, WNOHANG);
@@ -280,9 +291,7 @@ CommandResult LinuxHealthCommandRunner::run(const std::string& command,
 
         if (std::chrono::steady_clock::now() >= deadline) {
             terminateProcessGroup(child_pid, use_pgid);
-            return CommandResult{.exit_code = kTimeoutExitCode,
-                                 .timed_out = true,
-                                 .error = "health command timed out"};
+            return timeoutResult();
         }
 
         std::this_thread::sleep_for(kPollInterval);
