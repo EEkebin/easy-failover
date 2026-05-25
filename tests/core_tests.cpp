@@ -101,6 +101,11 @@ class FakeHealthCommandRunner final : public HealthCommandRunner {
 
 class FakeHeartbeatTransport final : public HeartbeatTransport {
   public:
+    struct ConfiguredSendResult {
+        bool sent = true;
+        std::string error;
+    };
+
     [[nodiscard]] HeartbeatSendResult send(const std::string& peer_address,
                                            const std::string& payload) override {
         send_called = true;
@@ -121,10 +126,7 @@ class FakeHeartbeatTransport final : public HeartbeatTransport {
                                       .error = receive_result.error};
     }
 
-    HeartbeatSendResult send_result{.sent = true,
-                                    .peer_address = "",
-                                    .payload = "",
-                                    .error = ""};
+    ConfiguredSendResult send_result;
     HeartbeatReceiveResult receive_result;
     bool send_called = false;
     bool receive_called = false;
