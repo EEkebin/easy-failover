@@ -29,6 +29,7 @@ using easyfailover::HeartbeatMessage;
 using easyfailover::HeartbeatReceiveResult;
 using easyfailover::HeartbeatSendResult;
 using easyfailover::HeartbeatTransport;
+using easyfailover::kHeartbeatTransportDisabledError;
 using easyfailover::LinuxHealthCommandRunner;
 using easyfailover::LocalNodeStatus;
 using easyfailover::NodeState;
@@ -105,16 +106,25 @@ class FakeHeartbeatTransport final : public HeartbeatTransport {
         send_called = true;
         sent_peer_address = peer_address;
         sent_payload = payload;
-        return send_result;
+        return HeartbeatSendResult{.sent = send_result.sent,
+                                   .peer_address = peer_address,
+                                   .payload = payload,
+                                   .error = send_result.error};
     }
 
     [[nodiscard]] HeartbeatReceiveResult receive(const std::int64_t timeout_ms) override {
         receive_called = true;
         observed_timeout_ms = timeout_ms;
-        return receive_result;
+        return HeartbeatReceiveResult{.datagram = receive_result.datagram,
+                                      .timed_out = receive_result.timed_out,
+                                      .timeout_ms = timeout_ms,
+                                      .error = receive_result.error};
     }
 
-    HeartbeatSendResult send_result{.sent = true, .error = ""};
+    HeartbeatSendResult send_result{.sent = true,
+                                    .peer_address = "",
+                                    .payload = "",
+                                    .error = ""};
     HeartbeatReceiveResult receive_result;
     bool send_called = false;
     bool receive_called = false;
@@ -603,6 +613,9 @@ void testHeartbeatTransportSendContract(TestRunner& runner) {
     const auto result = base.send("10.0.0.12:7432", "payload");
 
     runner.expect(result.sent, "fake heartbeat transport should return configured send result");
+    runner.expect(result.peer_address == "10.0.0.12:7432",
+                  "heartbeat send result should include peer address");
+    runner.expect(result.payload == "payload", "heartbeat send result should include payload");
     runner.expect(transport.send_called, "heartbeat transport send should be called");
     runner.expect(transport.sent_peer_address == "10.0.0.12:7432",
                   "heartbeat transport should receive peer address");
@@ -625,6 +638,8 @@ void testHeartbeatTransportReceiveContract(TestRunner& runner) {
     runner.expect(transport.observed_timeout_ms == 250,
                   "heartbeat transport should receive timeout budget");
     runner.expect(result.datagram.has_value(), "heartbeat transport should return datagram");
+    runner.expect(result.timeout_ms == 250,
+                  "heartbeat receive result should include timeout budget");
     if (!result.datagram.has_value()) {
         return;
     }
@@ -646,6 +661,8 @@ void testHeartbeatTransportReceiveTimeoutContract(TestRunner& runner) {
     runner.expect(!result.datagram.has_value(),
                   "heartbeat receive timeout should not return a datagram");
     runner.expect(result.timed_out, "heartbeat receive timeout should be reported");
+    runner.expect(result.timeout_ms == 1,
+                  "heartbeat receive timeout should include timeout budget");
     runner.expect(result.error.empty(), "heartbeat receive timeout should not be an error");
 }
 
@@ -654,7 +671,11 @@ void testDisabledHeartbeatTransportReportsDisabled(TestRunner& runner) {
 
     const auto send_result = transport.send("10.0.0.12:7432", "payload");
     runner.expect(!send_result.sent, "disabled heartbeat transport should not send");
-    runner.expect(send_result.error == "heartbeat transport is disabled",
+    runner.expect(send_result.peer_address == "10.0.0.12:7432",
+                  "disabled heartbeat send should echo peer address");
+    runner.expect(send_result.payload == "payload",
+                  "disabled heartbeat send should echo payload");
+    runner.expect(send_result.error == kHeartbeatTransportDisabledError,
                   "disabled heartbeat send should report stable error");
 
     const auto receive_result = transport.receive(1);
@@ -662,7 +683,9 @@ void testDisabledHeartbeatTransportReportsDisabled(TestRunner& runner) {
                   "disabled heartbeat transport should not receive datagrams");
     runner.expect(!receive_result.timed_out,
                   "disabled heartbeat transport should report disabled, not timeout");
-    runner.expect(receive_result.error == "heartbeat transport is disabled",
+    runner.expect(receive_result.timeout_ms == 1,
+                  "disabled heartbeat receive should echo timeout budget");
+    runner.expect(receive_result.error == kHeartbeatTransportDisabledError,
                   "disabled heartbeat receive should report stable error");
 }
 

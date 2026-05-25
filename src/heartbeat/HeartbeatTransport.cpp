@@ -4,17 +4,17 @@ namespace easyfailover {
 
 HeartbeatSendResult DisabledHeartbeatTransport::send(const std::string& peer_address,
                                                      const std::string& payload) {
-    static_cast<void>(peer_address);
-    static_cast<void>(payload);
     return HeartbeatSendResult{.sent = false,
-                               .error = "heartbeat transport is disabled"};
+                               .peer_address = peer_address,
+                               .payload = payload,
+                               .error = std::string{kHeartbeatTransportDisabledError}};
 }
 
 HeartbeatReceiveResult DisabledHeartbeatTransport::receive(const std::int64_t timeout_ms) {
-    static_cast<void>(timeout_ms);
     return HeartbeatReceiveResult{.datagram = std::nullopt,
                                   .timed_out = false,
-                                  .error = "heartbeat transport is disabled"};
+                                  .timeout_ms = timeout_ms,
+                                  .error = std::string{kHeartbeatTransportDisabledError}};
 }
 
 } // namespace easyfailover
