@@ -7,6 +7,7 @@
 #include "health/HealthCheck.hpp"
 #include "platform/NetworkCommandRunner.hpp"
 #include "platform/linux/LinuxHealthCommandRunner.hpp"
+#include "platform/linux/LinuxVipManager.hpp"
 
 #include <algorithm>
 #include <exception>
@@ -33,6 +34,8 @@ using easyfailover::HeartbeatSendResult;
 using easyfailover::HeartbeatTransport;
 using easyfailover::kHeartbeatTransportDisabledError;
 using easyfailover::LinuxHealthCommandRunner;
+using easyfailover::LinuxVipManager;
+using easyfailover::LinuxVipManagerOptions;
 using easyfailover::LocalNodeStatus;
 using easyfailover::DryRunNetworkCommandRunner;
 using easyfailover::NetworkCommandRequest;
@@ -41,6 +44,7 @@ using easyfailover::NetworkCommandRunner;
 using easyfailover::NodeState;
 using easyfailover::PeerConfig;
 using easyfailover::PeerStatus;
+using easyfailover::VipOperationType;
 using easyfailover::chooseHighestPriorityHealthyNode;
 using easyfailover::decideFailoverAction;
 using easyfailover::evaluateHealthCheck;
@@ -150,12 +154,14 @@ class FakeNetworkCommandRunner final : public NetworkCommandRunner {
     [[nodiscard]] NetworkCommandResult run(const NetworkCommandRequest& request) override {
         was_called = true;
         observed_request = request;
+        observed_requests.push_back(request);
         return result;
     }
 
     NetworkCommandResult result;
     bool was_called = false;
     NetworkCommandRequest observed_request;
+    std::vector<NetworkCommandRequest> observed_requests;
 };
 
 Config validConfig() {
@@ -946,6 +952,144 @@ void testDryRunNetworkCommandRunnerForcesNonExecution(TestRunner& runner) {
                   "dry-run implementation should preserve requested dry-run flag");
 }
 
+void testLinuxVipManagerBuildsAddCommand(TestRunner& runner) {
+    FakeNetworkCommandRunner command_runner;
+    command_runner.result =
+        NetworkCommandResult{.request = NetworkCommandRequest{.executable = "ip",
+                                                              .arguments = {"addr", "add"},
+                                                              .dry_run = true},
+                             .exit_code = 0,
+                             .executed = false,
+                             .dry_run = true,
+                             .error = ""};
+    LinuxVipManager manager{command_runner};
+
+    const auto result = manager.addVip("10.0.0.50/24", "eth0");
+
+    runner.expect(result.success, "add VIP dry-run should report success");
+    runner.expect(result.request.type == VipOperationType::Add,
+                  "add VIP result should preserve operation type");
+    runner.expect(result.dry_run, "add VIP should default to dry-run");
+    runner.expect(command_runner.was_called, "add VIP should invoke network command runner");
+    runner.expect(command_runner.observed_request.executable == "ip",
+                  "add VIP should use ip executable");
+    runner.expect(command_runner.observed_request.arguments ==
+                      std::vector<std::string>{"addr", "add", "10.0.0.50/24", "dev", "eth0"},
+                  "add VIP should build ip addr add command");
+    runner.expect(command_runner.observed_request.dry_run,
+                  "add VIP command should default to dry-run");
+}
+
+void testLinuxVipManagerBuildsRemoveCommandWithExplicitMutation(TestRunner& runner) {
+    FakeNetworkCommandRunner command_runner;
+    command_runner.result =
+        NetworkCommandResult{.request = NetworkCommandRequest{.executable = "ip",
+                                                              .arguments = {"addr", "del"},
+                                                              .dry_run = false},
+                             .exit_code = 0,
+                             .executed = true,
+                             .dry_run = false,
+                             .error = ""};
+    LinuxVipManager manager{
+        command_runner,
+        LinuxVipManagerOptions{.allow_network_mutation = true, .dry_run = false}};
+
+    const auto result = manager.removeVip("10.0.0.50/24", "eth0");
+
+    runner.expect(result.success, "remove VIP should report success when command succeeds");
+    runner.expect(!result.dry_run, "remove VIP should allow non-dry-run only after explicit opt-in");
+    runner.expect(command_runner.observed_request.executable == "ip",
+                  "remove VIP should use ip executable");
+    runner.expect(command_runner.observed_request.arguments ==
+                      std::vector<std::string>{"addr", "del", "10.0.0.50/24", "dev", "eth0"},
+                  "remove VIP should build ip addr del command");
+    runner.expect(!command_runner.observed_request.dry_run,
+                  "remove VIP command should allow mutation after explicit opt-in");
+}
+
+void testLinuxVipManagerSafetyGateForcesDryRun(TestRunner& runner) {
+    FakeNetworkCommandRunner command_runner;
+    command_runner.result =
+        NetworkCommandResult{.request = NetworkCommandRequest{.executable = "ip",
+                                                              .arguments = {"addr", "del"},
+                                                              .dry_run = true},
+                             .exit_code = 0,
+                             .executed = false,
+                             .dry_run = true,
+                             .error = ""};
+    LinuxVipManager manager{
+        command_runner,
+        LinuxVipManagerOptions{.allow_network_mutation = false, .dry_run = false}};
+
+    const auto result = manager.removeVip("10.0.0.50/24", "eth0");
+
+    runner.expect(result.dry_run, "safety gate should force dry-run without mutation opt-in");
+    runner.expect(command_runner.observed_request.dry_run,
+                  "safety gate should force command request dry-run");
+}
+
+void testLinuxVipManagerBuildsAnnounceCommand(TestRunner& runner) {
+    FakeNetworkCommandRunner command_runner;
+    command_runner.result =
+        NetworkCommandResult{.request = NetworkCommandRequest{.executable = "arping",
+                                                              .arguments = {"-A"},
+                                                              .dry_run = true},
+                             .exit_code = 0,
+                             .executed = false,
+                             .dry_run = true,
+                             .error = ""};
+    LinuxVipManager manager{command_runner};
+
+    const auto result = manager.announceVip("10.0.0.50/24", "eth0");
+
+    runner.expect(result.success, "announce VIP dry-run should report success");
+    runner.expect(result.request.type == VipOperationType::Announce,
+                  "announce VIP result should preserve operation type");
+    runner.expect(command_runner.observed_request.executable == "arping",
+                  "announce VIP should use arping executable");
+    runner.expect(command_runner.observed_request.arguments ==
+                      std::vector<std::string>{"-A", "-c", "3", "-I", "eth0", "10.0.0.50"},
+                  "announce VIP should build gratuitous ARP command without CIDR prefix");
+}
+
+void testLinuxVipManagerRejectsInvalidInputs(TestRunner& runner) {
+    FakeNetworkCommandRunner command_runner;
+    LinuxVipManager manager{command_runner};
+
+    const auto missing_address = manager.addVip("", "eth0");
+    runner.expect(!missing_address.success, "missing VIP address should fail validation");
+    runner.expect(missing_address.error == "vip address must not be empty",
+                  "missing VIP address should report stable error");
+
+    const auto missing_interface = manager.addVip("10.0.0.50/24", "");
+    runner.expect(!missing_interface.success, "missing VIP interface should fail validation");
+    runner.expect(missing_interface.error == "vip interface must not be empty",
+                  "missing VIP interface should report stable error");
+
+    runner.expect(!command_runner.was_called, "invalid VIP operations should not run commands");
+}
+
+void testLinuxVipManagerPropagatesCommandFailure(TestRunner& runner) {
+    FakeNetworkCommandRunner command_runner;
+    command_runner.result =
+        NetworkCommandResult{.request = NetworkCommandRequest{.executable = "ip",
+                                                              .arguments = {"addr", "add"},
+                                                              .dry_run = false},
+                             .exit_code = 2,
+                             .executed = true,
+                             .dry_run = false,
+                             .error = "ip failed"};
+    LinuxVipManager manager{
+        command_runner,
+        LinuxVipManagerOptions{.allow_network_mutation = true, .dry_run = false}};
+
+    const auto result = manager.addVip("10.0.0.50/24", "eth0");
+
+    runner.expect(!result.success, "VIP operation should fail when command fails");
+    runner.expect(result.error == "ip failed", "VIP operation should preserve command error");
+    runner.expect(result.commands.size() == 1, "VIP operation should report command result");
+}
+
 void testElectionChoosesHighestHealthyPriority(TestRunner& runner) {
     const std::vector<CandidateNode> candidates{
         CandidateNode{.node_id = "node-a", .priority = 100, .healthy = true},
@@ -1290,6 +1434,24 @@ int main() {
     });
     runner.run("dry-run network command runner forces non-execution", [&runner] {
         testDryRunNetworkCommandRunnerForcesNonExecution(runner);
+    });
+    runner.run("Linux VIP manager builds add command", [&runner] {
+        testLinuxVipManagerBuildsAddCommand(runner);
+    });
+    runner.run("Linux VIP manager builds remove command with explicit mutation", [&runner] {
+        testLinuxVipManagerBuildsRemoveCommandWithExplicitMutation(runner);
+    });
+    runner.run("Linux VIP manager safety gate forces dry-run", [&runner] {
+        testLinuxVipManagerSafetyGateForcesDryRun(runner);
+    });
+    runner.run("Linux VIP manager builds announce command", [&runner] {
+        testLinuxVipManagerBuildsAnnounceCommand(runner);
+    });
+    runner.run("Linux VIP manager rejects invalid inputs", [&runner] {
+        testLinuxVipManagerRejectsInvalidInputs(runner);
+    });
+    runner.run("Linux VIP manager propagates command failure", [&runner] {
+        testLinuxVipManagerPropagatesCommandFailure(runner);
     });
     runner.run("election chooses highest healthy priority", [&runner] {
         testElectionChoosesHighestHealthyPriority(runner);

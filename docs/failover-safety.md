@@ -1,8 +1,9 @@
 # Failover Safety Notes
 
 easy-failover must avoid moving a virtual IP until the agent has enough safety controls to reduce
-split-brain risk. The current codebase only models local decisions and logs intended VIP actions.
-It does not send heartbeats, confirm quorum, fence peers, or change network state.
+split-brain risk. The current codebase only models local decisions and builds non-mutating VIP
+command requests. It does not send heartbeats, confirm quorum, fence peers, or change network
+state.
 
 ## Split-Brain Risk
 
@@ -56,7 +57,8 @@ listener by default.
 Current behavior is intentionally non-mutating:
 
 - election and failover decision helpers are pure local logic;
-- Linux VIP manager methods only log what they would do;
+- Linux VIP manager methods build `iproute2` and `arping` command requests through a dry-run
+  command runner by default;
 - `--dry-run` does not change system state;
 - heartbeat networking, runtime health state, quorum, fencing, and daemon lifecycle are not
   implemented yet.
