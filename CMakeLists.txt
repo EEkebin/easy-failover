@@ -51,6 +51,7 @@ add_library(
     src/core/FailoverDecision.cpp
     src/core/FailoverNode.cpp
     src/health/HealthCheck.cpp
+    src/heartbeat/HeartbeatMessage.cpp
     src/platform/linux/LinuxHealthCommandRunner.cpp
     src/platform/linux/LinuxHostname.cpp
     src/platform/linux/LinuxVipManager.cpp)

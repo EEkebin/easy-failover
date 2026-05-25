@@ -1,6 +1,7 @@
 #include "config/Config.hpp"
 #include "core/Election.hpp"
 #include "core/FailoverDecision.hpp"
+#include "heartbeat/HeartbeatMessage.hpp"
 #include "health/HealthCheck.hpp"
 #include "platform/linux/LinuxHealthCommandRunner.hpp"
 
@@ -21,13 +22,18 @@ using easyfailover::FailoverAction;
 using easyfailover::HealthCommandRunner;
 using easyfailover::HealthConfig;
 using easyfailover::HealthStatus;
+using easyfailover::HeartbeatMessage;
 using easyfailover::LinuxHealthCommandRunner;
 using easyfailover::LocalNodeStatus;
+using easyfailover::NodeState;
 using easyfailover::PeerConfig;
 using easyfailover::PeerStatus;
 using easyfailover::chooseHighestPriorityHealthyNode;
 using easyfailover::decideFailoverAction;
 using easyfailover::evaluateHealthCheck;
+using easyfailover::parseHeartbeatMessage;
+using easyfailover::peerStatusFromHeartbeat;
+using easyfailover::serializeHeartbeatMessage;
 using easyfailover::loadConfigFromFile;
 
 class TestRunner {
@@ -385,6 +391,180 @@ void testLinuxHealthRunnerTimeoutIsUnhealthy(TestRunner& runner) {
                   "Linux runner timeout should report timeout detail");
 }
 
+void testHeartbeatMessageRoundTrip(TestRunner& runner) {
+    const HeartbeatMessage message{.node_id = "node-a",
+                                   .priority = 150,
+                                   .healthy = true,
+                                   .state = NodeState::Master};
+
+    const auto payload = serializeHeartbeatMessage(message);
+    const auto result = parseHeartbeatMessage(payload);
+
+    runner.expect(result.message.has_value(), "serialized heartbeat should parse");
+    if (!result.message.has_value()) {
+        return;
+    }
+
+    runner.expect(result.message->node_id == "node-a", "heartbeat node_id should round trip");
+    runner.expect(result.message->priority == 150, "heartbeat priority should round trip");
+    runner.expect(result.message->healthy, "heartbeat health should round trip");
+    runner.expect(result.message->state == NodeState::Master, "heartbeat state should round trip");
+}
+
+void testHeartbeatMessageRejectsUnsupportedVersion(TestRunner& runner) {
+    const auto result = parseHeartbeatMessage(
+        "version = 2\n"
+        "type = \"heartbeat\"\n"
+        "node_id = \"node-a\"\n"
+        "priority = 100\n"
+        "healthy = true\n"
+        "state = \"backup\"\n");
+
+    runner.expect(!result.message.has_value(), "unsupported heartbeat version should fail");
+    runner.expect(result.error == "unsupported heartbeat.version",
+                  "unsupported heartbeat version should report a stable error");
+}
+
+void testHeartbeatMessageRejectsInvalidType(TestRunner& runner) {
+    const auto result = parseHeartbeatMessage(
+        "version = 1\n"
+        "type = \"status\"\n"
+        "node_id = \"node-a\"\n"
+        "priority = 100\n"
+        "healthy = true\n"
+        "state = \"backup\"\n");
+
+    runner.expect(!result.message.has_value(), "invalid heartbeat type should fail");
+    runner.expect(result.error == "heartbeat.type must be 'heartbeat'",
+                  "invalid heartbeat type should report a stable error");
+}
+
+void testHeartbeatMessageRejectsInvalidFields(TestRunner& runner) {
+    const auto missing_node = parseHeartbeatMessage(
+        "version = 1\n"
+        "type = \"heartbeat\"\n"
+        "priority = 100\n"
+        "healthy = true\n"
+        "state = \"backup\"\n");
+    runner.expect(!missing_node.message.has_value(), "missing node_id should fail");
+    runner.expect(missing_node.error == "heartbeat.node_id must not be empty",
+                  "missing node_id should report a stable error");
+
+    const auto invalid_priority = parseHeartbeatMessage(
+        "version = 1\n"
+        "type = \"heartbeat\"\n"
+        "node_id = \"node-a\"\n"
+        "priority = 0\n"
+        "healthy = true\n"
+        "state = \"backup\"\n");
+    runner.expect(!invalid_priority.message.has_value(), "invalid priority should fail");
+    runner.expect(invalid_priority.error == "heartbeat.priority must be positive",
+                  "invalid priority should report a stable error");
+
+    const auto out_of_range_priority = parseHeartbeatMessage(
+        "version = 1\n"
+        "type = \"heartbeat\"\n"
+        "node_id = \"node-a\"\n"
+        "priority = 2147483648\n"
+        "healthy = true\n"
+        "state = \"backup\"\n");
+    runner.expect(!out_of_range_priority.message.has_value(),
+                  "out-of-range priority should fail");
+    runner.expect(out_of_range_priority.error == "heartbeat.priority must be within int range",
+                  "out-of-range priority should report a stable error");
+
+    const auto invalid_state = parseHeartbeatMessage(
+        "version = 1\n"
+        "type = \"heartbeat\"\n"
+        "node_id = \"node-a\"\n"
+        "priority = 100\n"
+        "healthy = true\n"
+        "state = \"unknown\"\n");
+    runner.expect(!invalid_state.message.has_value(), "invalid state should fail");
+    runner.expect(invalid_state.error == "heartbeat.state is invalid",
+                  "invalid state should report a stable error");
+}
+
+void testHeartbeatMessageRejectsInvalidScalarTypes(TestRunner& runner) {
+    const auto invalid_version = parseHeartbeatMessage(
+        "version = \"1\"\n"
+        "type = \"heartbeat\"\n"
+        "node_id = \"node-a\"\n"
+        "priority = 100\n"
+        "healthy = true\n"
+        "state = \"backup\"\n");
+    runner.expect(!invalid_version.message.has_value(), "invalid version type should fail");
+    runner.expect(invalid_version.error == "heartbeat.version must be an integer",
+                  "invalid version type should report a stable error");
+
+    const auto invalid_priority_type = parseHeartbeatMessage(
+        "version = 1\n"
+        "type = \"heartbeat\"\n"
+        "node_id = \"node-a\"\n"
+        "priority = \"100\"\n"
+        "healthy = true\n"
+        "state = \"backup\"\n");
+    runner.expect(!invalid_priority_type.message.has_value(),
+                  "invalid priority type should fail");
+    runner.expect(invalid_priority_type.error == "heartbeat.priority must be an integer",
+                  "invalid priority type should report a stable error");
+
+    const auto invalid_healthy_type = parseHeartbeatMessage(
+        "version = 1\n"
+        "type = \"heartbeat\"\n"
+        "node_id = \"node-a\"\n"
+        "priority = 100\n"
+        "healthy = \"true\"\n"
+        "state = \"backup\"\n");
+    runner.expect(!invalid_healthy_type.message.has_value(),
+                  "invalid healthy type should fail");
+    runner.expect(invalid_healthy_type.error == "heartbeat.healthy must be a boolean",
+                  "invalid healthy type should report a stable error");
+
+    const auto missing_state = parseHeartbeatMessage(
+        "version = 1\n"
+        "type = \"heartbeat\"\n"
+        "node_id = \"node-a\"\n"
+        "priority = 100\n"
+        "healthy = true\n");
+    runner.expect(!missing_state.message.has_value(), "missing state should fail");
+    runner.expect(missing_state.error == "heartbeat.state must be a string",
+                  "missing state should report a stable error");
+
+    const auto invalid_state_type = parseHeartbeatMessage(
+        "version = 1\n"
+        "type = \"heartbeat\"\n"
+        "node_id = \"node-a\"\n"
+        "priority = 100\n"
+        "healthy = true\n"
+        "state = true\n");
+    runner.expect(!invalid_state_type.message.has_value(), "invalid state type should fail");
+    runner.expect(invalid_state_type.error == "heartbeat.state must be a string",
+                  "invalid state type should report a stable error");
+}
+
+void testHeartbeatMessageRejectsMalformedPayload(TestRunner& runner) {
+    const auto result = parseHeartbeatMessage("version = ");
+
+    runner.expect(!result.message.has_value(), "malformed heartbeat payload should fail");
+    runner.expect(result.error.starts_with("failed to parse heartbeat message:"),
+                  "malformed heartbeat payload should report parse error");
+}
+
+void testHeartbeatMessageConvertsToPeerStatus(TestRunner& runner) {
+    const HeartbeatMessage message{.node_id = "node-b",
+                                   .priority = 200,
+                                   .healthy = false,
+                                   .state = NodeState::Fault};
+
+    const auto peer = peerStatusFromHeartbeat(message);
+
+    runner.expect(peer.node_id == "node-b", "heartbeat peer status should include node_id");
+    runner.expect(peer.priority == 200, "heartbeat peer status should include priority");
+    runner.expect(!peer.healthy, "heartbeat peer status should include health");
+    runner.expect(peer.heartbeat_seen, "heartbeat peer status should mark heartbeat seen");
+}
+
 void testElectionChoosesHighestHealthyPriority(TestRunner& runner) {
     const std::vector<CandidateNode> candidates{
         CandidateNode{.node_id = "node-a", .priority = 100, .healthy = true},
@@ -669,6 +849,27 @@ int main() {
     });
     runner.run("Linux health runner timeout is unhealthy", [&runner] {
         testLinuxHealthRunnerTimeoutIsUnhealthy(runner);
+    });
+    runner.run("heartbeat message round trip", [&runner] {
+        testHeartbeatMessageRoundTrip(runner);
+    });
+    runner.run("heartbeat message rejects unsupported version", [&runner] {
+        testHeartbeatMessageRejectsUnsupportedVersion(runner);
+    });
+    runner.run("heartbeat message rejects invalid type", [&runner] {
+        testHeartbeatMessageRejectsInvalidType(runner);
+    });
+    runner.run("heartbeat message rejects invalid fields", [&runner] {
+        testHeartbeatMessageRejectsInvalidFields(runner);
+    });
+    runner.run("heartbeat message rejects invalid scalar types", [&runner] {
+        testHeartbeatMessageRejectsInvalidScalarTypes(runner);
+    });
+    runner.run("heartbeat message rejects malformed payload", [&runner] {
+        testHeartbeatMessageRejectsMalformedPayload(runner);
+    });
+    runner.run("heartbeat message converts to peer status", [&runner] {
+        testHeartbeatMessageConvertsToPeerStatus(runner);
     });
     runner.run("election chooses highest healthy priority", [&runner] {
         testElectionChoosesHighestHealthyPriority(runner);
