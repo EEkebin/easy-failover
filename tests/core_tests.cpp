@@ -488,6 +488,64 @@ void testHeartbeatMessageRejectsInvalidFields(TestRunner& runner) {
                   "invalid state should report a stable error");
 }
 
+void testHeartbeatMessageRejectsInvalidScalarTypes(TestRunner& runner) {
+    const auto invalid_version = parseHeartbeatMessage(
+        "version = \"1\"\n"
+        "type = \"heartbeat\"\n"
+        "node_id = \"node-a\"\n"
+        "priority = 100\n"
+        "healthy = true\n"
+        "state = \"backup\"\n");
+    runner.expect(!invalid_version.message.has_value(), "invalid version type should fail");
+    runner.expect(invalid_version.error == "heartbeat.version must be an integer",
+                  "invalid version type should report a stable error");
+
+    const auto invalid_priority_type = parseHeartbeatMessage(
+        "version = 1\n"
+        "type = \"heartbeat\"\n"
+        "node_id = \"node-a\"\n"
+        "priority = \"100\"\n"
+        "healthy = true\n"
+        "state = \"backup\"\n");
+    runner.expect(!invalid_priority_type.message.has_value(),
+                  "invalid priority type should fail");
+    runner.expect(invalid_priority_type.error == "heartbeat.priority must be an integer",
+                  "invalid priority type should report a stable error");
+
+    const auto invalid_healthy_type = parseHeartbeatMessage(
+        "version = 1\n"
+        "type = \"heartbeat\"\n"
+        "node_id = \"node-a\"\n"
+        "priority = 100\n"
+        "healthy = \"true\"\n"
+        "state = \"backup\"\n");
+    runner.expect(!invalid_healthy_type.message.has_value(),
+                  "invalid healthy type should fail");
+    runner.expect(invalid_healthy_type.error == "heartbeat.healthy must be a boolean",
+                  "invalid healthy type should report a stable error");
+
+    const auto missing_state = parseHeartbeatMessage(
+        "version = 1\n"
+        "type = \"heartbeat\"\n"
+        "node_id = \"node-a\"\n"
+        "priority = 100\n"
+        "healthy = true\n");
+    runner.expect(!missing_state.message.has_value(), "missing state should fail");
+    runner.expect(missing_state.error == "heartbeat.state must be a string",
+                  "missing state should report a stable error");
+
+    const auto invalid_state_type = parseHeartbeatMessage(
+        "version = 1\n"
+        "type = \"heartbeat\"\n"
+        "node_id = \"node-a\"\n"
+        "priority = 100\n"
+        "healthy = true\n"
+        "state = true\n");
+    runner.expect(!invalid_state_type.message.has_value(), "invalid state type should fail");
+    runner.expect(invalid_state_type.error == "heartbeat.state must be a string",
+                  "invalid state type should report a stable error");
+}
+
 void testHeartbeatMessageRejectsMalformedPayload(TestRunner& runner) {
     const auto result = parseHeartbeatMessage("version = ");
 
@@ -806,6 +864,9 @@ int main() {
     });
     runner.run("heartbeat message rejects invalid fields", [&runner] {
         testHeartbeatMessageRejectsInvalidFields(runner);
+    });
+    runner.run("heartbeat message rejects invalid scalar types", [&runner] {
+        testHeartbeatMessageRejectsInvalidScalarTypes(runner);
     });
     runner.run("heartbeat message rejects malformed payload", [&runner] {
         testHeartbeatMessageRejectsMalformedPayload(runner);
