@@ -1,6 +1,7 @@
 #include "config/Config.hpp"
 #include "core/Election.hpp"
 #include "core/FailoverDecision.hpp"
+#include "heartbeat/HeartbeatLoop.hpp"
 #include "heartbeat/HeartbeatMessage.hpp"
 #include "heartbeat/HeartbeatTransport.hpp"
 #include "health/HealthCheck.hpp"
@@ -40,6 +41,7 @@ using easyfailover::decideFailoverAction;
 using easyfailover::evaluateHealthCheck;
 using easyfailover::parseHeartbeatMessage;
 using easyfailover::peerStatusFromHeartbeat;
+using easyfailover::runHeartbeatLoopOnce;
 using easyfailover::serializeHeartbeatMessage;
 using easyfailover::loadConfigFromFile;
 
@@ -109,6 +111,8 @@ class FakeHeartbeatTransport final : public HeartbeatTransport {
     [[nodiscard]] HeartbeatSendResult send(const std::string& peer_address,
                                            const std::string& payload) override {
         send_called = true;
+        sent_datagrams.push_back(HeartbeatDatagram{.peer_address = peer_address,
+                                                   .payload = payload});
         sent_peer_address = peer_address;
         sent_payload = payload;
         return HeartbeatSendResult{.sent = send_result.sent,
@@ -130,6 +134,7 @@ class FakeHeartbeatTransport final : public HeartbeatTransport {
     HeartbeatReceiveResult receive_result;
     bool send_called = false;
     bool receive_called = false;
+    std::vector<HeartbeatDatagram> sent_datagrams;
     std::string sent_peer_address;
     std::string sent_payload;
     std::int64_t observed_timeout_ms = 0;
@@ -691,6 +696,151 @@ void testDisabledHeartbeatTransportReportsDisabled(TestRunner& runner) {
                   "disabled heartbeat receive should report stable error");
 }
 
+LocalNodeStatus healthyLocalStatus() {
+    return LocalNodeStatus{.node_id = "node-a",
+                           .priority = 100,
+                           .healthy = true,
+                           .state = NodeState::Backup};
+}
+
+std::vector<PeerConfig> heartbeatPeers() {
+    return std::vector<PeerConfig>{
+        PeerConfig{.id = "node-b", .address = "10.0.0.12:7432"},
+        PeerConfig{.id = "node-c", .address = "10.0.0.13:7432"},
+    };
+}
+
+void testHeartbeatLoopSendsLocalHeartbeatToPeers(TestRunner& runner) {
+    FakeHeartbeatTransport transport;
+
+    const auto result = runHeartbeatLoopOnce(healthyLocalStatus(), heartbeatPeers(), 25, transport);
+
+    runner.expect(result.sends.size() == 2, "heartbeat loop should report send for each peer");
+    runner.expect(transport.sent_datagrams.size() == 2,
+                  "heartbeat loop should send heartbeat to each peer");
+    if (result.sends.size() != 2 || transport.sent_datagrams.size() != 2) {
+        return;
+    }
+
+    runner.expect(result.sends[0].peer_id == "node-b",
+                  "heartbeat loop should preserve first peer id");
+    runner.expect(result.sends[0].peer_address == "10.0.0.12:7432",
+                  "heartbeat loop should report first peer address");
+    runner.expect(result.sends[0].sent, "heartbeat loop should report successful send");
+    runner.expect(result.sends[1].peer_id == "node-c",
+                  "heartbeat loop should preserve second peer id");
+    runner.expect(result.sends[1].peer_address == "10.0.0.13:7432",
+                  "heartbeat loop should report second peer address");
+
+    const auto parsed = parseHeartbeatMessage(transport.sent_datagrams[0].payload);
+    runner.expect(parsed.message.has_value(), "heartbeat loop should send parseable payload");
+    if (!parsed.message.has_value()) {
+        return;
+    }
+
+    runner.expect(parsed.message->node_id == "node-a",
+                  "heartbeat loop should send local node id");
+    runner.expect(parsed.message->priority == 100,
+                  "heartbeat loop should send local priority");
+    runner.expect(parsed.message->healthy, "heartbeat loop should send local health");
+    runner.expect(parsed.message->state == NodeState::Backup,
+                  "heartbeat loop should send local node state");
+}
+
+void testHeartbeatLoopReceivesPeerStatus(TestRunner& runner) {
+    FakeHeartbeatTransport transport;
+    const auto peer_payload = serializeHeartbeatMessage(HeartbeatMessage{.node_id = "node-b",
+                                                                         .priority = 200,
+                                                                         .healthy = true,
+                                                                         .state = NodeState::Master});
+    transport.receive_result =
+        HeartbeatReceiveResult{.datagram = HeartbeatDatagram{.peer_address = "10.0.0.12:7432",
+                                                             .payload = peer_payload},
+                               .timed_out = false,
+                               .timeout_ms = 50,
+                               .error = ""};
+
+    const auto result = runHeartbeatLoopOnce(healthyLocalStatus(), heartbeatPeers(), 50, transport);
+
+    runner.expect(result.receive.attempted, "heartbeat loop should attempt receive");
+    runner.expect(result.receive.peer_address == "10.0.0.12:7432",
+                  "heartbeat loop should report sender address");
+    runner.expect(result.receive.peer_status.has_value(),
+                  "heartbeat loop should convert received heartbeat to peer status");
+    if (!result.receive.peer_status.has_value()) {
+        return;
+    }
+
+    runner.expect(result.receive.peer_status->node_id == "node-b",
+                  "heartbeat loop should preserve received node id");
+    runner.expect(result.receive.peer_status->priority == 200,
+                  "heartbeat loop should preserve received priority");
+    runner.expect(result.receive.peer_status->healthy,
+                  "heartbeat loop should preserve received health");
+    runner.expect(result.receive.peer_status->heartbeat_seen,
+                  "heartbeat loop should mark received heartbeat seen");
+}
+
+void testHeartbeatLoopReportsMalformedReceive(TestRunner& runner) {
+    FakeHeartbeatTransport transport;
+    transport.receive_result =
+        HeartbeatReceiveResult{.datagram = HeartbeatDatagram{.peer_address = "10.0.0.12:7432",
+                                                             .payload = "version = "},
+                               .timed_out = false,
+                               .timeout_ms = 50,
+                               .error = ""};
+
+    const auto result = runHeartbeatLoopOnce(healthyLocalStatus(), heartbeatPeers(), 50, transport);
+
+    runner.expect(!result.receive.peer_status.has_value(),
+                  "malformed heartbeat should not produce peer status");
+    runner.expect(result.receive.error.starts_with("failed to parse heartbeat message:"),
+                  "malformed heartbeat should report parse error");
+}
+
+void testHeartbeatLoopReportsReceiveTimeout(TestRunner& runner) {
+    FakeHeartbeatTransport transport;
+    transport.receive_result =
+        HeartbeatReceiveResult{.datagram = std::nullopt,
+                               .timed_out = true,
+                               .timeout_ms = 50,
+                               .error = ""};
+
+    const auto result = runHeartbeatLoopOnce(healthyLocalStatus(), heartbeatPeers(), 50, transport);
+
+    runner.expect(result.receive.attempted, "heartbeat loop should attempt timeout receive");
+    runner.expect(result.receive.timed_out, "heartbeat loop should report receive timeout");
+    runner.expect(result.receive.timeout_ms == 50,
+                  "heartbeat loop should preserve receive timeout budget");
+    runner.expect(!result.receive.peer_status.has_value(),
+                  "heartbeat timeout should not produce peer status");
+}
+
+void testHeartbeatLoopReportsTransportErrors(TestRunner& runner) {
+    FakeHeartbeatTransport transport;
+    transport.send_result = FakeHeartbeatTransport::ConfiguredSendResult{.sent = false,
+                                                                         .error = "send failed"};
+    transport.receive_result =
+        HeartbeatReceiveResult{.datagram = std::nullopt,
+                               .timed_out = false,
+                               .timeout_ms = 50,
+                               .error = "receive failed"};
+
+    const auto result = runHeartbeatLoopOnce(healthyLocalStatus(), heartbeatPeers(), 50, transport);
+
+    runner.expect(result.sends.size() == 2,
+                  "heartbeat transport error should still report all sends");
+    if (result.sends.size() == 2) {
+        runner.expect(!result.sends[0].sent, "failed send should be reported");
+        runner.expect(result.sends[0].error == "send failed",
+                      "send error should be preserved");
+    }
+    runner.expect(result.receive.error == "receive failed",
+                  "receive transport error should be preserved");
+    runner.expect(!result.receive.peer_status.has_value(),
+                  "receive transport error should not produce peer status");
+}
+
 void testElectionChoosesHighestHealthyPriority(TestRunner& runner) {
     const std::vector<CandidateNode> candidates{
         CandidateNode{.node_id = "node-a", .priority = 100, .healthy = true},
@@ -1008,6 +1158,21 @@ int main() {
     });
     runner.run("disabled heartbeat transport reports disabled", [&runner] {
         testDisabledHeartbeatTransportReportsDisabled(runner);
+    });
+    runner.run("heartbeat loop sends local heartbeat to peers", [&runner] {
+        testHeartbeatLoopSendsLocalHeartbeatToPeers(runner);
+    });
+    runner.run("heartbeat loop receives peer status", [&runner] {
+        testHeartbeatLoopReceivesPeerStatus(runner);
+    });
+    runner.run("heartbeat loop reports malformed receive", [&runner] {
+        testHeartbeatLoopReportsMalformedReceive(runner);
+    });
+    runner.run("heartbeat loop reports receive timeout", [&runner] {
+        testHeartbeatLoopReportsReceiveTimeout(runner);
+    });
+    runner.run("heartbeat loop reports transport errors", [&runner] {
+        testHeartbeatLoopReportsTransportErrors(runner);
     });
     runner.run("election chooses highest healthy priority", [&runner] {
         testElectionChoosesHighestHealthyPriority(runner);
