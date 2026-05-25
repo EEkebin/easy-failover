@@ -2,6 +2,7 @@
 #include "core/Election.hpp"
 #include "core/FailoverDecision.hpp"
 #include "heartbeat/HeartbeatMessage.hpp"
+#include "heartbeat/HeartbeatTransport.hpp"
 #include "health/HealthCheck.hpp"
 #include "platform/linux/LinuxHealthCommandRunner.hpp"
 
@@ -22,7 +23,13 @@ using easyfailover::FailoverAction;
 using easyfailover::HealthCommandRunner;
 using easyfailover::HealthConfig;
 using easyfailover::HealthStatus;
+using easyfailover::DisabledHeartbeatTransport;
+using easyfailover::HeartbeatDatagram;
 using easyfailover::HeartbeatMessage;
+using easyfailover::HeartbeatReceiveResult;
+using easyfailover::HeartbeatSendResult;
+using easyfailover::HeartbeatTransport;
+using easyfailover::kHeartbeatTransportDisabledError;
 using easyfailover::LinuxHealthCommandRunner;
 using easyfailover::LocalNodeStatus;
 using easyfailover::NodeState;
@@ -89,6 +96,42 @@ class FakeHealthCommandRunner final : public HealthCommandRunner {
     CommandResult result;
     bool was_called = false;
     std::string observed_command;
+    std::int64_t observed_timeout_ms = 0;
+};
+
+class FakeHeartbeatTransport final : public HeartbeatTransport {
+  public:
+    struct ConfiguredSendResult {
+        bool sent = true;
+        std::string error;
+    };
+
+    [[nodiscard]] HeartbeatSendResult send(const std::string& peer_address,
+                                           const std::string& payload) override {
+        send_called = true;
+        sent_peer_address = peer_address;
+        sent_payload = payload;
+        return HeartbeatSendResult{.sent = send_result.sent,
+                                   .peer_address = peer_address,
+                                   .payload = payload,
+                                   .error = send_result.error};
+    }
+
+    [[nodiscard]] HeartbeatReceiveResult receive(const std::int64_t timeout_ms) override {
+        receive_called = true;
+        observed_timeout_ms = timeout_ms;
+        return HeartbeatReceiveResult{.datagram = receive_result.datagram,
+                                      .timed_out = receive_result.timed_out,
+                                      .timeout_ms = timeout_ms,
+                                      .error = receive_result.error};
+    }
+
+    ConfiguredSendResult send_result;
+    HeartbeatReceiveResult receive_result;
+    bool send_called = false;
+    bool receive_called = false;
+    std::string sent_peer_address;
+    std::string sent_payload;
     std::int64_t observed_timeout_ms = 0;
 };
 
@@ -565,6 +608,89 @@ void testHeartbeatMessageConvertsToPeerStatus(TestRunner& runner) {
     runner.expect(peer.heartbeat_seen, "heartbeat peer status should mark heartbeat seen");
 }
 
+void testHeartbeatTransportSendContract(TestRunner& runner) {
+    FakeHeartbeatTransport transport;
+    HeartbeatTransport& base = transport;
+
+    const auto result = base.send("10.0.0.12:7432", "payload");
+
+    runner.expect(result.sent, "fake heartbeat transport should return configured send result");
+    runner.expect(result.peer_address == "10.0.0.12:7432",
+                  "heartbeat send result should include peer address");
+    runner.expect(result.payload == "payload", "heartbeat send result should include payload");
+    runner.expect(transport.send_called, "heartbeat transport send should be called");
+    runner.expect(transport.sent_peer_address == "10.0.0.12:7432",
+                  "heartbeat transport should receive peer address");
+    runner.expect(transport.sent_payload == "payload",
+                  "heartbeat transport should receive serialized payload");
+}
+
+void testHeartbeatTransportReceiveContract(TestRunner& runner) {
+    FakeHeartbeatTransport transport;
+    transport.receive_result =
+        HeartbeatReceiveResult{.datagram = HeartbeatDatagram{.peer_address = "10.0.0.12:7432",
+                                                             .payload = "payload"},
+                               .timed_out = false,
+                               .error = ""};
+    HeartbeatTransport& base = transport;
+
+    const auto result = base.receive(250);
+
+    runner.expect(transport.receive_called, "heartbeat transport receive should be called");
+    runner.expect(transport.observed_timeout_ms == 250,
+                  "heartbeat transport should receive timeout budget");
+    runner.expect(result.datagram.has_value(), "heartbeat transport should return datagram");
+    runner.expect(result.timeout_ms == 250,
+                  "heartbeat receive result should include timeout budget");
+    if (!result.datagram.has_value()) {
+        return;
+    }
+
+    runner.expect(result.datagram->peer_address == "10.0.0.12:7432",
+                  "heartbeat receive result should include sender address");
+    runner.expect(result.datagram->payload == "payload",
+                  "heartbeat receive result should include payload");
+}
+
+void testHeartbeatTransportReceiveTimeoutContract(TestRunner& runner) {
+    FakeHeartbeatTransport transport;
+    transport.receive_result =
+        HeartbeatReceiveResult{.datagram = std::nullopt, .timed_out = true, .error = ""};
+    HeartbeatTransport& base = transport;
+
+    const auto result = base.receive(1);
+
+    runner.expect(!result.datagram.has_value(),
+                  "heartbeat receive timeout should not return a datagram");
+    runner.expect(result.timed_out, "heartbeat receive timeout should be reported");
+    runner.expect(result.timeout_ms == 1,
+                  "heartbeat receive timeout should include timeout budget");
+    runner.expect(result.error.empty(), "heartbeat receive timeout should not be an error");
+}
+
+void testDisabledHeartbeatTransportReportsDisabled(TestRunner& runner) {
+    DisabledHeartbeatTransport transport;
+
+    const auto send_result = transport.send("10.0.0.12:7432", "payload");
+    runner.expect(!send_result.sent, "disabled heartbeat transport should not send");
+    runner.expect(send_result.peer_address == "10.0.0.12:7432",
+                  "disabled heartbeat send should echo peer address");
+    runner.expect(send_result.payload == "payload",
+                  "disabled heartbeat send should echo payload");
+    runner.expect(send_result.error == kHeartbeatTransportDisabledError,
+                  "disabled heartbeat send should report stable error");
+
+    const auto receive_result = transport.receive(1);
+    runner.expect(!receive_result.datagram.has_value(),
+                  "disabled heartbeat transport should not receive datagrams");
+    runner.expect(!receive_result.timed_out,
+                  "disabled heartbeat transport should report disabled, not timeout");
+    runner.expect(receive_result.timeout_ms == 1,
+                  "disabled heartbeat receive should echo timeout budget");
+    runner.expect(receive_result.error == kHeartbeatTransportDisabledError,
+                  "disabled heartbeat receive should report stable error");
+}
+
 void testElectionChoosesHighestHealthyPriority(TestRunner& runner) {
     const std::vector<CandidateNode> candidates{
         CandidateNode{.node_id = "node-a", .priority = 100, .healthy = true},
@@ -870,6 +996,18 @@ int main() {
     });
     runner.run("heartbeat message converts to peer status", [&runner] {
         testHeartbeatMessageConvertsToPeerStatus(runner);
+    });
+    runner.run("heartbeat transport send contract", [&runner] {
+        testHeartbeatTransportSendContract(runner);
+    });
+    runner.run("heartbeat transport receive contract", [&runner] {
+        testHeartbeatTransportReceiveContract(runner);
+    });
+    runner.run("heartbeat transport receive timeout contract", [&runner] {
+        testHeartbeatTransportReceiveTimeoutContract(runner);
+    });
+    runner.run("disabled heartbeat transport reports disabled", [&runner] {
+        testDisabledHeartbeatTransportReportsDisabled(runner);
     });
     runner.run("election chooses highest healthy priority", [&runner] {
         testElectionChoosesHighestHealthyPriority(runner);
