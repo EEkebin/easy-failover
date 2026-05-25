@@ -109,8 +109,11 @@ HeartbeatParseResult parseHeartbeatMessage(const std::string& payload) {
     if (!priority.has_value()) {
         return parseError("heartbeat.priority must be an integer");
     }
-    if (*priority <= 0 || *priority > std::numeric_limits<int>::max()) {
+    if (*priority <= 0) {
         return parseError("heartbeat.priority must be positive");
+    }
+    if (*priority > std::numeric_limits<int>::max()) {
+        return parseError("heartbeat.priority must be within int range");
     }
 
     const auto healthy = boolValue(table, "healthy");
