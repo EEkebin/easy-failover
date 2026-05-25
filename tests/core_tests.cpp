@@ -23,7 +23,6 @@ using easyfailover::HealthCommandRunner;
 using easyfailover::HealthConfig;
 using easyfailover::HealthStatus;
 using easyfailover::HeartbeatMessage;
-using easyfailover::kHeartbeatMessageVersion;
 using easyfailover::LinuxHealthCommandRunner;
 using easyfailover::LocalNodeStatus;
 using easyfailover::NodeState;
@@ -406,8 +405,6 @@ void testHeartbeatMessageRoundTrip(TestRunner& runner) {
         return;
     }
 
-    runner.expect(result.message->version == kHeartbeatMessageVersion,
-                  "heartbeat version should round trip");
     runner.expect(result.message->node_id == "node-a", "heartbeat node_id should round trip");
     runner.expect(result.message->priority == 150, "heartbeat priority should round trip");
     runner.expect(result.message->healthy, "heartbeat health should round trip");

@@ -11,7 +11,6 @@ namespace easyfailover {
 constexpr int kHeartbeatMessageVersion = 1;
 
 struct HeartbeatMessage {
-    int version = kHeartbeatMessageVersion;
     std::string node_id;
     int priority = 1;
     bool healthy = false;

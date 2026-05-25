@@ -64,7 +64,7 @@ constexpr std::string_view kHeartbeatType = "heartbeat";
 
 std::string serializeHeartbeatMessage(const HeartbeatMessage& message) {
     toml::table table{
-        {"version", message.version},
+        {"version", kHeartbeatMessageVersion},
         {"type", std::string{kHeartbeatType}},
         {"node_id", message.node_id},
         {"priority", message.priority},
@@ -131,8 +131,7 @@ HeartbeatParseResult parseHeartbeatMessage(const std::string& payload) {
         return parseError("heartbeat.state is invalid");
     }
 
-    return HeartbeatParseResult{.message = HeartbeatMessage{.version = kHeartbeatMessageVersion,
-                                                            .node_id = *node_id,
+    return HeartbeatParseResult{.message = HeartbeatMessage{.node_id = *node_id,
                                                             .priority = static_cast<int>(*priority),
                                                             .healthy = *healthy,
                                                             .state = *parsed_state},
