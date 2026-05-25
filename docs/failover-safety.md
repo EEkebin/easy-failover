@@ -58,5 +58,5 @@ Current behavior is intentionally non-mutating:
 - election and failover decision helpers are pure local logic;
 - Linux VIP manager methods only log what they would do;
 - `--dry-run` does not change system state;
-- heartbeat networking, health command execution, quorum, fencing, and daemon lifecycle are not
+- heartbeat networking, runtime health state, quorum, fencing, and daemon lifecycle are not
   implemented yet.
