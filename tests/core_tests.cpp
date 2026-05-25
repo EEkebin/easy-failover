@@ -5,6 +5,7 @@
 #include "heartbeat/HeartbeatMessage.hpp"
 #include "heartbeat/HeartbeatTransport.hpp"
 #include "health/HealthCheck.hpp"
+#include "platform/NetworkCommandRunner.hpp"
 #include "platform/linux/LinuxHealthCommandRunner.hpp"
 
 #include <algorithm>
@@ -33,6 +34,10 @@ using easyfailover::HeartbeatTransport;
 using easyfailover::kHeartbeatTransportDisabledError;
 using easyfailover::LinuxHealthCommandRunner;
 using easyfailover::LocalNodeStatus;
+using easyfailover::DryRunNetworkCommandRunner;
+using easyfailover::NetworkCommandRequest;
+using easyfailover::NetworkCommandResult;
+using easyfailover::NetworkCommandRunner;
 using easyfailover::NodeState;
 using easyfailover::PeerConfig;
 using easyfailover::PeerStatus;
@@ -138,6 +143,19 @@ class FakeHeartbeatTransport final : public HeartbeatTransport {
     std::string sent_peer_address;
     std::string sent_payload;
     std::int64_t observed_timeout_ms = 0;
+};
+
+class FakeNetworkCommandRunner final : public NetworkCommandRunner {
+  public:
+    [[nodiscard]] NetworkCommandResult run(const NetworkCommandRequest& request) override {
+        was_called = true;
+        observed_request = request;
+        return result;
+    }
+
+    NetworkCommandResult result;
+    bool was_called = false;
+    NetworkCommandRequest observed_request;
 };
 
 Config validConfig() {
@@ -841,6 +859,93 @@ void testHeartbeatLoopReportsTransportErrors(TestRunner& runner) {
                   "receive transport error should not produce peer status");
 }
 
+void testNetworkCommandRunnerCapturesCommandMetadata(TestRunner& runner) {
+    FakeNetworkCommandRunner runner_impl;
+    runner_impl.result =
+        NetworkCommandResult{.request = NetworkCommandRequest{.executable = "ip",
+                                                              .arguments = {"addr", "show"},
+                                                              .dry_run = false},
+                             .exit_code = 0,
+                             .executed = true,
+                             .dry_run = false,
+                             .error = ""};
+    NetworkCommandRunner& base = runner_impl;
+
+    const auto request = NetworkCommandRequest{.executable = "ip",
+                                               .arguments = {"addr", "add", "10.0.0.50/24",
+                                                             "dev", "eth0"},
+                                               .dry_run = false};
+    const auto result = base.run(request);
+
+    runner.expect(runner_impl.was_called, "network command runner should be called");
+    runner.expect(runner_impl.observed_request.executable == "ip",
+                  "network command runner should receive executable");
+    runner.expect(runner_impl.observed_request.arguments.size() == 5,
+                  "network command runner should receive arguments");
+    runner.expect(runner_impl.observed_request.arguments[0] == "addr",
+                  "network command runner should preserve first argument");
+    runner.expect(!runner_impl.observed_request.dry_run,
+                  "network command runner should receive dry-run flag");
+    runner.expect(result.executed, "fake network command runner should return configured result");
+}
+
+void testNetworkCommandRunnerReportsFailure(TestRunner& runner) {
+    FakeNetworkCommandRunner runner_impl;
+    runner_impl.result =
+        NetworkCommandResult{.request = NetworkCommandRequest{.executable = "ip",
+                                                              .arguments = {"addr", "add"},
+                                                              .dry_run = false},
+                             .exit_code = 2,
+                             .executed = true,
+                             .dry_run = false,
+                             .error = "ip failed"};
+
+    const auto result = runner_impl.run(NetworkCommandRequest{.executable = "ip",
+                                                              .arguments = {"addr", "add"},
+                                                              .dry_run = false});
+
+    runner.expect(result.executed, "failed network command should still report execution");
+    runner.expect(result.exit_code == 2, "network command failure should report exit code");
+    runner.expect(result.error == "ip failed", "network command failure should report error");
+}
+
+void testDryRunNetworkCommandRunnerDoesNotExecute(TestRunner& runner) {
+    DryRunNetworkCommandRunner runner_impl;
+    const auto request = NetworkCommandRequest{.executable = "arping",
+                                               .arguments = {"-A", "-I", "eth0", "10.0.0.50"},
+                                               .dry_run = true};
+
+    const auto result = runner_impl.run(request);
+
+    runner.expect(!result.executed, "dry-run network command should not execute");
+    runner.expect(result.dry_run, "dry-run network command should report dry-run");
+    runner.expect(result.exit_code == 0, "dry-run network command should report success");
+    runner.expect(result.error.empty(), "dry-run network command should not report error");
+    runner.expect(result.request.executable == "arping",
+                  "dry-run network command should preserve executable");
+    runner.expect(result.request.arguments.size() == 4,
+                  "dry-run network command should preserve arguments");
+    runner.expect(result.request.arguments[0] == "-A",
+                  "dry-run network command should preserve argument order");
+}
+
+void testDryRunNetworkCommandRunnerForcesNonExecution(TestRunner& runner) {
+    DryRunNetworkCommandRunner runner_impl;
+    const auto request = NetworkCommandRequest{.executable = "ip",
+                                               .arguments = {"addr", "del", "10.0.0.50/24",
+                                                             "dev", "eth0"},
+                                               .dry_run = false};
+
+    const auto result = runner_impl.run(request);
+
+    runner.expect(!result.executed,
+                  "dry-run implementation should not execute even for non-dry-run request");
+    runner.expect(result.dry_run,
+                  "dry-run implementation should report its effective dry-run behavior");
+    runner.expect(!result.request.dry_run,
+                  "dry-run implementation should preserve requested dry-run flag");
+}
+
 void testElectionChoosesHighestHealthyPriority(TestRunner& runner) {
     const std::vector<CandidateNode> candidates{
         CandidateNode{.node_id = "node-a", .priority = 100, .healthy = true},
@@ -1173,6 +1278,18 @@ int main() {
     });
     runner.run("heartbeat loop reports transport errors", [&runner] {
         testHeartbeatLoopReportsTransportErrors(runner);
+    });
+    runner.run("network command runner captures command metadata", [&runner] {
+        testNetworkCommandRunnerCapturesCommandMetadata(runner);
+    });
+    runner.run("network command runner reports failure", [&runner] {
+        testNetworkCommandRunnerReportsFailure(runner);
+    });
+    runner.run("dry-run network command runner does not execute", [&runner] {
+        testDryRunNetworkCommandRunnerDoesNotExecute(runner);
+    });
+    runner.run("dry-run network command runner forces non-execution", [&runner] {
+        testDryRunNetworkCommandRunnerForcesNonExecution(runner);
     });
     runner.run("election chooses highest healthy priority", [&runner] {
         testElectionChoosesHighestHealthyPriority(runner);
