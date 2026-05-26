@@ -1,6 +1,7 @@
 #include "config/Config.hpp"
 #include "core/FailoverNode.hpp"
 #include "platform/linux/LinuxVipManager.hpp"
+#include "runtime/DaemonRuntime.hpp"
 
 #include <cstdlib>
 #include <exception>
@@ -61,15 +62,33 @@ int main(int argc, char** argv) {
         initializeLogging();
 
         const auto config = easyfailover::loadConfigFromFile(config_path);
-        const auto validation_errors = config.validate();
-        if (!validation_errors.empty()) {
-            logValidationErrors(validation_errors);
-            return EXIT_FAILURE;
-        }
-
         if (validate_config) {
+            const auto validation_errors = config.validate();
+            if (!validation_errors.empty()) {
+                logValidationErrors(validation_errors);
+                return EXIT_FAILURE;
+            }
+
             spdlog::info("config '{}' is valid", config_path);
             return EXIT_SUCCESS;
+        }
+
+        easyfailover::LinuxVipManager vip_manager;
+        const auto lifecycle_result = easyfailover::runDaemonLifecycleOnce(
+            easyfailover::DaemonLifecycleRequest{
+                .config = config,
+                .options = easyfailover::DaemonRuntimeOptions{.dry_run = dry_run},
+                .initial_state = easyfailover::DaemonLifecycleState::Stopped},
+            vip_manager);
+        spdlog::info("daemon lifecycle state={} detail='{}'",
+                     easyfailover::toString(lifecycle_result.final_state),
+                     lifecycle_result.detail);
+        if (!lifecycle_result.validation_errors.empty()) {
+            logValidationErrors(lifecycle_result.validation_errors);
+            return EXIT_FAILURE;
+        }
+        if (lifecycle_result.final_state == easyfailover::DaemonLifecycleState::Faulted) {
+            return EXIT_FAILURE;
         }
 
         easyfailover::FailoverNode node{config.node_id, config.vip.address, config.priority};
@@ -80,15 +99,6 @@ int main(int argc, char** argv) {
         spdlog::info("health command='{}' interval_ms={} timeout_ms={}", config.health.command,
                      config.health.interval_ms, config.health.timeout_ms);
         spdlog::info("configured peers={}", config.peers.size());
-
-        easyfailover::LinuxVipManager vip_manager;
-        if (dry_run) {
-            spdlog::info("dry-run mode enabled; no network state will be changed");
-            static_cast<void>(vip_manager.addVip(config.vip.address, config.vip.interface));
-            static_cast<void>(vip_manager.announceVip(config.vip.address, config.vip.interface));
-        } else {
-            spdlog::info("real VIP movement is not implemented yet; no network state changed");
-        }
 
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {
