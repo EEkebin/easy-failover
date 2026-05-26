@@ -59,7 +59,8 @@ The sample config lives at `configs/easy-failover.toml`. A minimal config only n
 peer/server pool. See [`docs/config-reference.md`](docs/config-reference.md) for the current TOML
 schema, defaults, and validation rules.
 
-Failover safety notes live in [`docs/failover-safety.md`](docs/failover-safety.md). Real VIP
+Failover safety notes live in [`docs/failover-safety.md`](docs/failover-safety.md). Linux
+capability notes live in [`docs/linux-capabilities.md`](docs/linux-capabilities.md). Real VIP
 movement is intentionally blocked until heartbeat, health, quorum/split-brain, and explicit
 operator-safety controls are designed and implemented.
 
