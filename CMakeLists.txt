@@ -59,6 +59,7 @@ add_library(
     src/platform/linux/LinuxHostname.cpp
     src/platform/linux/LinuxVipManager.cpp
     src/runtime/DaemonRuntime.cpp
+    src/runtime/RuntimeLog.cpp
     src/runtime/ShutdownSignal.cpp)
 
 target_include_directories(easy-failover-core PUBLIC src)

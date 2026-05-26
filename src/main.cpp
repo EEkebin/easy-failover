@@ -2,6 +2,7 @@
 #include "core/FailoverNode.hpp"
 #include "platform/linux/LinuxVipManager.hpp"
 #include "runtime/DaemonRuntime.hpp"
+#include "runtime/RuntimeLog.hpp"
 #include "runtime/ShutdownSignal.hpp"
 
 #include <cstdlib>
@@ -94,9 +95,15 @@ int main(int argc, char** argv) {
                 .shutdown_state = &shutdown_state,
                 .config_prevalidated = true},
             vip_manager);
-        spdlog::info("daemon lifecycle state={} detail='{}'",
-                     easyfailover::toString(lifecycle_result.final_state),
-                     lifecycle_result.detail);
+        spdlog::info("{}", easyfailover::formatRuntimeLifecycleEvent(
+                              lifecycle_result,
+                              easyfailover::RuntimeLogContext{.node_id = config.node_id,
+                                                              .dry_run = dry_run}));
+        for (std::size_t index = 0; index < lifecycle_result.vip_operations.size(); ++index) {
+            spdlog::info("{}",
+                         easyfailover::formatRuntimeVipOperationEvent(
+                             lifecycle_result.vip_operations.at(index), index));
+        }
         if (!lifecycle_result.validation_errors.empty()) {
             logValidationErrors(lifecycle_result.validation_errors);
             return EXIT_FAILURE;

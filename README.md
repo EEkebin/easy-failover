@@ -54,6 +54,13 @@ Run in dry-run mode:
 ./build/easy-failover --config configs/easy-failover.toml --dry-run
 ```
 
+## Runtime Logging
+
+The normal runtime path emits stable logfmt-style runtime events. Current event names are
+`daemon_lifecycle_result` and `vip_operation`. Fields include lifecycle state, dry-run status,
+validation error count, VIP operation count, VIP address/interface, operation type, success, and
+error detail.
+
 ## Configuration
 
 The sample config lives at `configs/easy-failover.toml`. A minimal config only needs the VIP and

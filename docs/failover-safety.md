@@ -61,6 +61,8 @@ Current behavior is intentionally non-mutating:
 - Linux VIP manager methods build `iproute2` and `arping` command requests through a dry-run
   command runner by default;
 - the daemon lifecycle helper runs a single non-mutating iteration only;
+- runtime lifecycle and VIP operation observations are logged as stable `key=value` events for
+  auditability;
 - SIGINT/SIGTERM handling records a shutdown request for the runtime to observe, but there is no
   long-running daemon loop yet;
 - `--dry-run` does not change system state;
