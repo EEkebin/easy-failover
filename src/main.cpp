@@ -62,13 +62,13 @@ int main(int argc, char** argv) {
         initializeLogging();
 
         const auto config = easyfailover::loadConfigFromFile(config_path);
-        const auto validation_errors = config.validate();
-        if (!validation_errors.empty()) {
-            logValidationErrors(validation_errors);
-            return EXIT_FAILURE;
-        }
-
         if (validate_config) {
+            const auto validation_errors = config.validate();
+            if (!validation_errors.empty()) {
+                logValidationErrors(validation_errors);
+                return EXIT_FAILURE;
+            }
+
             spdlog::info("config '{}' is valid", config_path);
             return EXIT_SUCCESS;
         }
@@ -92,6 +92,13 @@ int main(int argc, char** argv) {
         spdlog::info("daemon lifecycle state={} detail='{}'",
                      easyfailover::toString(lifecycle_result.final_state),
                      lifecycle_result.detail);
+        if (!lifecycle_result.validation_errors.empty()) {
+            logValidationErrors(lifecycle_result.validation_errors);
+            return EXIT_FAILURE;
+        }
+        if (lifecycle_result.final_state == easyfailover::DaemonLifecycleState::Faulted) {
+            return EXIT_FAILURE;
+        }
 
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {

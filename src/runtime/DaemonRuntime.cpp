@@ -26,7 +26,6 @@ DaemonLifecycleResult runDaemonLifecycleOnce(const DaemonLifecycleRequest& reque
     }
 
     result.started = request.initial_state == DaemonLifecycleState::Stopped;
-    result.final_state = DaemonLifecycleState::Running;
     result.iteration_ran = true;
 
     if (request.options.dry_run) {
