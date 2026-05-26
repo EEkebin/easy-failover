@@ -29,16 +29,22 @@ DaemonLifecycleResult runDaemonLifecycleOnce(const DaemonLifecycleRequest& reque
     result.iteration_ran = true;
 
     if (request.options.dry_run) {
-        result.vip_operations.push_back(
-            vip_manager.addVip(request.config.vip.address, request.config.vip.interface));
-        result.vip_operations.push_back(
-            vip_manager.announceVip(request.config.vip.address, request.config.vip.interface));
-        for (const auto& operation : result.vip_operations) {
-            if (!operation.dry_run) {
-                result.final_state = DaemonLifecycleState::Faulted;
-                result.detail = "dry-run lifecycle received non-dry-run VIP operation";
-                return result;
-            }
+        const auto add_result =
+            vip_manager.addVip(request.config.vip.address, request.config.vip.interface);
+        result.vip_operations.push_back(add_result);
+        if (!add_result.dry_run) {
+            result.final_state = DaemonLifecycleState::Faulted;
+            result.detail = "dry-run lifecycle received non-dry-run VIP operation";
+            return result;
+        }
+
+        const auto announce_result =
+            vip_manager.announceVip(request.config.vip.address, request.config.vip.interface);
+        result.vip_operations.push_back(announce_result);
+        if (!announce_result.dry_run) {
+            result.final_state = DaemonLifecycleState::Faulted;
+            result.detail = "dry-run lifecycle received non-dry-run VIP operation";
+            return result;
         }
         result.detail = "dry-run lifecycle iteration completed";
     } else {

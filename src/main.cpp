@@ -73,15 +73,6 @@ int main(int argc, char** argv) {
             return EXIT_SUCCESS;
         }
 
-        easyfailover::FailoverNode node{config.node_id, config.vip.address, config.priority};
-        node.printStatus();
-
-        spdlog::info("heartbeat bind={} interval_ms={} timeout_ms={}", config.heartbeat.bind,
-                     config.heartbeat.interval_ms, config.heartbeat.timeout_ms);
-        spdlog::info("health command='{}' interval_ms={} timeout_ms={}", config.health.command,
-                     config.health.interval_ms, config.health.timeout_ms);
-        spdlog::info("configured peers={}", config.peers.size());
-
         easyfailover::LinuxVipManager vip_manager;
         const auto lifecycle_result = easyfailover::runDaemonLifecycleOnce(
             easyfailover::DaemonLifecycleRequest{
@@ -99,6 +90,15 @@ int main(int argc, char** argv) {
         if (lifecycle_result.final_state == easyfailover::DaemonLifecycleState::Faulted) {
             return EXIT_FAILURE;
         }
+
+        easyfailover::FailoverNode node{config.node_id, config.vip.address, config.priority};
+        node.printStatus();
+
+        spdlog::info("heartbeat bind={} interval_ms={} timeout_ms={}", config.heartbeat.bind,
+                     config.heartbeat.interval_ms, config.heartbeat.timeout_ms);
+        spdlog::info("health command='{}' interval_ms={} timeout_ms={}", config.health.command,
+                     config.health.interval_ms, config.health.timeout_ms);
+        spdlog::info("configured peers={}", config.peers.size());
 
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {

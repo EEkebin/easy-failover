@@ -20,7 +20,7 @@ struct DaemonRuntimeOptions {
 };
 
 struct DaemonLifecycleRequest {
-    Config config;
+    const Config& config;
     DaemonRuntimeOptions options;
     DaemonLifecycleState initial_state = DaemonLifecycleState::Stopped;
 };

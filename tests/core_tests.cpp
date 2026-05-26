@@ -1262,8 +1262,10 @@ void testDaemonLifecycleRejectsNonDryRunVipResult(TestRunner& runner) {
                   "dry-run lifecycle safety fault should not report clean stop");
     runner.expect(result.detail == "dry-run lifecycle received non-dry-run VIP operation",
                   "dry-run lifecycle should report stable VIP safety detail");
-    runner.expect(result.vip_operations.size() == 2,
-                  "dry-run lifecycle should preserve unsafe VIP operation observations");
+    runner.expect(result.vip_operations.size() == 1,
+                  "dry-run lifecycle should stop after first unsafe VIP operation");
+    runner.expect(!vip_manager.announce_called,
+                  "dry-run lifecycle should not continue after unsafe VIP operation");
 }
 
 void testDaemonLifecycleStateNames(TestRunner& runner) {
