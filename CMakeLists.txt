@@ -58,13 +58,18 @@ add_library(
     src/platform/linux/LinuxHealthCommandRunner.cpp
     src/platform/linux/LinuxHostname.cpp
     src/platform/linux/LinuxVipManager.cpp
-    src/runtime/DaemonRuntime.cpp)
+    src/runtime/DaemonRuntime.cpp
+    src/runtime/ShutdownSignal.cpp)
 
 target_include_directories(easy-failover-core PUBLIC src)
 
 target_link_libraries(
     easy-failover-core
     PUBLIC spdlog::spdlog tomlplusplus::tomlplusplus)
+
+if(BUILD_TESTING)
+    target_compile_definitions(easy-failover-core PRIVATE EASY_FAILOVER_BUILD_TESTING)
+endif()
 
 easy_failover_target_warnings(easy-failover-core)
 
@@ -79,6 +84,7 @@ easy_failover_target_warnings(easy-failover)
 if(BUILD_TESTING)
     add_executable(easy-failover-tests tests/core_tests.cpp)
     target_link_libraries(easy-failover-tests PRIVATE easy-failover-core)
+    target_compile_definitions(easy-failover-tests PRIVATE EASY_FAILOVER_BUILD_TESTING)
     easy_failover_target_warnings(easy-failover-tests)
 
     add_test(NAME easy-failover-core-tests COMMAND easy-failover-tests)

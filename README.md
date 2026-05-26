@@ -12,7 +12,8 @@ The project is licensed under Apache-2.0.
 early WIP. The current codebase is a compiling project skeleton with CLI parsing, logging,
 TOML config parsing, config validation, basic node state types, a simple election helper, and
 non-mutating Linux VIP command construction. It includes a one-iteration daemon lifecycle skeleton,
-but it does not move VIPs, run heartbeat networking, or run a real daemon loop yet.
+and minimal SIGINT/SIGTERM shutdown observation, but it does not move VIPs, run heartbeat
+networking, or run a real daemon loop yet.
 
 ## Platform Targets
 

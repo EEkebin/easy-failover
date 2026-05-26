@@ -9,6 +9,7 @@
 #include "platform/linux/LinuxHealthCommandRunner.hpp"
 #include "platform/linux/LinuxVipManager.hpp"
 #include "runtime/DaemonRuntime.hpp"
+#include "runtime/ShutdownSignal.hpp"
 
 #include <algorithm>
 #include <exception>
@@ -48,6 +49,8 @@ using easyfailover::NetworkCommandRunner;
 using easyfailover::NodeState;
 using easyfailover::PeerConfig;
 using easyfailover::PeerStatus;
+using easyfailover::ShutdownSignal;
+using easyfailover::ShutdownSignalState;
 using easyfailover::VipOperationType;
 using easyfailover::VipOperationResult;
 using easyfailover::VipManager;
@@ -56,6 +59,8 @@ using easyfailover::decideFailoverAction;
 using easyfailover::evaluateHealthCheck;
 using easyfailover::parseHeartbeatMessage;
 using easyfailover::peerStatusFromHeartbeat;
+using easyfailover::pollShutdownSignals;
+using easyfailover::resetPendingShutdownSignalForTest;
 using easyfailover::runDaemonLifecycleOnce;
 using easyfailover::runHeartbeatLoopOnce;
 using easyfailover::serializeHeartbeatMessage;
@@ -1313,6 +1318,30 @@ void testDaemonLifecycleFaultsOnVipAnnounceFailure(TestRunner& runner) {
                   "dry-run lifecycle should report announce attempt before failure");
 }
 
+void testDaemonLifecycleStopsWhenShutdownAlreadyRequested(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    auto shutdown_state = ShutdownSignalState{};
+    shutdown_state.requestShutdown(ShutdownSignal::Terminate);
+
+    const auto result = runDaemonLifecycleOnce(
+        DaemonLifecycleRequest{.config = validConfig(),
+                               .options = DaemonRuntimeOptions{.dry_run = true},
+                               .initial_state = DaemonLifecycleState::Stopped,
+                               .shutdown_state = &shutdown_state},
+        vip_manager);
+
+    runner.expect(result.final_state == DaemonLifecycleState::Stopped,
+                  "shutdown-requested lifecycle should remain stopped");
+    runner.expect(!result.started, "shutdown-requested lifecycle should not start");
+    runner.expect(!result.iteration_ran,
+                  "shutdown-requested lifecycle should not run an iteration");
+    runner.expect(result.stopped, "shutdown-requested lifecycle should report clean stop");
+    runner.expect(!vip_manager.add_called,
+                  "shutdown-requested lifecycle should not run VIP operations");
+    runner.expect(result.detail == "shutdown requested by terminate signal",
+                  "shutdown-requested lifecycle should report shutdown detail");
+}
+
 void testDaemonLifecycleStateNames(TestRunner& runner) {
     runner.expect(easyfailover::toString(DaemonLifecycleState::Stopped) == "stopped",
                   "stopped lifecycle state should stringify");
@@ -1320,6 +1349,41 @@ void testDaemonLifecycleStateNames(TestRunner& runner) {
                   "running lifecycle state should stringify");
     runner.expect(easyfailover::toString(DaemonLifecycleState::Faulted) == "faulted",
                   "faulted lifecycle state should stringify");
+}
+
+void testShutdownSignalStateDefaultsToNotRequested(TestRunner& runner) {
+    const auto shutdown_state = ShutdownSignalState{};
+
+    runner.expect(!shutdown_state.shutdownRequested(),
+                  "shutdown state should default to not requested");
+    runner.expect(shutdown_state.signal() == ShutdownSignal::None,
+                  "shutdown state should default to no signal");
+    runner.expect(shutdown_state.reason() == "shutdown not requested",
+                  "shutdown state should report not-requested reason");
+}
+
+void testShutdownSignalStateRecordsRequestedSignal(TestRunner& runner) {
+    auto shutdown_state = ShutdownSignalState{};
+    shutdown_state.requestShutdown(ShutdownSignal::Interrupt);
+
+    runner.expect(shutdown_state.shutdownRequested(),
+                  "shutdown state should report requested shutdown");
+    runner.expect(shutdown_state.signal() == ShutdownSignal::Interrupt,
+                  "shutdown state should preserve requested signal");
+    runner.expect(shutdown_state.reason() == "shutdown requested by interrupt signal",
+                  "shutdown state should report interrupt reason");
+    runner.expect(easyfailover::toString(shutdown_state.signal()) == "interrupt",
+                  "shutdown signal should stringify");
+}
+
+void testShutdownSignalPollKeepsNoSignalClear(TestRunner& runner) {
+    resetPendingShutdownSignalForTest();
+    auto shutdown_state = ShutdownSignalState{};
+
+    pollShutdownSignals(shutdown_state);
+
+    runner.expect(!shutdown_state.shutdownRequested(),
+                  "poll without pending signal should not request shutdown");
 }
 
 void testElectionChoosesHighestHealthyPriority(TestRunner& runner) {
@@ -1706,8 +1770,20 @@ int main() {
     runner.run("daemon lifecycle faults on VIP announce failure", [&runner] {
         testDaemonLifecycleFaultsOnVipAnnounceFailure(runner);
     });
+    runner.run("daemon lifecycle stops when shutdown already requested", [&runner] {
+        testDaemonLifecycleStopsWhenShutdownAlreadyRequested(runner);
+    });
     runner.run("daemon lifecycle state names", [&runner] {
         testDaemonLifecycleStateNames(runner);
+    });
+    runner.run("shutdown signal state defaults to not requested", [&runner] {
+        testShutdownSignalStateDefaultsToNotRequested(runner);
+    });
+    runner.run("shutdown signal state records requested signal", [&runner] {
+        testShutdownSignalStateRecordsRequestedSignal(runner);
+    });
+    runner.run("shutdown signal poll keeps no signal clear", [&runner] {
+        testShutdownSignalPollKeepsNoSignalClear(runner);
     });
     runner.run("election chooses highest healthy priority", [&runner] {
         testElectionChoosesHighestHealthyPriority(runner);

@@ -61,6 +61,8 @@ Current behavior is intentionally non-mutating:
 - Linux VIP manager methods build `iproute2` and `arping` command requests through a dry-run
   command runner by default;
 - the daemon lifecycle helper runs a single non-mutating iteration only;
+- SIGINT/SIGTERM handling records a shutdown request for the runtime to observe, but there is no
+  long-running daemon loop yet;
 - `--dry-run` does not change system state;
-- heartbeat networking, runtime health state, quorum, fencing, signal handling, and the real daemon
-  loop are not implemented yet.
+- heartbeat networking, runtime health state, quorum, fencing, and the real daemon loop are not
+  implemented yet.
