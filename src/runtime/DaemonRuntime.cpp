@@ -2,19 +2,6 @@
 
 namespace easyfailover {
 
-std::string toString(const DaemonLifecycleState state) {
-    switch (state) {
-    case DaemonLifecycleState::Stopped:
-        return "stopped";
-    case DaemonLifecycleState::Running:
-        return "running";
-    case DaemonLifecycleState::Faulted:
-        return "faulted";
-    }
-
-    return "unknown";
-}
-
 DaemonLifecycleResult runDaemonLifecycleOnce(const DaemonLifecycleRequest& request,
                                              VipManager& vip_manager) {
     auto result = DaemonLifecycleResult{.initial_state = request.initial_state,
@@ -26,15 +13,15 @@ DaemonLifecycleResult runDaemonLifecycleOnce(const DaemonLifecycleRequest& reque
                                         .vip_operations = {},
                                         .detail = ""};
 
+    if (request.initial_state == DaemonLifecycleState::Faulted) {
+        result.detail = "daemon lifecycle cannot start from faulted state";
+        return result;
+    }
+
     result.validation_errors = request.config.validate();
     if (!result.validation_errors.empty()) {
         result.final_state = DaemonLifecycleState::Faulted;
         result.detail = "config validation failed";
-        return result;
-    }
-
-    if (request.initial_state == DaemonLifecycleState::Faulted) {
-        result.detail = "daemon lifecycle cannot start from faulted state";
         return result;
     }
 
@@ -47,6 +34,13 @@ DaemonLifecycleResult runDaemonLifecycleOnce(const DaemonLifecycleRequest& reque
             vip_manager.addVip(request.config.vip.address, request.config.vip.interface));
         result.vip_operations.push_back(
             vip_manager.announceVip(request.config.vip.address, request.config.vip.interface));
+        for (const auto& operation : result.vip_operations) {
+            if (!operation.dry_run) {
+                result.final_state = DaemonLifecycleState::Faulted;
+                result.detail = "dry-run lifecycle received non-dry-run VIP operation";
+                return result;
+            }
+        }
         result.detail = "dry-run lifecycle iteration completed";
     } else {
         result.detail = "real VIP movement is not implemented yet; no network state changed";

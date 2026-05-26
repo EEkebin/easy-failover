@@ -4,6 +4,7 @@
 #include "platform/VipManager.hpp"
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace easyfailover {
@@ -35,7 +36,18 @@ struct DaemonLifecycleResult {
     std::string detail;
 };
 
-[[nodiscard]] std::string toString(DaemonLifecycleState state);
+[[nodiscard]] constexpr std::string_view toString(const DaemonLifecycleState state) {
+    switch (state) {
+    case DaemonLifecycleState::Stopped:
+        return "stopped";
+    case DaemonLifecycleState::Running:
+        return "running";
+    case DaemonLifecycleState::Faulted:
+        return "faulted";
+    }
+
+    return "unknown";
+}
 
 [[nodiscard]] DaemonLifecycleResult runDaemonLifecycleOnce(
     const DaemonLifecycleRequest& request,
