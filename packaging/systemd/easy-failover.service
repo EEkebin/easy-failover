@@ -11,6 +11,7 @@ Restart=always
 RestartSec=2s
 
 # TODO: Add least-privilege hardening once real VIP movement exists.
+# TODO: See docs/linux-capabilities.md before changing granted capabilities.
 # TODO: Use CAP_NET_ADMIN and CAP_NET_RAW instead of broad root privileges where possible.
 # TODO: Evaluate ProtectSystem=strict with explicit writable paths.
 # TODO: Enable NoNewPrivileges=true after validating required capabilities.

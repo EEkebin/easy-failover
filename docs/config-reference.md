@@ -44,7 +44,9 @@ interface = "eth0"
 - `interface`: required non-empty Linux network interface name.
 
 No real VIP movement is implemented yet. Current VIP manager methods build dry-run `iproute2` and
-`arping` command requests behind explicit safety controls.
+`arping` command requests behind explicit safety controls. See
+[`linux-capabilities.md`](linux-capabilities.md) for the Linux privileges expected before future
+real mutation is enabled.
 
 ## Heartbeat
 

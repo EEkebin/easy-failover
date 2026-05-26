@@ -28,7 +28,8 @@ Before easy-failover performs real network changes, the runtime should require:
 
 The first real VIP backend should still be conservative. It should shell out to `iproute2` and
 `arping` only behind explicit safety controls. A later native netlink backend can replace shelling
-out after the behavior is well covered.
+out after the behavior is well covered. The expected Linux privileges are documented in
+[`linux-capabilities.md`](linux-capabilities.md).
 
 ## Quorum
 
