@@ -80,6 +80,7 @@ easy_failover_target_warnings(easy-failover)
 if(BUILD_TESTING)
     add_executable(easy-failover-tests tests/core_tests.cpp)
     target_link_libraries(easy-failover-tests PRIVATE easy-failover-core)
+    target_compile_definitions(easy-failover-tests PRIVATE EASY_FAILOVER_BUILD_TESTING)
     easy_failover_target_warnings(easy-failover-tests)
 
     add_test(NAME easy-failover-core-tests COMMAND easy-failover-tests)

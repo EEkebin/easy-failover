@@ -46,6 +46,9 @@ class ShutdownSignalState {
 
 [[nodiscard]] SignalHandlerInstallResult installShutdownSignalHandlers();
 void pollShutdownSignals(ShutdownSignalState& state);
+
+#if defined(EASY_FAILOVER_BUILD_TESTING)
 void resetPendingShutdownSignalForTest();
+#endif
 
 } // namespace easyfailover
