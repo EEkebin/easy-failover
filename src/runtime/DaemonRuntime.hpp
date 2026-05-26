@@ -2,6 +2,7 @@
 
 #include "config/Config.hpp"
 #include "platform/VipManager.hpp"
+#include "runtime/ShutdownSignal.hpp"
 
 #include <string>
 #include <string_view>
@@ -23,6 +24,7 @@ struct DaemonLifecycleRequest {
     const Config& config;
     DaemonRuntimeOptions options;
     DaemonLifecycleState initial_state = DaemonLifecycleState::Stopped;
+    const ShutdownSignalState* shutdown_state = nullptr;
 };
 
 struct DaemonLifecycleResult {

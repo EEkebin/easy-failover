@@ -2,6 +2,7 @@
 #include "core/FailoverNode.hpp"
 #include "platform/linux/LinuxVipManager.hpp"
 #include "runtime/DaemonRuntime.hpp"
+#include "runtime/ShutdownSignal.hpp"
 
 #include <cstdlib>
 #include <exception>
@@ -60,6 +61,10 @@ int main(int argc, char** argv) {
 
     try {
         initializeLogging();
+        const auto signal_handlers = easyfailover::installShutdownSignalHandlers();
+        if (!signal_handlers.success) {
+            spdlog::warn("one or more shutdown signal handlers could not be installed");
+        }
 
         const auto config = easyfailover::loadConfigFromFile(config_path);
         if (validate_config) {
@@ -74,11 +79,14 @@ int main(int argc, char** argv) {
         }
 
         easyfailover::LinuxVipManager vip_manager;
+        auto shutdown_state = easyfailover::ShutdownSignalState{};
+        easyfailover::pollShutdownSignals(shutdown_state);
         const auto lifecycle_result = easyfailover::runDaemonLifecycleOnce(
             easyfailover::DaemonLifecycleRequest{
                 .config = config,
                 .options = easyfailover::DaemonRuntimeOptions{.dry_run = dry_run},
-                .initial_state = easyfailover::DaemonLifecycleState::Stopped},
+                .initial_state = easyfailover::DaemonLifecycleState::Stopped,
+                .shutdown_state = &shutdown_state},
             vip_manager);
         spdlog::info("daemon lifecycle state={} detail='{}'",
                      easyfailover::toString(lifecycle_result.final_state),

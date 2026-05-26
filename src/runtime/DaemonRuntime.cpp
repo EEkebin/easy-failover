@@ -49,6 +49,13 @@ DaemonLifecycleResult runDaemonLifecycleOnce(const DaemonLifecycleRequest& reque
         return result;
     }
 
+    if (request.shutdown_state != nullptr && request.shutdown_state->shutdownRequested()) {
+        result.final_state = DaemonLifecycleState::Stopped;
+        result.stopped = true;
+        result.detail = std::string{request.shutdown_state->reason()};
+        return result;
+    }
+
     result.started = request.initial_state == DaemonLifecycleState::Stopped;
     result.iteration_ran = true;
 
