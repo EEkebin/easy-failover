@@ -8,6 +8,7 @@
 #include "platform/NetworkCommandRunner.hpp"
 #include "platform/linux/LinuxHealthCommandRunner.hpp"
 #include "platform/linux/LinuxVipManager.hpp"
+#include "runtime/DaemonRuntime.hpp"
 
 #include <algorithm>
 #include <exception>
@@ -22,6 +23,9 @@ namespace {
 using easyfailover::CandidateNode;
 using easyfailover::CommandResult;
 using easyfailover::Config;
+using easyfailover::DaemonLifecycleRequest;
+using easyfailover::DaemonLifecycleState;
+using easyfailover::DaemonRuntimeOptions;
 using easyfailover::FailoverAction;
 using easyfailover::HealthCommandRunner;
 using easyfailover::HealthConfig;
@@ -45,11 +49,14 @@ using easyfailover::NodeState;
 using easyfailover::PeerConfig;
 using easyfailover::PeerStatus;
 using easyfailover::VipOperationType;
+using easyfailover::VipOperationResult;
+using easyfailover::VipManager;
 using easyfailover::chooseHighestPriorityHealthyNode;
 using easyfailover::decideFailoverAction;
 using easyfailover::evaluateHealthCheck;
 using easyfailover::parseHeartbeatMessage;
 using easyfailover::peerStatusFromHeartbeat;
+using easyfailover::runDaemonLifecycleOnce;
 using easyfailover::runHeartbeatLoopOnce;
 using easyfailover::serializeHeartbeatMessage;
 using easyfailover::loadConfigFromFile;
@@ -162,6 +169,64 @@ class FakeNetworkCommandRunner final : public NetworkCommandRunner {
     bool was_called = false;
     NetworkCommandRequest observed_request;
     std::vector<NetworkCommandRequest> observed_requests;
+};
+
+class FakeVipManager final : public VipManager {
+  public:
+    [[nodiscard]] VipOperationResult addVip(const std::string& address,
+                                            const std::string& interface) override {
+        add_called = true;
+        add_address = address;
+        add_interface = interface;
+        operations.push_back(VipOperationType::Add);
+        return VipOperationResult{.request = {.type = VipOperationType::Add,
+                                              .address = address,
+                                              .interface = interface,
+                                              .dry_run = true},
+                                  .success = true,
+                                  .dry_run = true,
+                                  .commands = {},
+                                  .error = ""};
+    }
+
+    [[nodiscard]] VipOperationResult removeVip(const std::string& address,
+                                               const std::string& interface) override {
+        remove_called = true;
+        operations.push_back(VipOperationType::Remove);
+        return VipOperationResult{.request = {.type = VipOperationType::Remove,
+                                              .address = address,
+                                              .interface = interface,
+                                              .dry_run = true},
+                                  .success = true,
+                                  .dry_run = true,
+                                  .commands = {},
+                                  .error = ""};
+    }
+
+    [[nodiscard]] VipOperationResult announceVip(const std::string& address,
+                                                 const std::string& interface) override {
+        announce_called = true;
+        announce_address = address;
+        announce_interface = interface;
+        operations.push_back(VipOperationType::Announce);
+        return VipOperationResult{.request = {.type = VipOperationType::Announce,
+                                              .address = address,
+                                              .interface = interface,
+                                              .dry_run = true},
+                                  .success = true,
+                                  .dry_run = true,
+                                  .commands = {},
+                                  .error = ""};
+    }
+
+    bool add_called = false;
+    bool remove_called = false;
+    bool announce_called = false;
+    std::string add_address;
+    std::string add_interface;
+    std::string announce_address;
+    std::string announce_interface;
+    std::vector<VipOperationType> operations;
 };
 
 Config validConfig() {
@@ -1090,6 +1155,103 @@ void testLinuxVipManagerPropagatesCommandFailure(TestRunner& runner) {
     runner.expect(result.commands.size() == 1, "VIP operation should report command result");
 }
 
+void testDaemonLifecycleStartsRunsDryRunAndStops(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    const auto config = validConfig();
+
+    const auto result = runDaemonLifecycleOnce(
+        DaemonLifecycleRequest{.config = config,
+                               .options = DaemonRuntimeOptions{.dry_run = true},
+                               .initial_state = DaemonLifecycleState::Stopped},
+        vip_manager);
+
+    runner.expect(result.initial_state == DaemonLifecycleState::Stopped,
+                  "daemon lifecycle should preserve initial stopped state");
+    runner.expect(result.started, "daemon lifecycle should report start from stopped state");
+    runner.expect(result.iteration_ran, "daemon lifecycle should run one iteration");
+    runner.expect(result.stopped, "daemon lifecycle should stop after one skeleton iteration");
+    runner.expect(result.final_state == DaemonLifecycleState::Stopped,
+                  "daemon lifecycle skeleton should finish stopped");
+    runner.expect(result.detail == "dry-run lifecycle iteration completed",
+                  "daemon lifecycle should report dry-run completion");
+    runner.expect(vip_manager.add_called, "dry-run lifecycle should request VIP add");
+    runner.expect(vip_manager.announce_called, "dry-run lifecycle should request VIP announce");
+    runner.expect(!vip_manager.remove_called, "dry-run lifecycle should not request VIP remove");
+    runner.expect(vip_manager.add_address == config.vip.address,
+                  "daemon lifecycle should pass VIP address to add");
+    runner.expect(vip_manager.add_interface == config.vip.interface,
+                  "daemon lifecycle should pass VIP interface to add");
+    runner.expect(result.vip_operations.size() == 2,
+                  "daemon lifecycle should report dry-run VIP operations");
+}
+
+void testDaemonLifecycleNonDryRunDoesNotMutate(TestRunner& runner) {
+    FakeVipManager vip_manager;
+
+    const auto result = runDaemonLifecycleOnce(
+        DaemonLifecycleRequest{.config = validConfig(),
+                               .options = DaemonRuntimeOptions{.dry_run = false},
+                               .initial_state = DaemonLifecycleState::Stopped},
+        vip_manager);
+
+    runner.expect(result.started, "non-dry-run lifecycle should still start skeleton");
+    runner.expect(result.iteration_ran, "non-dry-run lifecycle should run one skeleton iteration");
+    runner.expect(result.vip_operations.empty(),
+                  "non-dry-run skeleton should not run VIP operations yet");
+    runner.expect(!vip_manager.add_called, "non-dry-run skeleton should not add VIP");
+    runner.expect(!vip_manager.announce_called, "non-dry-run skeleton should not announce VIP");
+    runner.expect(result.detail == "real VIP movement is not implemented yet; no network state changed",
+                  "non-dry-run lifecycle should report non-mutating status");
+}
+
+void testDaemonLifecycleRejectsInvalidConfig(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    auto config = validConfig();
+    config.node_id.clear();
+
+    const auto result = runDaemonLifecycleOnce(
+        DaemonLifecycleRequest{.config = config,
+                               .options = DaemonRuntimeOptions{.dry_run = true},
+                               .initial_state = DaemonLifecycleState::Stopped},
+        vip_manager);
+
+    runner.expect(!result.validation_errors.empty(),
+                  "daemon lifecycle should report validation errors");
+    runner.expect(result.final_state == DaemonLifecycleState::Faulted,
+                  "invalid config should fault lifecycle");
+    runner.expect(!result.iteration_ran, "invalid config should not run lifecycle iteration");
+    runner.expect(!vip_manager.add_called, "invalid config should not run VIP operations");
+    runner.expect(result.detail == "config validation failed",
+                  "invalid config should report stable detail");
+}
+
+void testDaemonLifecycleRejectsFaultedInitialState(TestRunner& runner) {
+    FakeVipManager vip_manager;
+
+    const auto result = runDaemonLifecycleOnce(
+        DaemonLifecycleRequest{.config = validConfig(),
+                               .options = DaemonRuntimeOptions{.dry_run = true},
+                               .initial_state = DaemonLifecycleState::Faulted},
+        vip_manager);
+
+    runner.expect(result.final_state == DaemonLifecycleState::Faulted,
+                  "faulted lifecycle should stay faulted");
+    runner.expect(!result.started, "faulted lifecycle should not start");
+    runner.expect(!result.iteration_ran, "faulted lifecycle should not run iteration");
+    runner.expect(!vip_manager.add_called, "faulted lifecycle should not run VIP operations");
+    runner.expect(result.detail == "daemon lifecycle cannot start from faulted state",
+                  "faulted lifecycle should report stable detail");
+}
+
+void testDaemonLifecycleStateNames(TestRunner& runner) {
+    runner.expect(easyfailover::toString(DaemonLifecycleState::Stopped) == "stopped",
+                  "stopped lifecycle state should stringify");
+    runner.expect(easyfailover::toString(DaemonLifecycleState::Running) == "running",
+                  "running lifecycle state should stringify");
+    runner.expect(easyfailover::toString(DaemonLifecycleState::Faulted) == "faulted",
+                  "faulted lifecycle state should stringify");
+}
+
 void testElectionChoosesHighestHealthyPriority(TestRunner& runner) {
     const std::vector<CandidateNode> candidates{
         CandidateNode{.node_id = "node-a", .priority = 100, .healthy = true},
@@ -1452,6 +1614,21 @@ int main() {
     });
     runner.run("Linux VIP manager propagates command failure", [&runner] {
         testLinuxVipManagerPropagatesCommandFailure(runner);
+    });
+    runner.run("daemon lifecycle starts runs dry-run and stops", [&runner] {
+        testDaemonLifecycleStartsRunsDryRunAndStops(runner);
+    });
+    runner.run("daemon lifecycle non-dry-run does not mutate", [&runner] {
+        testDaemonLifecycleNonDryRunDoesNotMutate(runner);
+    });
+    runner.run("daemon lifecycle rejects invalid config", [&runner] {
+        testDaemonLifecycleRejectsInvalidConfig(runner);
+    });
+    runner.run("daemon lifecycle rejects faulted initial state", [&runner] {
+        testDaemonLifecycleRejectsFaultedInitialState(runner);
+    });
+    runner.run("daemon lifecycle state names", [&runner] {
+        testDaemonLifecycleStateNames(runner);
     });
     runner.run("election chooses highest healthy priority", [&runner] {
         testElectionChoosesHighestHealthyPriority(runner);

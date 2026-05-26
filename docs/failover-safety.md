@@ -60,6 +60,7 @@ Current behavior is intentionally non-mutating:
 - election and failover decision helpers are pure local logic;
 - Linux VIP manager methods build `iproute2` and `arping` command requests through a dry-run
   command runner by default;
+- the daemon lifecycle helper runs a single non-mutating iteration only;
 - `--dry-run` does not change system state;
-- heartbeat networking, runtime health state, quorum, fencing, and daemon lifecycle are not
-  implemented yet.
+- heartbeat networking, runtime health state, quorum, fencing, signal handling, and the real daemon
+  loop are not implemented yet.
