@@ -2,6 +2,30 @@
 
 namespace easyfailover {
 
+namespace {
+
+[[nodiscard]] bool recordDryRunVipOperation(DaemonLifecycleResult& lifecycle_result,
+                                            const VipOperationResult& operation_result) {
+    lifecycle_result.vip_operations.push_back(operation_result);
+    if (!operation_result.dry_run) {
+        lifecycle_result.final_state = DaemonLifecycleState::Faulted;
+        lifecycle_result.detail = "dry-run lifecycle received non-dry-run VIP operation";
+        return false;
+    }
+
+    if (!operation_result.success) {
+        lifecycle_result.final_state = DaemonLifecycleState::Faulted;
+        lifecycle_result.detail = operation_result.error.empty()
+                                      ? "dry-run lifecycle VIP operation failed"
+                                      : operation_result.error;
+        return false;
+    }
+
+    return true;
+}
+
+} // namespace
+
 DaemonLifecycleResult runDaemonLifecycleOnce(const DaemonLifecycleRequest& request,
                                              VipManager& vip_manager) {
     auto result = DaemonLifecycleResult{.initial_state = request.initial_state,
@@ -31,19 +55,13 @@ DaemonLifecycleResult runDaemonLifecycleOnce(const DaemonLifecycleRequest& reque
     if (request.options.dry_run) {
         const auto add_result =
             vip_manager.addVip(request.config.vip.address, request.config.vip.interface);
-        result.vip_operations.push_back(add_result);
-        if (!add_result.dry_run) {
-            result.final_state = DaemonLifecycleState::Faulted;
-            result.detail = "dry-run lifecycle received non-dry-run VIP operation";
+        if (!recordDryRunVipOperation(result, add_result)) {
             return result;
         }
 
         const auto announce_result =
             vip_manager.announceVip(request.config.vip.address, request.config.vip.interface);
-        result.vip_operations.push_back(announce_result);
-        if (!announce_result.dry_run) {
-            result.final_state = DaemonLifecycleState::Faulted;
-            result.detail = "dry-run lifecycle received non-dry-run VIP operation";
+        if (!recordDryRunVipOperation(result, announce_result)) {
             return result;
         }
         result.detail = "dry-run lifecycle iteration completed";

@@ -183,10 +183,10 @@ class FakeVipManager final : public VipManager {
                                               .address = address,
                                               .interface = interface,
                                               .dry_run = operation_dry_run},
-                                  .success = true,
+                                  .success = add_success,
                                   .dry_run = operation_dry_run,
                                   .commands = {},
-                                  .error = ""};
+                                  .error = add_error};
     }
 
     [[nodiscard]] VipOperationResult removeVip(const std::string& address,
@@ -213,10 +213,10 @@ class FakeVipManager final : public VipManager {
                                               .address = address,
                                               .interface = interface,
                                               .dry_run = operation_dry_run},
-                                  .success = true,
+                                  .success = announce_success,
                                   .dry_run = operation_dry_run,
                                   .commands = {},
-                                  .error = ""};
+                                  .error = announce_error};
     }
 
     bool add_called = false;
@@ -227,6 +227,10 @@ class FakeVipManager final : public VipManager {
     std::string announce_address;
     std::string announce_interface;
     bool operation_dry_run = true;
+    bool add_success = true;
+    bool announce_success = true;
+    std::string add_error;
+    std::string announce_error;
     std::vector<VipOperationType> operations;
 };
 
@@ -1268,6 +1272,47 @@ void testDaemonLifecycleRejectsNonDryRunVipResult(TestRunner& runner) {
                   "dry-run lifecycle should not continue after unsafe VIP operation");
 }
 
+void testDaemonLifecycleFaultsOnVipAddFailure(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    vip_manager.add_success = false;
+    vip_manager.add_error = "add failed";
+
+    const auto result = runDaemonLifecycleOnce(
+        DaemonLifecycleRequest{.config = validConfig(),
+                               .options = DaemonRuntimeOptions{.dry_run = true},
+                               .initial_state = DaemonLifecycleState::Stopped},
+        vip_manager);
+
+    runner.expect(result.final_state == DaemonLifecycleState::Faulted,
+                  "dry-run lifecycle should fault on VIP add failure");
+    runner.expect(result.detail == "add failed",
+                  "dry-run lifecycle should preserve VIP add failure detail");
+    runner.expect(result.vip_operations.size() == 1,
+                  "dry-run lifecycle should stop after VIP add failure");
+    runner.expect(!vip_manager.announce_called,
+                  "dry-run lifecycle should not announce after VIP add failure");
+}
+
+void testDaemonLifecycleFaultsOnVipAnnounceFailure(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    vip_manager.announce_success = false;
+
+    const auto result = runDaemonLifecycleOnce(
+        DaemonLifecycleRequest{.config = validConfig(),
+                               .options = DaemonRuntimeOptions{.dry_run = true},
+                               .initial_state = DaemonLifecycleState::Stopped},
+        vip_manager);
+
+    runner.expect(result.final_state == DaemonLifecycleState::Faulted,
+                  "dry-run lifecycle should fault on VIP announce failure");
+    runner.expect(result.detail == "dry-run lifecycle VIP operation failed",
+                  "dry-run lifecycle should use stable detail when VIP error is empty");
+    runner.expect(result.vip_operations.size() == 2,
+                  "dry-run lifecycle should preserve add and announce observations");
+    runner.expect(vip_manager.announce_called,
+                  "dry-run lifecycle should report announce attempt before failure");
+}
+
 void testDaemonLifecycleStateNames(TestRunner& runner) {
     runner.expect(easyfailover::toString(DaemonLifecycleState::Stopped) == "stopped",
                   "stopped lifecycle state should stringify");
@@ -1654,6 +1699,12 @@ int main() {
     });
     runner.run("daemon lifecycle rejects non-dry-run VIP result", [&runner] {
         testDaemonLifecycleRejectsNonDryRunVipResult(runner);
+    });
+    runner.run("daemon lifecycle faults on VIP add failure", [&runner] {
+        testDaemonLifecycleFaultsOnVipAddFailure(runner);
+    });
+    runner.run("daemon lifecycle faults on VIP announce failure", [&runner] {
+        testDaemonLifecycleFaultsOnVipAnnounceFailure(runner);
     });
     runner.run("daemon lifecycle state names", [&runner] {
         testDaemonLifecycleStateNames(runner);
