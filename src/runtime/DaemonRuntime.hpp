@@ -25,6 +25,7 @@ struct DaemonLifecycleRequest {
     DaemonRuntimeOptions options;
     DaemonLifecycleState initial_state = DaemonLifecycleState::Stopped;
     const ShutdownSignalState* shutdown_state = nullptr;
+    bool config_prevalidated = false;
 };
 
 struct DaemonLifecycleResult {

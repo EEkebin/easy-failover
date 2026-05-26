@@ -42,11 +42,13 @@ DaemonLifecycleResult runDaemonLifecycleOnce(const DaemonLifecycleRequest& reque
         return result;
     }
 
-    result.validation_errors = request.config.validate();
-    if (!result.validation_errors.empty()) {
-        result.final_state = DaemonLifecycleState::Faulted;
-        result.detail = "config validation failed";
-        return result;
+    if (!request.config_prevalidated) {
+        result.validation_errors = request.config.validate();
+        if (!result.validation_errors.empty()) {
+            result.final_state = DaemonLifecycleState::Faulted;
+            result.detail = "config validation failed";
+            return result;
+        }
     }
 
     if (request.shutdown_state != nullptr && request.shutdown_state->shutdownRequested()) {
