@@ -67,6 +67,10 @@ target_link_libraries(
     easy-failover-core
     PUBLIC spdlog::spdlog tomlplusplus::tomlplusplus)
 
+if(BUILD_TESTING)
+    target_compile_definitions(easy-failover-core PRIVATE EASY_FAILOVER_BUILD_TESTING)
+endif()
+
 easy_failover_target_warnings(easy-failover-core)
 
 add_executable(easy-failover src/main.cpp)

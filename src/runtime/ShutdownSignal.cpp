@@ -98,8 +98,10 @@ void pollShutdownSignals(ShutdownSignalState& state) {
     }
 }
 
+#if defined(EASY_FAILOVER_BUILD_TESTING)
 void resetPendingShutdownSignalForTest() {
     g_pending_shutdown_signal = kNoSignal;
 }
+#endif
 
 } // namespace easyfailover

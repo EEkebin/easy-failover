@@ -61,11 +61,6 @@ int main(int argc, char** argv) {
 
     try {
         initializeLogging();
-        const auto signal_handlers = easyfailover::installShutdownSignalHandlers();
-        if (!signal_handlers.success) {
-            spdlog::warn("one or more shutdown signal handlers could not be installed");
-        }
-
         const auto config = easyfailover::loadConfigFromFile(config_path);
         if (validate_config) {
             const auto validation_errors = config.validate();
@@ -76,6 +71,11 @@ int main(int argc, char** argv) {
 
             spdlog::info("config '{}' is valid", config_path);
             return EXIT_SUCCESS;
+        }
+
+        const auto signal_handlers = easyfailover::installShutdownSignalHandlers();
+        if (!signal_handlers.success) {
+            spdlog::warn("one or more shutdown signal handlers could not be installed");
         }
 
         easyfailover::LinuxVipManager vip_manager;
