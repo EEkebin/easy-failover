@@ -61,8 +61,9 @@ Initial error codes should be stable strings, including:
 - `internal_error`
 
 Responses should avoid exposing command output, environment variables, process arguments, or
-secrets. The current config model does not contain secrets, but future fields should be classified
-before they are returned.
+secrets. Config fields must be treated as potentially sensitive because free-form strings can embed
+credentials, tokens, URLs, headers, or shell arguments. The first API implementation should redact
+or omit sensitive fields by default, including `health.command`.
 
 ## Endpoints
 
@@ -129,7 +130,7 @@ Draft response:
     "timeout_ms": 3000
   },
   "health": {
-    "command": "curl -fsS http://127.0.0.1:8080/health",
+    "command_redacted": true,
     "interval_ms": 1000,
     "timeout_ms": 2000
   },
@@ -151,7 +152,9 @@ Draft response:
 }
 ```
 
-The endpoint should return the effective in-memory config, not raw TOML.
+The endpoint should return the effective in-memory config, not raw TOML. Free-form command strings
+and future sensitive values should be omitted or replaced with explicit redaction markers rather
+than returned verbatim.
 
 ### `POST /api/v1/config/validate`
 
