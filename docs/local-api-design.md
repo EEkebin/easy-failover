@@ -89,12 +89,13 @@ Draft response:
     "local_owner": false
   },
   "lifecycle": {
-    "state": "stopped",
+    "initial_state": "stopped",
+    "final_state": "stopped",
     "detail": "dry-run lifecycle iteration completed",
     "dry_run": true,
-    "started_this_iteration": true,
+    "started": true,
     "iteration_ran": true,
-    "stopped_this_iteration": true
+    "stopped": true
   },
   "heartbeat": {
     "bind": "0.0.0.0:7432",
@@ -104,7 +105,7 @@ Draft response:
   },
   "health": {
     "status": "healthy",
-    "detail": "health command is not configured"
+    "detail": "no health command configured"
   }
 }
 ```
@@ -210,10 +211,18 @@ Draft response:
       "sequence": 1,
       "event": "daemon_lifecycle_result",
       "level": "info",
-      "message": "event=daemon_lifecycle_result node_id=\"node-a\" final_state=stopped",
+      "message": "event=daemon_lifecycle_result node_id=\"node-a\" initial_state=stopped final_state=stopped started=true iteration_ran=true stopped=true dry_run=true validation_errors=0 vip_operations=2 detail=\"dry-run lifecycle iteration completed\"",
       "fields": {
         "node_id": "node-a",
-        "final_state": "stopped"
+        "initial_state": "stopped",
+        "final_state": "stopped",
+        "started": true,
+        "iteration_ran": true,
+        "stopped": true,
+        "dry_run": true,
+        "validation_errors": 0,
+        "vip_operations": 2,
+        "detail": "dry-run lifecycle iteration completed"
       }
     }
   ]
