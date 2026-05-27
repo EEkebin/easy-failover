@@ -9,19 +9,6 @@ namespace easyfailover {
 
 namespace {
 
-[[nodiscard]] std::string operationName(const VipOperationType type) {
-    switch (type) {
-    case VipOperationType::Add:
-        return "add";
-    case VipOperationType::Remove:
-        return "remove";
-    case VipOperationType::Announce:
-        return "announce";
-    }
-
-    return "unknown";
-}
-
 [[nodiscard]] std::string addressWithoutPrefix(const std::string& address) {
     const auto prefix_pos = address.find('/');
     if (prefix_pos == std::string::npos) {
@@ -120,7 +107,7 @@ VipOperationResult LinuxVipManager::runOperation(const VipOperationType type,
     }
 
     if (result.success) {
-        spdlog::info("{} VIP {} on interface {}{}", operationName(type), address, interface,
+        spdlog::info("{} VIP {} on interface {}{}", toString(type), address, interface,
                      effective_dry_run ? " (dry-run)" : "");
     }
 

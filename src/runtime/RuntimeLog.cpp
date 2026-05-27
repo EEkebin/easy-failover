@@ -70,10 +70,10 @@ std::string formatRuntimeLifecycleEvent(const DaemonLifecycleResult& result,
 }
 
 std::string formatRuntimeVipOperationEvent(const VipOperationResult& result,
-                                           const std::size_t index) {
+                                           const std::size_t zero_based_index) {
     auto output = std::ostringstream{};
     output << "event=vip_operation"
-           << " index=" << index
+           << " zero_based_index=" << zero_based_index
            << " operation=" << toString(result.request.type)
            << " address=" << quotedValue(result.request.address)
            << " interface=" << quotedValue(result.request.interface)

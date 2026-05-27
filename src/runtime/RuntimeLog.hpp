@@ -13,25 +13,12 @@ struct RuntimeLogContext {
     bool dry_run = true;
 };
 
-[[nodiscard]] constexpr std::string_view toString(const VipOperationType type) {
-    switch (type) {
-    case VipOperationType::Add:
-        return "add";
-    case VipOperationType::Remove:
-        return "remove";
-    case VipOperationType::Announce:
-        return "announce";
-    }
-
-    return "unknown";
-}
-
 [[nodiscard]] std::string formatRuntimeLifecycleEvent(
     const DaemonLifecycleResult& result,
     const RuntimeLogContext& context);
 
 [[nodiscard]] std::string formatRuntimeVipOperationEvent(
     const VipOperationResult& result,
-    std::size_t index);
+    std::size_t zero_based_index);
 
 } // namespace easyfailover

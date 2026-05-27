@@ -1443,8 +1443,8 @@ void testRuntimeVipOperationLogEventIncludesStableFields(TestRunner& runner) {
 
     runner.expect(event.find("event=vip_operation") != std::string::npos,
                   "runtime VIP event should include event name");
-    runner.expect(event.find("index=1") != std::string::npos,
-                  "runtime VIP event should include operation index");
+    runner.expect(event.find("zero_based_index=1") != std::string::npos,
+                  "runtime VIP event should include zero-based operation index");
     runner.expect(event.find("operation=announce") != std::string::npos,
                   "runtime VIP event should include operation type");
     runner.expect(event.find("address=\"10.0.0.50/24\"") != std::string::npos,

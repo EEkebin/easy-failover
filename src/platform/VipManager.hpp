@@ -3,6 +3,7 @@
 #include "platform/NetworkCommandRunner.hpp"
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace easyfailover {
@@ -12,6 +13,19 @@ enum class VipOperationType {
     Remove,
     Announce,
 };
+
+[[nodiscard]] constexpr std::string_view toString(const VipOperationType type) {
+    switch (type) {
+    case VipOperationType::Add:
+        return "add";
+    case VipOperationType::Remove:
+        return "remove";
+    case VipOperationType::Announce:
+        return "announce";
+    }
+
+    return "unknown";
+}
 
 struct VipOperationRequest {
     VipOperationType type = VipOperationType::Add;
