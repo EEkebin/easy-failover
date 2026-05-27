@@ -4,8 +4,8 @@ easy-failover may eventually include an optional Next.js dashboard under `web/`.
 No frontend implementation exists yet.
 
 The dashboard should talk to a future local API exposed by the agent. The API should be disabled
-by default, bind to `127.0.0.1:8743` by default, and be read-only at first. The planned API
-contract is tracked in [`local-api-design.md`](local-api-design.md).
+by default, bind to `127.0.0.1:8743`, and be read-only at first. The planned API contract is
+tracked in [`local-api-design.md`](local-api-design.md).
 
 ## Planned Views
 
