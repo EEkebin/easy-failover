@@ -1472,7 +1472,7 @@ void testRuntimeLogEventEscapesQuotedValues(TestRunner& runner) {
         .stopped = false,
         .validation_errors = {},
         .vip_operations = {},
-        .detail = "failed \"quoted\"\n\r\tdetail",
+        .detail = "failed \"quoted\"\n\r\tdetail\x1B\x7F",
     };
 
     const auto event = formatRuntimeLifecycleEvent(
@@ -1480,7 +1480,7 @@ void testRuntimeLogEventEscapesQuotedValues(TestRunner& runner) {
 
     runner.expect(event.find("node_id=\"node\\\\a\"") != std::string::npos,
                   "runtime event should escape backslashes");
-    runner.expect(event.find("detail=\"failed \\\"quoted\\\"\\n\\r\\tdetail\"") !=
+    runner.expect(event.find("detail=\"failed \\\"quoted\\\"\\n\\r\\tdetail\\x1B\\x7F\"") !=
                       std::string::npos,
                   "runtime event should escape quotes and control characters");
     runner.expect(event.find('\n') == std::string::npos,
@@ -1489,6 +1489,10 @@ void testRuntimeLogEventEscapesQuotedValues(TestRunner& runner) {
                   "runtime event should not contain raw carriage returns");
     runner.expect(event.find('\t') == std::string::npos,
                   "runtime event should not contain raw tabs");
+    runner.expect(event.find('\x1B') == std::string::npos,
+                  "runtime event should not contain raw escape characters");
+    runner.expect(event.find('\x7F') == std::string::npos,
+                  "runtime event should not contain raw delete characters");
 }
 
 void testElectionChoosesHighestHealthyPriority(TestRunner& runner) {

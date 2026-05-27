@@ -1,5 +1,7 @@
 #include "runtime/RuntimeLog.hpp"
 
+#include <array>
+#include <cstddef>
 #include <sstream>
 
 namespace easyfailover {
@@ -11,10 +13,13 @@ namespace {
 }
 
 [[nodiscard]] std::string quotedValue(const std::string_view value) {
+    constexpr auto kHexDigits = std::array<char, 16>{'0', '1', '2', '3', '4', '5', '6', '7',
+                                                     '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'};
     auto escaped = std::string{};
     escaped.reserve(value.size());
 
     for (const auto character : value) {
+        const auto byte = static_cast<unsigned char>(character);
         switch (character) {
         case '\n':
             escaped += "\\n";
@@ -31,7 +36,13 @@ namespace {
             escaped.push_back(character);
             break;
         default:
-            escaped.push_back(character);
+            if (byte < 0x20 || byte == 0x7F) {
+                escaped += "\\x";
+                escaped.push_back(kHexDigits.at(byte >> 4U));
+                escaped.push_back(kHexDigits.at(byte & 0x0FU));
+            } else {
+                escaped.push_back(character);
+            }
             break;
         }
     }
