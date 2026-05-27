@@ -13,7 +13,7 @@ The first API implementation should be:
 - read-only by default with `api.read_only = true`;
 - versioned under `/api/v1`;
 - JSON only;
-- local-process status only, with no cluster-wide truth claims beyond observed local runtime state.
+- local process status only, with no cluster-wide truth claims beyond observed local runtime state.
 
 The API must not expose ownership-changing actions, privileged VIP operations, shell command
 execution, daemon control, config writes, or dashboard write actions in this first shape.
@@ -92,9 +92,9 @@ Draft response:
     "state": "stopped",
     "detail": "dry-run lifecycle iteration completed",
     "dry_run": true,
-    "started": true,
+    "started_this_iteration": true,
     "iteration_ran": true,
-    "stopped": true
+    "stopped_this_iteration": true
   },
   "heartbeat": {
     "bind": "0.0.0.0:7432",
@@ -184,6 +184,17 @@ Draft response:
 ```
 
 The validator should use the same config loading and validation rules as `--validate-config`.
+
+Validation should return HTTP `200` with `valid=false` when the submitted TOML parses and validation
+finds config errors. The standard error envelope is for request/API errors, such as malformed JSON,
+unsupported `format`, missing `config`, oversized request body, or internal failures. Initial status
+code guidance:
+
+- `200`: request was well-formed and validation completed, regardless of whether the candidate
+  config is valid;
+- `400`: malformed JSON, missing required fields, unsupported `format`, or TOML parse failure;
+- `413`: request body exceeds the configured validation limit;
+- `500`: unexpected validation service failure.
 
 ### `GET /api/v1/events`
 
