@@ -33,8 +33,10 @@ read_only = true
 - `bind`: listener address used only when `enabled = true`.
 - `read_only`: must stay `true` for this first API shape.
 
-If `api.enabled = true` and `api.read_only = false`, the first API implementation should reject the
-configuration until write behavior and authentication are designed separately.
+If `api.enabled = true` and `api.read_only = false`, the first API implementation should refuse to
+start the API listener until write behavior and authentication are designed separately. This does
+not need to become a general `Config::validate()` rule unless the API listener exists and the
+project decides that non-read-only API config should be invalid globally.
 
 ## Response Rules
 
@@ -208,7 +210,7 @@ Draft response:
 ```
 
 Events should correspond to structured runtime log fields when possible. The endpoint should bound
-memory use and support a future `?limit=` parameter.
+its memory usage and support a future `?limit=` parameter.
 
 ## Deferred Work
 
