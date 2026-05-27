@@ -47,18 +47,20 @@ Error responses should use this shape:
 ```json
 {
   "error": {
-    "code": "validation_failed",
-    "message": "config validation failed",
-    "details": []
+    "code": "bad_request",
+    "message": "request body must be valid JSON",
+    "details": [
+      "unexpected token at byte 1"
+    ]
   }
 }
 ```
 
 Initial error codes should be stable strings, including:
 
+- `bad_request`
 - `not_found`
 - `method_not_allowed`
-- `validation_failed`
 - `api_disabled`
 - `internal_error`
 
