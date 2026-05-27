@@ -68,8 +68,9 @@ peer/server pool. See [`docs/config-reference.md`](docs/config-reference.md) for
 schema, defaults, and validation rules.
 
 Failover safety notes live in [`docs/failover-safety.md`](docs/failover-safety.md). Linux
-capability notes live in [`docs/linux-capabilities.md`](docs/linux-capabilities.md). The future
-read-only local API shape is documented in [`docs/local-api-design.md`](docs/local-api-design.md).
+capability notes live in [`docs/linux-capabilities.md`](docs/linux-capabilities.md). The local API
+skeleton evaluates disabled/read-only startup state only; the future read-only API shape is
+documented in [`docs/local-api-design.md`](docs/local-api-design.md).
 Real VIP movement is intentionally blocked until heartbeat, health, quorum/split-brain, and
 explicit operator-safety controls are designed and implemented.
 

@@ -1,8 +1,9 @@
 # Local API Design
 
 easy-failover will eventually expose a local HTTP API for status inspection, configuration
-visibility, validation, and recent runtime events. This document defines the first API shape before
-any listener or server implementation is added.
+visibility, validation, and recent runtime events. The current implementation evaluates API startup
+configuration but does not open a listener or serve endpoints yet. This document defines the first
+API shape before endpoint behavior is added.
 
 ## Scope
 
@@ -29,14 +30,13 @@ bind = "127.0.0.1:8743"
 read_only = true
 ```
 
-- `enabled`: when `false`, no socket is opened.
+- `enabled`: when `false`, no socket is opened and the API startup state is disabled.
 - `bind`: listener address used only when `enabled = true`.
 - `read_only`: must stay `true` for this first API shape.
 
 If `api.enabled = true` and `api.read_only = false`, the first API implementation should refuse to
-start the API listener until write behavior and authentication are designed separately. This does
-not need to become a general `Config::validate()` rule unless the API listener exists and the
-project decides that non-read-only API config should be invalid globally.
+start the API skeleton until write behavior and authentication are designed separately. This is an
+API startup rule, not a general `Config::validate()` rule.
 
 ## Response Rules
 
