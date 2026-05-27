@@ -15,10 +15,25 @@ namespace {
     escaped.reserve(value.size());
 
     for (const auto character : value) {
-        if (character == '\\' || character == '"') {
+        switch (character) {
+        case '\n':
+            escaped += "\\n";
+            break;
+        case '\r':
+            escaped += "\\r";
+            break;
+        case '\t':
+            escaped += "\\t";
+            break;
+        case '\\':
+        case '"':
             escaped.push_back('\\');
+            escaped.push_back(character);
+            break;
+        default:
+            escaped.push_back(character);
+            break;
         }
-        escaped.push_back(character);
     }
 
     return "\"" + escaped + "\"";
