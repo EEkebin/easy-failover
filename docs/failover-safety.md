@@ -53,6 +53,9 @@ Any future remote API that can affect ownership must require authentication, be 
 and avoid unauthenticated remote write access. Privileged actions should not be exposed on a network
 listener by default.
 
+The first local API shape is read-only and disabled by default. Its endpoint design is documented
+in [`local-api-design.md`](local-api-design.md).
+
 ## Current Status
 
 Current behavior is intentionally non-mutating:
