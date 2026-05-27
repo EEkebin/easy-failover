@@ -9,6 +9,7 @@
 #include "platform/linux/LinuxHealthCommandRunner.hpp"
 #include "platform/linux/LinuxVipManager.hpp"
 #include "runtime/DaemonRuntime.hpp"
+#include "runtime/RuntimeLog.hpp"
 #include "runtime/ShutdownSignal.hpp"
 
 #include <algorithm>
@@ -25,6 +26,7 @@ using easyfailover::CandidateNode;
 using easyfailover::CommandResult;
 using easyfailover::Config;
 using easyfailover::DaemonLifecycleRequest;
+using easyfailover::DaemonLifecycleResult;
 using easyfailover::DaemonLifecycleState;
 using easyfailover::DaemonRuntimeOptions;
 using easyfailover::FailoverAction;
@@ -49,6 +51,7 @@ using easyfailover::NetworkCommandRunner;
 using easyfailover::NodeState;
 using easyfailover::PeerConfig;
 using easyfailover::PeerStatus;
+using easyfailover::RuntimeLogContext;
 using easyfailover::ShutdownSignal;
 using easyfailover::ShutdownSignalState;
 using easyfailover::VipOperationType;
@@ -57,6 +60,8 @@ using easyfailover::VipManager;
 using easyfailover::chooseHighestPriorityHealthyNode;
 using easyfailover::decideFailoverAction;
 using easyfailover::evaluateHealthCheck;
+using easyfailover::formatRuntimeLifecycleEvent;
+using easyfailover::formatRuntimeVipOperationEvent;
 using easyfailover::parseHeartbeatMessage;
 using easyfailover::peerStatusFromHeartbeat;
 using easyfailover::pollShutdownSignals;
@@ -1386,6 +1391,110 @@ void testShutdownSignalPollKeepsNoSignalClear(TestRunner& runner) {
                   "poll without pending signal should not request shutdown");
 }
 
+void testRuntimeLifecycleLogEventIncludesStableFields(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    const auto result = runDaemonLifecycleOnce(
+        DaemonLifecycleRequest{.config = validConfig(),
+                               .options = DaemonRuntimeOptions{.dry_run = true},
+                               .initial_state = DaemonLifecycleState::Stopped},
+        vip_manager);
+
+    const auto event = formatRuntimeLifecycleEvent(
+        result, RuntimeLogContext{.node_id = "node-a", .dry_run = true});
+
+    runner.expect(event.find("event=daemon_lifecycle_result") != std::string::npos,
+                  "runtime lifecycle event should include event name");
+    runner.expect(event.find("node_id=\"node-a\"") != std::string::npos,
+                  "runtime lifecycle event should include node id");
+    runner.expect(event.find("initial_state=stopped") != std::string::npos,
+                  "runtime lifecycle event should include initial state");
+    runner.expect(event.find("final_state=stopped") != std::string::npos,
+                  "runtime lifecycle event should include final state");
+    runner.expect(event.find("started=true") != std::string::npos,
+                  "runtime lifecycle event should include started flag");
+    runner.expect(event.find("iteration_ran=true") != std::string::npos,
+                  "runtime lifecycle event should include iteration flag");
+    runner.expect(event.find("stopped=true") != std::string::npos,
+                  "runtime lifecycle event should include stopped flag");
+    runner.expect(event.find("dry_run=true") != std::string::npos,
+                  "runtime lifecycle event should include dry-run flag");
+    runner.expect(event.find("validation_errors=0") != std::string::npos,
+                  "runtime lifecycle event should include validation error count");
+    runner.expect(event.find("vip_operations=2") != std::string::npos,
+                  "runtime lifecycle event should include VIP operation count");
+    runner.expect(event.find("detail=\"dry-run lifecycle iteration completed\"") !=
+                      std::string::npos,
+                  "runtime lifecycle event should include quoted detail");
+}
+
+void testRuntimeVipOperationLogEventIncludesStableFields(TestRunner& runner) {
+    const auto result = VipOperationResult{
+        .request = {.type = VipOperationType::Announce,
+                    .address = "10.0.0.50/24",
+                    .interface = "eth0",
+                    .dry_run = true},
+        .success = false,
+        .dry_run = true,
+        .commands = {},
+        .error = "announce failed",
+    };
+
+    const auto event = formatRuntimeVipOperationEvent(result, 1);
+
+    runner.expect(event.find("event=vip_operation") != std::string::npos,
+                  "runtime VIP event should include event name");
+    runner.expect(event.find("zero_based_index=1") != std::string::npos,
+                  "runtime VIP event should include zero-based operation index");
+    runner.expect(event.find("operation=announce") != std::string::npos,
+                  "runtime VIP event should include operation type");
+    runner.expect(event.find("address=\"10.0.0.50/24\"") != std::string::npos,
+                  "runtime VIP event should include address");
+    runner.expect(event.find("interface=\"eth0\"") != std::string::npos,
+                  "runtime VIP event should include interface");
+    runner.expect(event.find("request_dry_run=true") != std::string::npos,
+                  "runtime VIP event should include request dry-run state");
+    runner.expect(event.find("result_dry_run=true") != std::string::npos,
+                  "runtime VIP event should include result dry-run state");
+    runner.expect(event.find("success=false") != std::string::npos,
+                  "runtime VIP event should include success state");
+    runner.expect(event.find("commands=0") != std::string::npos,
+                  "runtime VIP event should include command count");
+    runner.expect(event.find("error=\"announce failed\"") != std::string::npos,
+                  "runtime VIP event should include quoted error");
+}
+
+void testRuntimeLogEventEscapesQuotedValues(TestRunner& runner) {
+    const auto result = DaemonLifecycleResult{
+        .initial_state = DaemonLifecycleState::Stopped,
+        .final_state = DaemonLifecycleState::Faulted,
+        .started = false,
+        .iteration_ran = false,
+        .stopped = false,
+        .validation_errors = {},
+        .vip_operations = {},
+        .detail = "failed \"quoted\"\n\r\tdetail\x1B\x7F",
+    };
+
+    const auto event = formatRuntimeLifecycleEvent(
+        result, RuntimeLogContext{.node_id = "node\\a", .dry_run = false});
+
+    runner.expect(event.find("node_id=\"node\\\\a\"") != std::string::npos,
+                  "runtime event should escape backslashes");
+    runner.expect(event.find("detail=\"failed \\\"quoted\\\"\\n\\r\\tdetail\\x1B\\x7F\"") !=
+                      std::string::npos,
+                  "runtime event should escape quotes and control characters");
+    runner.expect(event.find('\n') == std::string::npos,
+                  "runtime event should not contain raw newlines");
+    runner.expect(event.find('\r') == std::string::npos,
+                  "runtime event should not contain raw carriage returns");
+    runner.expect(event.find('\t') == std::string::npos,
+                  "runtime event should not contain raw tabs");
+    runner.expect(event.find('\x1B') == std::string::npos,
+                  "runtime event should not contain raw escape characters");
+    runner.expect(event.find('\x7F') == std::string::npos,
+                  "runtime event should not contain raw delete characters");
+}
+
 void testElectionChoosesHighestHealthyPriority(TestRunner& runner) {
     const std::vector<CandidateNode> candidates{
         CandidateNode{.node_id = "node-a", .priority = 100, .healthy = true},
@@ -1784,6 +1893,15 @@ int main() {
     });
     runner.run("shutdown signal poll keeps no signal clear", [&runner] {
         testShutdownSignalPollKeepsNoSignalClear(runner);
+    });
+    runner.run("runtime lifecycle log event includes stable fields", [&runner] {
+        testRuntimeLifecycleLogEventIncludesStableFields(runner);
+    });
+    runner.run("runtime VIP operation log event includes stable fields", [&runner] {
+        testRuntimeVipOperationLogEventIncludesStableFields(runner);
+    });
+    runner.run("runtime log event escapes quoted values", [&runner] {
+        testRuntimeLogEventEscapesQuotedValues(runner);
     });
     runner.run("election chooses highest healthy priority", [&runner] {
         testElectionChoosesHighestHealthyPriority(runner);
