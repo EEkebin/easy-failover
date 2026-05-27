@@ -111,7 +111,8 @@ read_only = true
   `enabled = true`.
 - `read_only`: optional boolean reserved for the future API. Defaults to `true`.
 
-The local API is not implemented yet.
+The local API is not implemented yet. Its intended read-only shape is documented in
+[`local-api-design.md`](local-api-design.md).
 
 ## Peers
 
