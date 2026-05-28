@@ -6,6 +6,7 @@
 #include "runtime/DaemonRuntime.hpp"
 
 #include <exception>
+#include <utility>
 #include <vector>
 
 namespace easyfailover {
@@ -119,10 +120,10 @@ LocalApiConfigValidateResponse buildLocalApiConfigValidateResponse(
 
     try {
         const auto candidate = loadConfigFromTomlString(request.config);
-        const auto errors = candidate.validate();
+        auto errors = candidate.validate();
         return LocalApiConfigValidateResponse{.outcome = LocalApiConfigValidateOutcome::Completed,
                                               .valid = errors.empty(),
-                                              .errors = errors,
+                                              .errors = std::move(errors),
                                               .error_code = {},
                                               .error_message = {}};
     } catch (const ConfigParseError& error) {

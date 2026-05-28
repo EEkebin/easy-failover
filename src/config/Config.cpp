@@ -103,7 +103,12 @@ Config configFromTable(const toml::table& root) {
         config.api.read_only = optionalBool(*api, "read_only", config.api.read_only);
     }
 
-    if (const auto* peers = root["peers"].as_array(); peers != nullptr) {
+    if (const auto* peers_node = root.get("peers"); peers_node != nullptr) {
+        const auto* peers = peers_node->as_array();
+        if (peers == nullptr) {
+            throw ConfigDecodeError{"Invalid type for config key: peers"};
+        }
+
         for (const auto& peer_node : *peers) {
             const auto* peer_table = peer_node.as_table();
             if (peer_table == nullptr) {

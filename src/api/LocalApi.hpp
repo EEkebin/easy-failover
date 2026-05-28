@@ -143,6 +143,17 @@ struct LocalApiConfigValidateResponse {
     return "unknown";
 }
 
+[[nodiscard]] constexpr std::string_view toString(const LocalApiConfigValidateOutcome outcome) {
+    switch (outcome) {
+    case LocalApiConfigValidateOutcome::Completed:
+        return "completed";
+    case LocalApiConfigValidateOutcome::RequestError:
+        return "request_error";
+    }
+
+    return "unknown";
+}
+
 [[nodiscard]] LocalApiStartupResult evaluateLocalApiStartup(const ApiConfig& config);
 
 [[nodiscard]] LocalApiStatusResponse buildLocalApiStatusResponse(

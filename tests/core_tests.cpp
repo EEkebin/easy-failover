@@ -365,6 +365,14 @@ void testLocalApiStartupRejectsWriteMode(TestRunner& runner) {
                   "rejected API startup should report stable safety detail");
 }
 
+void testLocalApiConfigValidateOutcomeToString(TestRunner& runner) {
+    runner.expect(easyfailover::toString(LocalApiConfigValidateOutcome::Completed) == "completed",
+                  "completed config validation outcome should have stable string");
+    runner.expect(easyfailover::toString(LocalApiConfigValidateOutcome::RequestError) ==
+                      "request_error",
+                  "request error config validation outcome should have stable string");
+}
+
 void testLocalApiStatusResponseMapsCurrentRuntimeState(TestRunner& runner) {
     const auto config = validConfig();
     const auto lifecycle = DaemonLifecycleResult{
@@ -607,6 +615,26 @@ void testLocalApiConfigValidateRejectsInvalidConfigShape(TestRunner& runner) {
     runner.expect(response.error_message.find("Invalid type for config key: priority") !=
                       std::string::npos,
                   "invalid config shape should include decode detail");
+}
+
+void testLocalApiConfigValidateRejectsInvalidPeersShape(TestRunner& runner) {
+    const auto response = buildLocalApiConfigValidateResponse(
+        LocalApiConfigValidateRequest{.format = "toml",
+                                      .config = "node_id = \"node-a\"\n"
+                                                "priority = 100\n"
+                                                "peers = \"node-b\"\n"
+                                                "\n"
+                                                "[vip]\n"
+                                                "address = \"10.0.0.50/24\"\n"
+                                                "interface = \"eth0\"\n"});
+
+    runner.expect(response.outcome == LocalApiConfigValidateOutcome::RequestError,
+                  "invalid peers shape should be request error");
+    runner.expect(response.error_code == "invalid_config_shape",
+                  "invalid peers shape should return stable error code");
+    runner.expect(response.error_message.find("Invalid type for config key: peers") !=
+                      std::string::npos,
+                  "invalid peers shape should include decode detail");
 }
 
 void testInvalidHeartbeatConfigFixture(TestRunner& runner) {
@@ -2043,6 +2071,9 @@ int main() {
     runner.run("local API startup rejects write mode", [&runner] {
         testLocalApiStartupRejectsWriteMode(runner);
     });
+    runner.run("local API config validate outcome toString", [&runner] {
+        testLocalApiConfigValidateOutcomeToString(runner);
+    });
     runner.run("local API status response maps current runtime state", [&runner] {
         testLocalApiStatusResponseMapsCurrentRuntimeState(runner);
     });
@@ -2078,6 +2109,9 @@ int main() {
     });
     runner.run("local API config validate rejects invalid config shape", [&runner] {
         testLocalApiConfigValidateRejectsInvalidConfigShape(runner);
+    });
+    runner.run("local API config validate rejects invalid peers shape", [&runner] {
+        testLocalApiConfigValidateRejectsInvalidPeersShape(runner);
     });
     runner.run("invalid heartbeat config fixture reports validation errors", [&runner] {
         testInvalidHeartbeatConfigFixture(runner);
