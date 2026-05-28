@@ -531,7 +531,10 @@ void testLocalApiConfigResponseReportsNoHealthCommand(TestRunner& runner) {
 void testLocalApiConfigValidateAcceptsValidToml(TestRunner& runner) {
     const auto response = buildLocalApiConfigValidateResponse(
         LocalApiConfigValidateRequest{.format = "toml",
-                                      .config = "[vip]\n"
+                                      .config = "node_id = \"node-a\"\n"
+                                                "priority = 100\n"
+                                                "\n"
+                                                "[vip]\n"
                                                 "address = \"10.0.0.50/24\"\n"
                                                 "interface = \"eth0\"\n"
                                                 "\n"
@@ -549,7 +552,10 @@ void testLocalApiConfigValidateAcceptsValidToml(TestRunner& runner) {
 void testLocalApiConfigValidateReportsValidationErrors(TestRunner& runner) {
     const auto response = buildLocalApiConfigValidateResponse(
         LocalApiConfigValidateRequest{.format = "toml",
-                                      .config = "[vip]\n"
+                                      .config = "node_id = \"node-a\"\n"
+                                                "priority = 100\n"
+                                                "\n"
+                                                "[vip]\n"
                                                 "address = \"10.0.0.50/24\"\n"
                                                 "interface = \"eth0\"\n"});
 
@@ -602,7 +608,8 @@ void testLocalApiConfigValidateRejectsMalformedToml(TestRunner& runner) {
 void testLocalApiConfigValidateRejectsInvalidConfigShape(TestRunner& runner) {
     const auto response = buildLocalApiConfigValidateResponse(
         LocalApiConfigValidateRequest{.format = "toml",
-                                      .config = "priority = \"high\"\n"
+                                      .config = "node_id = \"node-a\"\n"
+                                                "priority = \"high\"\n"
                                                 "\n"
                                                 "[vip]\n"
                                                 "address = \"10.0.0.50/24\"\n"
