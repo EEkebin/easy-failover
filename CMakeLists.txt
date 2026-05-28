@@ -46,6 +46,7 @@ endfunction()
 
 add_library(
     easy-failover-core STATIC
+    src/api/LocalApi.cpp
     src/config/Config.cpp
     src/core/Election.cpp
     src/core/FailoverDecision.cpp

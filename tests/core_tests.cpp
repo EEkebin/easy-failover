@@ -1,3 +1,4 @@
+#include "api/LocalApi.hpp"
 #include "config/Config.hpp"
 #include "core/Election.hpp"
 #include "core/FailoverDecision.hpp"
@@ -44,6 +45,7 @@ using easyfailover::LinuxHealthCommandRunner;
 using easyfailover::LinuxVipManager;
 using easyfailover::LinuxVipManagerOptions;
 using easyfailover::LocalNodeStatus;
+using easyfailover::LocalApiStartupState;
 using easyfailover::DryRunNetworkCommandRunner;
 using easyfailover::NetworkCommandRequest;
 using easyfailover::NetworkCommandResult;
@@ -59,6 +61,7 @@ using easyfailover::VipOperationResult;
 using easyfailover::VipManager;
 using easyfailover::chooseHighestPriorityHealthyNode;
 using easyfailover::decideFailoverAction;
+using easyfailover::evaluateLocalApiStartup;
 using easyfailover::evaluateHealthCheck;
 using easyfailover::formatRuntimeLifecycleEvent;
 using easyfailover::formatRuntimeVipOperationEvent;
@@ -302,6 +305,59 @@ void testConfigValidationRequiredFields(TestRunner& runner) {
                   "peer address should be required");
     runner.expect(contains(errors, "api.bind must not be empty when api.enabled is true"),
                   "API bind should be required when API is enabled");
+}
+
+void testConfigAllowsApiWriteModeForStartupRejection(TestRunner& runner) {
+    auto config = validConfig();
+    config.api.enabled = true;
+    config.api.read_only = false;
+
+    runner.expect(config.validate().empty(),
+                  "config validation should allow API write mode for startup rejection");
+}
+
+void testLocalApiStartupDisabled(TestRunner& runner) {
+    const auto config = validConfig();
+
+    const auto result = evaluateLocalApiStartup(config.api);
+
+    runner.expect(result.state == LocalApiStartupState::Disabled,
+                  "disabled API config should produce disabled startup state");
+    runner.expect(result.bind == config.api.bind,
+                  "disabled API startup should preserve configured bind for logging");
+    runner.expect(result.detail == "local API disabled",
+                  "disabled API startup should report stable detail");
+}
+
+void testLocalApiStartupReadyForReadOnlyEnabledConfig(TestRunner& runner) {
+    auto config = validConfig();
+    config.api.enabled = true;
+    config.api.read_only = true;
+
+    const auto result = evaluateLocalApiStartup(config.api);
+
+    runner.expect(result.state == LocalApiStartupState::Ready,
+                  "read-only enabled API config should be ready for future listener");
+    runner.expect(result.bind == config.api.bind,
+                  "read-only API startup should preserve configured bind");
+    runner.expect(result.detail == "local API skeleton ready; listener not implemented",
+                  "read-only API startup should report stable skeleton detail");
+}
+
+void testLocalApiStartupRejectsWriteMode(TestRunner& runner) {
+    auto config = validConfig();
+    config.api.enabled = true;
+    config.api.read_only = false;
+
+    const auto result = evaluateLocalApiStartup(config.api);
+
+    runner.expect(result.state == LocalApiStartupState::Rejected,
+                  "enabled write-mode API config should be rejected by startup logic");
+    runner.expect(result.bind == config.api.bind,
+                  "rejected API startup should preserve configured bind");
+    runner.expect(result.detail ==
+                      "local API write mode requires authentication and write-behavior design",
+                  "rejected API startup should report stable safety detail");
 }
 
 void testInvalidHeartbeatConfigFixture(TestRunner& runner) {
@@ -1727,6 +1783,16 @@ int main() {
     });
     runner.run("config validation reports required fields", [&runner] {
         testConfigValidationRequiredFields(runner);
+    });
+    runner.run("config allows API write mode for startup rejection", [&runner] {
+        testConfigAllowsApiWriteModeForStartupRejection(runner);
+    });
+    runner.run("local API startup disabled", [&runner] { testLocalApiStartupDisabled(runner); });
+    runner.run("local API startup ready for read-only enabled config", [&runner] {
+        testLocalApiStartupReadyForReadOnlyEnabledConfig(runner);
+    });
+    runner.run("local API startup rejects write mode", [&runner] {
+        testLocalApiStartupRejectsWriteMode(runner);
     });
     runner.run("invalid heartbeat config fixture reports validation errors", [&runner] {
         testInvalidHeartbeatConfigFixture(runner);

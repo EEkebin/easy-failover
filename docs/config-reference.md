@@ -109,10 +109,12 @@ read_only = true
 - `enabled`: optional boolean. Defaults to `false`.
 - `bind`: optional non-empty string. Defaults to `127.0.0.1:8743` and is required when
   `enabled = true`.
-- `read_only`: optional boolean reserved for the future API. Defaults to `true`.
+- `read_only`: optional boolean reserved for the future API. Defaults to `true`. When the API is
+  enabled, `false` is rejected by API startup logic until write behavior and authentication are
+  designed.
 
-The local API is not implemented yet. Its intended read-only shape is documented in
-[`local-api-design.md`](local-api-design.md).
+The local API skeleton evaluates startup configuration but does not open a listener or serve
+endpoints yet. Its intended read-only shape is documented in [`local-api-design.md`](local-api-design.md).
 
 ## Peers
 

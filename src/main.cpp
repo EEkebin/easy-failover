@@ -1,3 +1,4 @@
+#include "api/LocalApi.hpp"
 #include "config/Config.hpp"
 #include "core/FailoverNode.hpp"
 #include "platform/linux/LinuxVipManager.hpp"
@@ -77,6 +78,18 @@ int main(int argc, char** argv) {
         if (!validation_errors.empty()) {
             logValidationErrors(validation_errors);
             return EXIT_FAILURE;
+        }
+
+        const auto api_startup = easyfailover::evaluateLocalApiStartup(config.api);
+        if (api_startup.state == easyfailover::LocalApiStartupState::Rejected) {
+            spdlog::error("local API startup rejected bind={} detail=\"{}\"", api_startup.bind,
+                          api_startup.detail);
+            return EXIT_FAILURE;
+        }
+        if (api_startup.state == easyfailover::LocalApiStartupState::Ready) {
+            spdlog::info("local API startup state={} bind={} detail=\"{}\"",
+                         easyfailover::toString(api_startup.state), api_startup.bind,
+                         api_startup.detail);
         }
 
         const auto signal_handlers = easyfailover::installShutdownSignalHandlers();
