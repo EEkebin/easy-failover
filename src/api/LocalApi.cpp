@@ -125,11 +125,23 @@ LocalApiConfigValidateResponse buildLocalApiConfigValidateResponse(
                                               .errors = errors,
                                               .error_code = {},
                                               .error_message = {}};
-    } catch (const std::exception& error) {
+    } catch (const ConfigParseError& error) {
         return LocalApiConfigValidateResponse{.outcome = LocalApiConfigValidateOutcome::RequestError,
                                               .valid = false,
                                               .errors = {},
                                               .error_code = "invalid_toml",
+                                              .error_message = error.what()};
+    } catch (const ConfigDecodeError& error) {
+        return LocalApiConfigValidateResponse{.outcome = LocalApiConfigValidateOutcome::RequestError,
+                                              .valid = false,
+                                              .errors = {},
+                                              .error_code = "invalid_config_shape",
+                                              .error_message = error.what()};
+    } catch (const std::exception& error) {
+        return LocalApiConfigValidateResponse{.outcome = LocalApiConfigValidateOutcome::RequestError,
+                                              .valid = false,
+                                              .errors = {},
+                                              .error_code = "validation_failed",
                                               .error_message = error.what()};
     }
 }

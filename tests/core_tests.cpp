@@ -591,6 +591,24 @@ void testLocalApiConfigValidateRejectsMalformedToml(TestRunner& runner) {
                   "malformed TOML should include parse detail");
 }
 
+void testLocalApiConfigValidateRejectsInvalidConfigShape(TestRunner& runner) {
+    const auto response = buildLocalApiConfigValidateResponse(
+        LocalApiConfigValidateRequest{.format = "toml",
+                                      .config = "priority = \"high\"\n"
+                                                "\n"
+                                                "[vip]\n"
+                                                "address = \"10.0.0.50/24\"\n"
+                                                "interface = \"eth0\"\n"});
+
+    runner.expect(response.outcome == LocalApiConfigValidateOutcome::RequestError,
+                  "invalid config shape should be request error");
+    runner.expect(response.error_code == "invalid_config_shape",
+                  "invalid config shape should return stable error code");
+    runner.expect(response.error_message.find("Invalid type for config key: priority") !=
+                      std::string::npos,
+                  "invalid config shape should include decode detail");
+}
+
 void testInvalidHeartbeatConfigFixture(TestRunner& runner) {
     const auto config = loadConfigFromFile("tests/fixtures/config/invalid-heartbeat.toml");
     const auto errors = config.validate();
@@ -2057,6 +2075,9 @@ int main() {
     });
     runner.run("local API config validate rejects malformed TOML", [&runner] {
         testLocalApiConfigValidateRejectsMalformedToml(runner);
+    });
+    runner.run("local API config validate rejects invalid config shape", [&runner] {
+        testLocalApiConfigValidateRejectsInvalidConfigShape(runner);
     });
     runner.run("invalid heartbeat config fixture reports validation errors", [&runner] {
         testInvalidHeartbeatConfigFixture(runner);

@@ -21,7 +21,7 @@ std::optional<T> typedValueIfPresent(const toml::table& table, const std::string
 
     const auto value = node->value<T>();
     if (!value.has_value()) {
-        throw std::runtime_error("Invalid type for config key: " + std::string{key});
+        throw ConfigDecodeError{"Invalid type for config key: " + std::string{key}};
     }
 
     return value;
@@ -53,7 +53,7 @@ const toml::table* optionalTable(const toml::table& root, const std::string_view
 
     const auto* table = node->as_table();
     if (table == nullptr) {
-        throw std::runtime_error("Invalid type for TOML table: " + std::string{key});
+        throw ConfigDecodeError{"Invalid type for TOML table: " + std::string{key}};
     }
 
     return table;
@@ -62,7 +62,7 @@ const toml::table* optionalTable(const toml::table& root, const std::string_view
 const toml::table& requiredTable(const toml::table& root, const std::string_view key) {
     const auto* table = optionalTable(root, key);
     if (table == nullptr) {
-        throw std::runtime_error("Missing required TOML table: " + std::string{key});
+        throw ConfigDecodeError{"Missing required TOML table: " + std::string{key}};
     }
     return *table;
 }
@@ -107,7 +107,7 @@ Config configFromTable(const toml::table& root) {
         for (const auto& peer_node : *peers) {
             const auto* peer_table = peer_node.as_table();
             if (peer_table == nullptr) {
-                throw std::runtime_error("Each peers entry must be a TOML table");
+                throw ConfigDecodeError{"Each peers entry must be a TOML table"};
             }
 
             PeerConfig peer;
@@ -175,8 +175,8 @@ Config loadConfigFromFile(const std::string& path) {
     try {
         root = toml::parse_file(path);
     } catch (const toml::parse_error& error) {
-        throw std::runtime_error("Failed to parse config '" + path + "': " +
-                                 std::string{error.description()});
+        throw ConfigParseError{"Failed to parse config '" + path + "': " +
+                               std::string{error.description()}};
     }
 
     return configFromTable(root);
@@ -187,8 +187,8 @@ Config loadConfigFromTomlString(const std::string& content) {
     try {
         root = toml::parse(content);
     } catch (const toml::parse_error& error) {
-        throw std::runtime_error("Failed to parse candidate config: " +
-                                 std::string{error.description()});
+        throw ConfigParseError{"Failed to parse candidate config: " +
+                               std::string{error.description()}};
     }
 
     return configFromTable(root);
