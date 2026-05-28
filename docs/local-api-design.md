@@ -121,7 +121,8 @@ returning command output or runner error text.
 
 ### `GET /api/v1/config`
 
-Returns the effective runtime configuration after defaults are applied.
+Returns the effective runtime configuration after defaults are applied. The response model exists in
+code, but no HTTP listener or route serves it yet.
 
 Draft response:
 

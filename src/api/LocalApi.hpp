@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace easyfailover {
 
@@ -67,6 +68,50 @@ struct LocalApiStatusResponse {
     LocalApiStatusHealth health;
 };
 
+struct LocalApiConfigVip {
+    std::string address;
+    std::string interface;
+};
+
+struct LocalApiConfigHeartbeat {
+    std::string bind;
+    std::int64_t interval_ms = 0;
+    std::int64_t timeout_ms = 0;
+};
+
+struct LocalApiConfigHealth {
+    bool command_redacted = false;
+    std::int64_t interval_ms = 0;
+    std::int64_t timeout_ms = 0;
+};
+
+struct LocalApiConfigElection {
+    bool require_quorum = false;
+    bool preempt = true;
+};
+
+struct LocalApiConfigApi {
+    bool enabled = false;
+    std::string bind;
+    bool read_only = true;
+};
+
+struct LocalApiConfigPeer {
+    std::string id;
+    std::string address;
+};
+
+struct LocalApiConfigResponse {
+    std::string node_id;
+    int priority = 0;
+    LocalApiConfigVip vip;
+    LocalApiConfigHeartbeat heartbeat;
+    LocalApiConfigHealth health;
+    LocalApiConfigElection election;
+    LocalApiConfigApi api;
+    std::vector<LocalApiConfigPeer> peers;
+};
+
 [[nodiscard]] constexpr std::string_view toString(const LocalApiStartupState state) {
     switch (state) {
     case LocalApiStartupState::Disabled:
@@ -89,5 +134,7 @@ struct LocalApiStatusResponse {
     NodeState local_node_state,
     bool dry_run,
     int peers_observed = 0);
+
+[[nodiscard]] LocalApiConfigResponse buildLocalApiConfigResponse(const Config& config);
 
 } // namespace easyfailover
