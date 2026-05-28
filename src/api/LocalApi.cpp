@@ -4,7 +4,9 @@
 #include "core/NodeState.hpp"
 #include "health/HealthCheck.hpp"
 #include "runtime/DaemonRuntime.hpp"
+#include "runtime/RuntimeLog.hpp"
 
+#include <cstdint>
 #include <exception>
 #include <utility>
 #include <vector>
@@ -20,6 +22,18 @@ namespace {
     }
 
     return "health command detail redacted";
+}
+
+[[nodiscard]] LocalApiEventField stringField(std::string name, std::string value) {
+    return LocalApiEventField{.name = std::move(name), .value = std::move(value)};
+}
+
+[[nodiscard]] LocalApiEventField boolField(std::string name, const bool value) {
+    return LocalApiEventField{.name = std::move(name), .value = value};
+}
+
+[[nodiscard]] LocalApiEventField intField(std::string name, const std::int64_t value) {
+    return LocalApiEventField{.name = std::move(name), .value = value};
 }
 
 } // namespace
@@ -145,6 +159,59 @@ LocalApiConfigValidateResponse buildLocalApiConfigValidateResponse(
                                               .error_code = "validation_failed",
                                               .error_message = error.what()};
     }
+}
+
+LocalApiEventsResponse buildLocalApiEventsResponse() {
+    return LocalApiEventsResponse{};
+}
+
+LocalApiEventsResponse buildLocalApiEventsResponse(std::vector<LocalApiEvent> events) {
+    return LocalApiEventsResponse{.events = std::move(events)};
+}
+
+LocalApiEvent buildLocalApiLifecycleEvent(const std::uint64_t sequence,
+                                          const DaemonLifecycleResult& result,
+                                          const RuntimeLogContext& context) {
+    return LocalApiEvent{
+        .sequence = sequence,
+        .event = "daemon_lifecycle_result",
+        .level = "info",
+        .message = formatRuntimeLifecycleEvent(result, context),
+        .fields =
+            {
+                stringField("node_id", std::string{context.node_id}),
+                stringField("initial_state", std::string{toString(result.initial_state)}),
+                stringField("final_state", std::string{toString(result.final_state)}),
+                boolField("started", result.started),
+                boolField("iteration_ran", result.iteration_ran),
+                boolField("stopped", result.stopped),
+                boolField("dry_run", context.dry_run),
+                intField("validation_errors",
+                         static_cast<std::int64_t>(result.validation_errors.size())),
+                intField("vip_operations", static_cast<std::int64_t>(result.vip_operations.size())),
+                stringField("detail", result.detail),
+            }};
+}
+
+LocalApiEvent buildLocalApiVipOperationEvent(const std::uint64_t sequence,
+                                             const VipOperationResult& result,
+                                             const std::size_t zero_based_index) {
+    return LocalApiEvent{
+        .sequence = sequence,
+        .event = "vip_operation",
+        .level = "info",
+        .message = formatRuntimeVipOperationEvent(result, zero_based_index),
+        .fields =
+            {
+                intField("zero_based_index", static_cast<std::int64_t>(zero_based_index)),
+                stringField("operation", std::string{toString(result.request.type)}),
+                stringField("address", result.request.address),
+                stringField("interface", result.request.interface),
+                boolField("request_dry_run", result.request.dry_run),
+                boolField("result_dry_run", result.dry_run),
+                boolField("success", result.success),
+                intField("commands", static_cast<std::int64_t>(result.commands.size())),
+            }};
 }
 
 } // namespace easyfailover

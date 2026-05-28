@@ -19,6 +19,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace {
@@ -44,6 +45,8 @@ using easyfailover::kHeartbeatTransportDisabledError;
 using easyfailover::LinuxHealthCommandRunner;
 using easyfailover::LinuxVipManager;
 using easyfailover::LinuxVipManagerOptions;
+using easyfailover::LocalApiEvent;
+using easyfailover::LocalApiEventField;
 using easyfailover::LocalNodeStatus;
 using easyfailover::LocalApiStartupState;
 using easyfailover::LocalApiConfigValidateOutcome;
@@ -63,7 +66,10 @@ using easyfailover::VipOperationResult;
 using easyfailover::VipManager;
 using easyfailover::buildLocalApiConfigResponse;
 using easyfailover::buildLocalApiConfigValidateResponse;
+using easyfailover::buildLocalApiEventsResponse;
+using easyfailover::buildLocalApiLifecycleEvent;
 using easyfailover::buildLocalApiStatusResponse;
+using easyfailover::buildLocalApiVipOperationEvent;
 using easyfailover::chooseHighestPriorityHealthyNode;
 using easyfailover::decideFailoverAction;
 using easyfailover::evaluateLocalApiStartup;
@@ -117,6 +123,18 @@ class TestRunner {
 
 bool contains(const std::vector<std::string>& values, const std::string_view expected) {
     return std::find(values.begin(), values.end(), expected) != values.end();
+}
+
+const LocalApiEventField* findEventField(const LocalApiEvent& event, const std::string_view name) {
+    const auto match = std::find_if(event.fields.begin(), event.fields.end(), [name](const auto& field) {
+        return field.name == name;
+    });
+
+    if (match == event.fields.end()) {
+        return nullptr;
+    }
+
+    return &*match;
 }
 
 class FakeHealthCommandRunner final : public HealthCommandRunner {
@@ -642,6 +660,100 @@ void testLocalApiConfigValidateRejectsInvalidPeersShape(TestRunner& runner) {
     runner.expect(response.error_message.find("Invalid type for config key: peers") !=
                       std::string::npos,
                   "invalid peers shape should include decode detail");
+}
+
+void testLocalApiEventsResponseDefaultsEmpty(TestRunner& runner) {
+    const auto response = buildLocalApiEventsResponse();
+
+    runner.expect(response.events.empty(),
+                  "events response should default empty before an event buffer exists");
+}
+
+void testLocalApiLifecycleEventMapsRuntimeLogFields(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    const auto result = runDaemonLifecycleOnce(
+        DaemonLifecycleRequest{.config = validConfig(),
+                               .options = DaemonRuntimeOptions{.dry_run = true},
+                               .initial_state = DaemonLifecycleState::Stopped},
+        vip_manager);
+
+    const auto event = buildLocalApiLifecycleEvent(
+        42, result, RuntimeLogContext{.node_id = "node-a", .dry_run = true});
+
+    runner.expect(event.sequence == 42, "lifecycle event should preserve sequence");
+    runner.expect(event.event == "daemon_lifecycle_result",
+                  "lifecycle event should preserve event name");
+    runner.expect(event.level == "info", "lifecycle event should default to info");
+    runner.expect(event.message == formatRuntimeLifecycleEvent(
+                                       result,
+                                       RuntimeLogContext{.node_id = "node-a", .dry_run = true}),
+                  "lifecycle event should reuse stable runtime log message");
+
+    const auto* node_id = findEventField(event, "node_id");
+    runner.expect(node_id != nullptr, "lifecycle event should include node_id field");
+    runner.expect(node_id != nullptr &&
+                      std::get_if<std::string>(&node_id->value) != nullptr &&
+                      *std::get_if<std::string>(&node_id->value) == "node-a",
+                  "lifecycle node_id field should be string value");
+
+    const auto* dry_run = findEventField(event, "dry_run");
+    runner.expect(dry_run != nullptr, "lifecycle event should include dry_run field");
+    runner.expect(dry_run != nullptr &&
+                      std::get_if<bool>(&dry_run->value) != nullptr &&
+                      *std::get_if<bool>(&dry_run->value),
+                  "lifecycle dry_run field should be bool value");
+
+    const auto* vip_operations = findEventField(event, "vip_operations");
+    runner.expect(vip_operations != nullptr,
+                  "lifecycle event should include vip_operations field");
+    runner.expect(vip_operations != nullptr &&
+                      std::get_if<std::int64_t>(&vip_operations->value) != nullptr &&
+                      *std::get_if<std::int64_t>(&vip_operations->value) == 2,
+                  "lifecycle vip_operations field should be integer value");
+}
+
+void testLocalApiVipOperationEventMapsRuntimeLogFields(TestRunner& runner) {
+    const auto result = VipOperationResult{
+        .request = {.type = VipOperationType::Announce,
+                    .address = "10.0.0.50/24",
+                    .interface = "eth0",
+                    .dry_run = true},
+        .success = false,
+        .dry_run = true,
+        .commands = {},
+        .error = "announce failed",
+    };
+
+    const auto event = buildLocalApiVipOperationEvent(43, result, 1);
+
+    runner.expect(event.sequence == 43, "VIP event should preserve sequence");
+    runner.expect(event.event == "vip_operation", "VIP event should preserve event name");
+    runner.expect(event.level == "info", "VIP event should default to info");
+    runner.expect(event.message == formatRuntimeVipOperationEvent(result, 1),
+                  "VIP event should reuse stable runtime log message");
+
+    const auto* operation = findEventField(event, "operation");
+    runner.expect(operation != nullptr, "VIP event should include operation field");
+    runner.expect(operation != nullptr &&
+                      std::get_if<std::string>(&operation->value) != nullptr &&
+                      *std::get_if<std::string>(&operation->value) == "announce",
+                  "VIP operation field should be string value");
+
+    const auto* success = findEventField(event, "success");
+    runner.expect(success != nullptr, "VIP event should include success field");
+    runner.expect(success != nullptr &&
+                      std::get_if<bool>(&success->value) != nullptr &&
+                      !*std::get_if<bool>(&success->value),
+                  "VIP success field should be bool value");
+
+    const auto* commands = findEventField(event, "commands");
+    runner.expect(commands != nullptr, "VIP event should include command count field");
+    runner.expect(commands != nullptr &&
+                      std::get_if<std::int64_t>(&commands->value) != nullptr &&
+                      *std::get_if<std::int64_t>(&commands->value) == 0,
+                  "VIP commands field should be integer value");
+    runner.expect(findEventField(event, "error") == nullptr,
+                  "VIP structured fields should not expose free-form error detail");
 }
 
 void testInvalidHeartbeatConfigFixture(TestRunner& runner) {
@@ -2119,6 +2231,15 @@ int main() {
     });
     runner.run("local API config validate rejects invalid peers shape", [&runner] {
         testLocalApiConfigValidateRejectsInvalidPeersShape(runner);
+    });
+    runner.run("local API events response defaults empty", [&runner] {
+        testLocalApiEventsResponseDefaultsEmpty(runner);
+    });
+    runner.run("local API lifecycle event maps runtime log fields", [&runner] {
+        testLocalApiLifecycleEventMapsRuntimeLogFields(runner);
+    });
+    runner.run("local API VIP operation event maps runtime log fields", [&runner] {
+        testLocalApiVipOperationEventMapsRuntimeLogFields(runner);
     });
     runner.run("invalid heartbeat config fixture reports validation errors", [&runner] {
         testInvalidHeartbeatConfigFixture(runner);

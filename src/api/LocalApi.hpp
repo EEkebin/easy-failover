@@ -1,8 +1,10 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace easyfailover {
@@ -11,6 +13,8 @@ struct ApiConfig;
 struct Config;
 struct DaemonLifecycleResult;
 struct HealthCheckResult;
+struct RuntimeLogContext;
+struct VipOperationResult;
 enum class NodeState;
 
 enum class LocalApiStartupState {
@@ -130,6 +134,25 @@ struct LocalApiConfigValidateResponse {
     std::string error_message;
 };
 
+using LocalApiEventFieldValue = std::variant<std::string, bool, std::int64_t>;
+
+struct LocalApiEventField {
+    std::string name;
+    LocalApiEventFieldValue value;
+};
+
+struct LocalApiEvent {
+    std::uint64_t sequence = 0;
+    std::string event;
+    std::string level = "info";
+    std::string message;
+    std::vector<LocalApiEventField> fields;
+};
+
+struct LocalApiEventsResponse {
+    std::vector<LocalApiEvent> events;
+};
+
 [[nodiscard]] constexpr std::string_view toString(const LocalApiStartupState state) {
     switch (state) {
     case LocalApiStartupState::Disabled:
@@ -168,5 +191,18 @@ struct LocalApiConfigValidateResponse {
 
 [[nodiscard]] LocalApiConfigValidateResponse buildLocalApiConfigValidateResponse(
     const LocalApiConfigValidateRequest& request);
+
+[[nodiscard]] LocalApiEventsResponse buildLocalApiEventsResponse();
+[[nodiscard]] LocalApiEventsResponse buildLocalApiEventsResponse(std::vector<LocalApiEvent> events);
+
+[[nodiscard]] LocalApiEvent buildLocalApiLifecycleEvent(
+    std::uint64_t sequence,
+    const DaemonLifecycleResult& result,
+    const RuntimeLogContext& context);
+
+[[nodiscard]] LocalApiEvent buildLocalApiVipOperationEvent(
+    std::uint64_t sequence,
+    const VipOperationResult& result,
+    std::size_t zero_based_index);
 
 } // namespace easyfailover
