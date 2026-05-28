@@ -169,7 +169,8 @@ than returned verbatim.
 ### `POST /api/v1/config/validate`
 
 Validates a submitted candidate TOML config without applying it. This is the only planned `POST`
-in the first API shape, and it is still read-only because it does not mutate runtime state.
+in the first API shape, and it is still read-only because it does not mutate runtime state. The
+request/response model exists in code, but no HTTP listener or route serves it yet.
 
 Draft request:
 

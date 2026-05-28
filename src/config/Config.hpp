@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -52,6 +53,17 @@ struct Config {
     [[nodiscard]] std::vector<std::string> validate() const;
 };
 
+class ConfigParseError : public std::runtime_error {
+  public:
+    using std::runtime_error::runtime_error;
+};
+
+class ConfigDecodeError : public std::runtime_error {
+  public:
+    using std::runtime_error::runtime_error;
+};
+
 [[nodiscard]] Config loadConfigFromFile(const std::string& path);
+[[nodiscard]] Config loadConfigFromTomlString(const std::string& content);
 
 } // namespace easyfailover
