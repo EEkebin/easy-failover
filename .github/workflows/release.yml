@@ -46,11 +46,7 @@ jobs:
       - name: Package artifact
         run: |
           set -euo pipefail
-          mkdir -p "dist/easy-failover-linux-x86_64"
-          cp build/easy-failover "dist/easy-failover-linux-x86_64/"
-          cp README.md LICENSE "dist/easy-failover-linux-x86_64/"
-          cp configs/easy-failover.toml "dist/easy-failover-linux-x86_64/"
-          cp packaging/systemd/easy-failover.service "dist/easy-failover-linux-x86_64/"
+          cmake --install build --prefix "dist/easy-failover-linux-x86_64"
           tar -C dist -czf "dist/easy-failover-linux-x86_64.tar.gz" easy-failover-linux-x86_64
 
       - name: Upload workflow artifact

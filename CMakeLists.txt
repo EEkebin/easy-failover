@@ -13,6 +13,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 include(FetchContent)
 include(CTest)
+include(GNUInstallDirs)
 
 FetchContent_Declare(
     spdlog
@@ -93,4 +94,20 @@ if(BUILD_TESTING)
     set_tests_properties(easy-failover-core-tests PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 endif()
 
-install(TARGETS easy-failover RUNTIME DESTINATION bin)
+install(TARGETS easy-failover RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+
+install(
+    FILES configs/easy-failover.toml
+    DESTINATION "${CMAKE_INSTALL_SYSCONFDIR}/easy-failover"
+    RENAME config.example.toml)
+
+install(
+    FILES packaging/systemd/easy-failover.service
+    DESTINATION "${CMAKE_INSTALL_LIBDIR}/systemd/system")
+
+install(FILES README.md LICENSE DESTINATION "${CMAKE_INSTALL_DOCDIR}")
+install(
+    DIRECTORY docs/
+    DESTINATION "${CMAKE_INSTALL_DOCDIR}/docs"
+    FILES_MATCHING
+    PATTERN "*.md")
