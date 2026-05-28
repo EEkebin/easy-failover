@@ -53,5 +53,6 @@ struct Config {
 };
 
 [[nodiscard]] Config loadConfigFromFile(const std::string& path);
+[[nodiscard]] Config loadConfigFromTomlString(const std::string& content);
 
 } // namespace easyfailover

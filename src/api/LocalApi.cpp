@@ -5,6 +5,7 @@
 #include "health/HealthCheck.hpp"
 #include "runtime/DaemonRuntime.hpp"
 
+#include <exception>
 #include <vector>
 
 namespace easyfailover {
@@ -95,6 +96,42 @@ LocalApiConfigResponse buildLocalApiConfigResponse(const Config& config) {
                                  .bind = config.api.bind,
                                  .read_only = config.api.read_only},
         .peers = std::move(peers)};
+}
+
+LocalApiConfigValidateResponse buildLocalApiConfigValidateResponse(
+    const LocalApiConfigValidateRequest& request) {
+    if (request.format != "toml") {
+        return LocalApiConfigValidateResponse{
+            .outcome = LocalApiConfigValidateOutcome::RequestError,
+            .valid = false,
+            .errors = {},
+            .error_code = "unsupported_format",
+            .error_message = "config validation format must be toml"};
+    }
+
+    if (request.config.empty()) {
+        return LocalApiConfigValidateResponse{.outcome = LocalApiConfigValidateOutcome::RequestError,
+                                              .valid = false,
+                                              .errors = {},
+                                              .error_code = "missing_config",
+                                              .error_message = "config must not be empty"};
+    }
+
+    try {
+        const auto candidate = loadConfigFromTomlString(request.config);
+        const auto errors = candidate.validate();
+        return LocalApiConfigValidateResponse{.outcome = LocalApiConfigValidateOutcome::Completed,
+                                              .valid = errors.empty(),
+                                              .errors = errors,
+                                              .error_code = {},
+                                              .error_message = {}};
+    } catch (const std::exception& error) {
+        return LocalApiConfigValidateResponse{.outcome = LocalApiConfigValidateOutcome::RequestError,
+                                              .valid = false,
+                                              .errors = {},
+                                              .error_code = "invalid_toml",
+                                              .error_message = error.what()};
+    }
 }
 
 } // namespace easyfailover

@@ -112,6 +112,24 @@ struct LocalApiConfigResponse {
     std::vector<LocalApiConfigPeer> peers;
 };
 
+struct LocalApiConfigValidateRequest {
+    std::string format;
+    std::string config;
+};
+
+enum class LocalApiConfigValidateOutcome {
+    Completed,
+    RequestError,
+};
+
+struct LocalApiConfigValidateResponse {
+    LocalApiConfigValidateOutcome outcome = LocalApiConfigValidateOutcome::Completed;
+    bool valid = false;
+    std::vector<std::string> errors;
+    std::string error_code;
+    std::string error_message;
+};
+
 [[nodiscard]] constexpr std::string_view toString(const LocalApiStartupState state) {
     switch (state) {
     case LocalApiStartupState::Disabled:
@@ -136,5 +154,8 @@ struct LocalApiConfigResponse {
     int peers_observed = 0);
 
 [[nodiscard]] LocalApiConfigResponse buildLocalApiConfigResponse(const Config& config);
+
+[[nodiscard]] LocalApiConfigValidateResponse buildLocalApiConfigValidateResponse(
+    const LocalApiConfigValidateRequest& request);
 
 } // namespace easyfailover

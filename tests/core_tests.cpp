@@ -46,6 +46,8 @@ using easyfailover::LinuxVipManager;
 using easyfailover::LinuxVipManagerOptions;
 using easyfailover::LocalNodeStatus;
 using easyfailover::LocalApiStartupState;
+using easyfailover::LocalApiConfigValidateOutcome;
+using easyfailover::LocalApiConfigValidateRequest;
 using easyfailover::DryRunNetworkCommandRunner;
 using easyfailover::NetworkCommandRequest;
 using easyfailover::NetworkCommandResult;
@@ -60,6 +62,7 @@ using easyfailover::VipOperationType;
 using easyfailover::VipOperationResult;
 using easyfailover::VipManager;
 using easyfailover::buildLocalApiConfigResponse;
+using easyfailover::buildLocalApiConfigValidateResponse;
 using easyfailover::buildLocalApiStatusResponse;
 using easyfailover::chooseHighestPriorityHealthyNode;
 using easyfailover::decideFailoverAction;
@@ -515,6 +518,77 @@ void testLocalApiConfigResponseReportsNoHealthCommand(TestRunner& runner) {
 
     runner.expect(!response.health.command_redacted,
                   "config response should report no health command when command is empty");
+}
+
+void testLocalApiConfigValidateAcceptsValidToml(TestRunner& runner) {
+    const auto response = buildLocalApiConfigValidateResponse(
+        LocalApiConfigValidateRequest{.format = "toml",
+                                      .config = "[vip]\n"
+                                                "address = \"10.0.0.50/24\"\n"
+                                                "interface = \"eth0\"\n"
+                                                "\n"
+                                                "[[peers]]\n"
+                                                "id = \"node-b\"\n"
+                                                "address = \"10.0.0.12:7432\"\n"});
+
+    runner.expect(response.outcome == LocalApiConfigValidateOutcome::Completed,
+                  "valid TOML request should complete validation");
+    runner.expect(response.valid, "valid TOML request should be valid");
+    runner.expect(response.errors.empty(), "valid TOML request should not return errors");
+    runner.expect(response.error_code.empty(), "valid TOML request should not set error code");
+}
+
+void testLocalApiConfigValidateReportsValidationErrors(TestRunner& runner) {
+    const auto response = buildLocalApiConfigValidateResponse(
+        LocalApiConfigValidateRequest{.format = "toml",
+                                      .config = "[vip]\n"
+                                                "address = \"10.0.0.50/24\"\n"
+                                                "interface = \"eth0\"\n"});
+
+    runner.expect(response.outcome == LocalApiConfigValidateOutcome::Completed,
+                  "well-formed invalid config should complete validation");
+    runner.expect(!response.valid, "invalid candidate config should report invalid");
+    runner.expect(contains(response.errors, "at least one peer must be configured"),
+                  "invalid candidate config should return validation errors");
+    runner.expect(response.error_code.empty(),
+                  "validation failure should not be modeled as request error");
+}
+
+void testLocalApiConfigValidateRejectsUnsupportedFormat(TestRunner& runner) {
+    const auto response = buildLocalApiConfigValidateResponse(
+        LocalApiConfigValidateRequest{.format = "json", .config = "{}"});
+
+    runner.expect(response.outcome == LocalApiConfigValidateOutcome::RequestError,
+                  "unsupported format should be request error");
+    runner.expect(!response.valid, "unsupported format should not be valid");
+    runner.expect(response.errors.empty(), "unsupported format should not return config errors");
+    runner.expect(response.error_code == "unsupported_format",
+                  "unsupported format should return stable error code");
+}
+
+void testLocalApiConfigValidateRejectsEmptyConfig(TestRunner& runner) {
+    const auto response = buildLocalApiConfigValidateResponse(
+        LocalApiConfigValidateRequest{.format = "toml", .config = ""});
+
+    runner.expect(response.outcome == LocalApiConfigValidateOutcome::RequestError,
+                  "empty candidate config should be request error");
+    runner.expect(response.error_code == "missing_config",
+                  "empty candidate config should return stable error code");
+}
+
+void testLocalApiConfigValidateRejectsMalformedToml(TestRunner& runner) {
+    const auto response = buildLocalApiConfigValidateResponse(
+        LocalApiConfigValidateRequest{.format = "toml", .config = "[vip\naddress = \"bad\"\n"});
+
+    runner.expect(response.outcome == LocalApiConfigValidateOutcome::RequestError,
+                  "malformed TOML should be request error");
+    runner.expect(!response.valid, "malformed TOML should not be valid");
+    runner.expect(response.errors.empty(), "malformed TOML should not return config errors");
+    runner.expect(response.error_code == "invalid_toml",
+                  "malformed TOML should return stable error code");
+    runner.expect(response.error_message.find("Failed to parse candidate config") !=
+                      std::string::npos,
+                  "malformed TOML should include parse detail");
 }
 
 void testInvalidHeartbeatConfigFixture(TestRunner& runner) {
@@ -1968,6 +2042,21 @@ int main() {
     });
     runner.run("local API config response reports no health command", [&runner] {
         testLocalApiConfigResponseReportsNoHealthCommand(runner);
+    });
+    runner.run("local API config validate accepts valid TOML", [&runner] {
+        testLocalApiConfigValidateAcceptsValidToml(runner);
+    });
+    runner.run("local API config validate reports validation errors", [&runner] {
+        testLocalApiConfigValidateReportsValidationErrors(runner);
+    });
+    runner.run("local API config validate rejects unsupported format", [&runner] {
+        testLocalApiConfigValidateRejectsUnsupportedFormat(runner);
+    });
+    runner.run("local API config validate rejects empty config", [&runner] {
+        testLocalApiConfigValidateRejectsEmptyConfig(runner);
+    });
+    runner.run("local API config validate rejects malformed TOML", [&runner] {
+        testLocalApiConfigValidateRejectsMalformedToml(runner);
     });
     runner.run("invalid heartbeat config fixture reports validation errors", [&runner] {
         testInvalidHeartbeatConfigFixture(runner);
