@@ -59,6 +59,7 @@ using easyfailover::ShutdownSignalState;
 using easyfailover::VipOperationType;
 using easyfailover::VipOperationResult;
 using easyfailover::VipManager;
+using easyfailover::buildLocalApiStatusResponse;
 using easyfailover::chooseHighestPriorityHealthyNode;
 using easyfailover::decideFailoverAction;
 using easyfailover::evaluateLocalApiStartup;
@@ -358,6 +359,97 @@ void testLocalApiStartupRejectsWriteMode(TestRunner& runner) {
     runner.expect(result.detail ==
                       "local API write mode requires authentication and write-behavior design",
                   "rejected API startup should report stable safety detail");
+}
+
+void testLocalApiStatusResponseMapsCurrentRuntimeState(TestRunner& runner) {
+    const auto config = validConfig();
+    const auto lifecycle = DaemonLifecycleResult{
+        .initial_state = DaemonLifecycleState::Stopped,
+        .final_state = DaemonLifecycleState::Stopped,
+        .started = true,
+        .iteration_ran = true,
+        .stopped = true,
+        .validation_errors = {},
+        .vip_operations = {},
+        .detail = "dry-run lifecycle iteration completed"};
+    const auto health = easyfailover::HealthCheckResult{
+        .status = HealthStatus::Healthy,
+        .detail = "health command exited successfully"};
+
+    const auto response = buildLocalApiStatusResponse(config, lifecycle, health, NodeState::Backup,
+                                                      true, 2);
+
+    runner.expect(response.node.id == config.node_id, "status response should include node id");
+    runner.expect(response.node.priority == config.priority,
+                  "status response should include node priority");
+    runner.expect(response.node.state == "backup", "status response should include node state");
+    runner.expect(response.node.healthy, "status response should map healthy status");
+    runner.expect(response.vip.address == config.vip.address,
+                  "status response should include VIP address");
+    runner.expect(response.vip.interface == config.vip.interface,
+                  "status response should include VIP interface");
+    runner.expect(!response.vip.local_owner,
+                  "status response should conservatively avoid claiming VIP ownership");
+    runner.expect(response.lifecycle.initial_state == "stopped",
+                  "status response should include lifecycle initial state");
+    runner.expect(response.lifecycle.final_state == "stopped",
+                  "status response should include lifecycle final state");
+    runner.expect(response.lifecycle.detail == lifecycle.detail,
+                  "status response should include lifecycle detail");
+    runner.expect(response.lifecycle.dry_run, "status response should include dry-run mode");
+    runner.expect(response.lifecycle.started, "status response should include started flag");
+    runner.expect(response.lifecycle.iteration_ran,
+                  "status response should include iteration flag");
+    runner.expect(response.lifecycle.stopped, "status response should include stopped flag");
+    runner.expect(response.heartbeat.bind == config.heartbeat.bind,
+                  "status response should include heartbeat bind");
+    runner.expect(response.heartbeat.interval_ms == config.heartbeat.interval_ms,
+                  "status response should include heartbeat interval");
+    runner.expect(response.heartbeat.timeout_ms == config.heartbeat.timeout_ms,
+                  "status response should include heartbeat timeout");
+    runner.expect(response.heartbeat.peers_observed == 2,
+                  "status response should include observed peer count");
+    runner.expect(response.health.status == "healthy",
+                  "status response should include health status");
+    runner.expect(response.health.detail == "health command detail redacted",
+                  "status response should redact configured health command detail");
+}
+
+void testLocalApiStatusResponseOmitsSensitiveHealthCommand(TestRunner& runner) {
+    auto config = validConfig();
+    config.health.command = "curl -H 'Authorization: Bearer secret' http://127.0.0.1/health";
+    const auto lifecycle = DaemonLifecycleResult{};
+    const auto health = easyfailover::HealthCheckResult{.status = HealthStatus::Unhealthy,
+                                                        .detail = "Authorization Bearer secret"};
+
+    const auto response = buildLocalApiStatusResponse(config, lifecycle, health, NodeState::Fault,
+                                                      false);
+
+    runner.expect(response.node.state == "fault", "status response should include fault state");
+    runner.expect(!response.node.healthy, "status response should map unhealthy status");
+    runner.expect(response.health.detail.find("Authorization") == std::string::npos,
+                  "status response should not expose health command headers");
+    runner.expect(response.health.detail.find("secret") == std::string::npos,
+                  "status response should not expose health command secrets");
+    runner.expect(response.health.detail == "health command detail redacted",
+                  "status response should redact configured health command detail");
+    runner.expect(!response.lifecycle.dry_run, "status response should include non-dry-run mode");
+    runner.expect(response.heartbeat.peers_observed == 0,
+                  "status response should default observed peer count to zero");
+}
+
+void testLocalApiStatusResponseKeepsNoCommandHealthDetail(TestRunner& runner) {
+    auto config = validConfig();
+    config.health.command.clear();
+    const auto lifecycle = DaemonLifecycleResult{};
+    const auto health = easyfailover::HealthCheckResult{.status = HealthStatus::Healthy,
+                                                        .detail = "no health command configured"};
+
+    const auto response = buildLocalApiStatusResponse(config, lifecycle, health, NodeState::Backup,
+                                                      true);
+
+    runner.expect(response.health.detail == health.detail,
+                  "status response should preserve no-command health detail");
 }
 
 void testInvalidHeartbeatConfigFixture(TestRunner& runner) {
@@ -1793,6 +1885,15 @@ int main() {
     });
     runner.run("local API startup rejects write mode", [&runner] {
         testLocalApiStartupRejectsWriteMode(runner);
+    });
+    runner.run("local API status response maps current runtime state", [&runner] {
+        testLocalApiStatusResponseMapsCurrentRuntimeState(runner);
+    });
+    runner.run("local API status response omits sensitive health command", [&runner] {
+        testLocalApiStatusResponseOmitsSensitiveHealthCommand(runner);
+    });
+    runner.run("local API status response keeps no-command health detail", [&runner] {
+        testLocalApiStatusResponseKeepsNoCommandHealthDetail(runner);
     });
     runner.run("invalid heartbeat config fixture reports validation errors", [&runner] {
         testInvalidHeartbeatConfigFixture(runner);

@@ -73,7 +73,8 @@ or omit sensitive fields by default, including `health.command`.
 
 ### `GET /api/v1/status`
 
-Returns the local agent's current view of runtime state.
+Returns the local agent's current view of runtime state. The response model exists in code, but no
+HTTP listener or route serves it yet.
 
 Draft response:
 
@@ -114,6 +115,9 @@ Draft response:
 
 `local_owner` should remain `false` until real VIP ownership state exists. It must not be inferred
 from election helpers alone.
+
+When a health command is configured, `health.detail` should use a redaction marker instead of
+returning command output or runner error text.
 
 ### `GET /api/v1/config`
 
