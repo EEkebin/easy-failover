@@ -5,6 +5,8 @@
 #include "health/HealthCheck.hpp"
 #include "runtime/DaemonRuntime.hpp"
 
+#include <vector>
+
 namespace easyfailover {
 
 namespace {
@@ -67,6 +69,32 @@ LocalApiStatusResponse buildLocalApiStatusResponse(const Config& config,
                                              .peers_observed = peers_observed},
         .health = LocalApiStatusHealth{.status = std::string{toString(health.status)},
                                        .detail = healthDetailForStatusResponse(config, health)}};
+}
+
+LocalApiConfigResponse buildLocalApiConfigResponse(const Config& config) {
+    auto peers = std::vector<LocalApiConfigPeer>{};
+    peers.reserve(config.peers.size());
+    for (const auto& peer : config.peers) {
+        peers.push_back(LocalApiConfigPeer{.id = peer.id, .address = peer.address});
+    }
+
+    return LocalApiConfigResponse{
+        .node_id = config.node_id,
+        .priority = config.priority,
+        .vip = LocalApiConfigVip{.address = config.vip.address,
+                                 .interface = config.vip.interface},
+        .heartbeat = LocalApiConfigHeartbeat{.bind = config.heartbeat.bind,
+                                             .interval_ms = config.heartbeat.interval_ms,
+                                             .timeout_ms = config.heartbeat.timeout_ms},
+        .health = LocalApiConfigHealth{.command_redacted = !config.health.command.empty(),
+                                       .interval_ms = config.health.interval_ms,
+                                       .timeout_ms = config.health.timeout_ms},
+        .election = LocalApiConfigElection{.require_quorum = config.election.require_quorum,
+                                           .preempt = config.election.preempt},
+        .api = LocalApiConfigApi{.enabled = config.api.enabled,
+                                 .bind = config.api.bind,
+                                 .read_only = config.api.read_only},
+        .peers = std::move(peers)};
 }
 
 } // namespace easyfailover

@@ -59,6 +59,7 @@ using easyfailover::ShutdownSignalState;
 using easyfailover::VipOperationType;
 using easyfailover::VipOperationResult;
 using easyfailover::VipManager;
+using easyfailover::buildLocalApiConfigResponse;
 using easyfailover::buildLocalApiStatusResponse;
 using easyfailover::chooseHighestPriorityHealthyNode;
 using easyfailover::decideFailoverAction;
@@ -450,6 +451,70 @@ void testLocalApiStatusResponseKeepsNoCommandHealthDetail(TestRunner& runner) {
 
     runner.expect(response.health.detail == health.detail,
                   "status response should preserve no-command health detail");
+}
+
+void testLocalApiConfigResponseMapsEffectiveConfig(TestRunner& runner) {
+    auto config = validConfig();
+    config.election.require_quorum = true;
+    config.election.preempt = false;
+    config.api.enabled = true;
+    config.peers.push_back(PeerConfig{.id = "node-c", .address = "10.0.0.13:7432"});
+
+    const auto response = buildLocalApiConfigResponse(config);
+
+    runner.expect(response.node_id == config.node_id, "config response should include node id");
+    runner.expect(response.priority == config.priority,
+                  "config response should include node priority");
+    runner.expect(response.vip.address == config.vip.address,
+                  "config response should include VIP address");
+    runner.expect(response.vip.interface == config.vip.interface,
+                  "config response should include VIP interface");
+    runner.expect(response.heartbeat.bind == config.heartbeat.bind,
+                  "config response should include heartbeat bind");
+    runner.expect(response.heartbeat.interval_ms == config.heartbeat.interval_ms,
+                  "config response should include heartbeat interval");
+    runner.expect(response.heartbeat.timeout_ms == config.heartbeat.timeout_ms,
+                  "config response should include heartbeat timeout");
+    runner.expect(response.health.interval_ms == config.health.interval_ms,
+                  "config response should include health interval");
+    runner.expect(response.health.timeout_ms == config.health.timeout_ms,
+                  "config response should include health timeout");
+    runner.expect(response.election.require_quorum == config.election.require_quorum,
+                  "config response should include quorum setting");
+    runner.expect(response.election.preempt == config.election.preempt,
+                  "config response should include preemption setting");
+    runner.expect(response.api.enabled == config.api.enabled,
+                  "config response should include API enabled flag");
+    runner.expect(response.api.bind == config.api.bind,
+                  "config response should include API bind");
+    runner.expect(response.api.read_only == config.api.read_only,
+                  "config response should include API read-only flag");
+    runner.expect(response.peers.size() == config.peers.size(),
+                  "config response should include peers");
+    runner.expect(response.peers.at(0).id == "node-b",
+                  "config response should include first peer id");
+    runner.expect(response.peers.at(1).address == "10.0.0.13:7432",
+                  "config response should include second peer address");
+}
+
+void testLocalApiConfigResponseRedactsHealthCommand(TestRunner& runner) {
+    auto config = validConfig();
+    config.health.command = "curl -H 'Authorization: Bearer secret' http://127.0.0.1/health";
+
+    const auto response = buildLocalApiConfigResponse(config);
+
+    runner.expect(response.health.command_redacted,
+                  "config response should report redacted health command");
+}
+
+void testLocalApiConfigResponseReportsNoHealthCommand(TestRunner& runner) {
+    auto config = validConfig();
+    config.health.command.clear();
+
+    const auto response = buildLocalApiConfigResponse(config);
+
+    runner.expect(!response.health.command_redacted,
+                  "config response should report no health command when command is empty");
 }
 
 void testInvalidHeartbeatConfigFixture(TestRunner& runner) {
@@ -1894,6 +1959,15 @@ int main() {
     });
     runner.run("local API status response keeps no-command health detail", [&runner] {
         testLocalApiStatusResponseKeepsNoCommandHealthDetail(runner);
+    });
+    runner.run("local API config response maps effective config", [&runner] {
+        testLocalApiConfigResponseMapsEffectiveConfig(runner);
+    });
+    runner.run("local API config response redacts health command", [&runner] {
+        testLocalApiConfigResponseRedactsHealthCommand(runner);
+    });
+    runner.run("local API config response reports no health command", [&runner] {
+        testLocalApiConfigResponseReportsNoHealthCommand(runner);
     });
     runner.run("invalid heartbeat config fixture reports validation errors", [&runner] {
         testInvalidHeartbeatConfigFixture(runner);
