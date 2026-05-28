@@ -208,7 +208,8 @@ code guidance:
 ### `GET /api/v1/events`
 
 Returns recent structured runtime events from an in-memory ring buffer once such a buffer exists.
-Until then, the endpoint can return an empty list.
+The response model exists in code, but no HTTP listener or route serves it yet. Until an event ring
+buffer exists, response construction can return an empty list.
 
 Draft response:
 
