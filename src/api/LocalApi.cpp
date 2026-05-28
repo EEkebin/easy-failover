@@ -1,5 +1,7 @@
 #include "api/LocalApi.hpp"
 
+#include "config/Config.hpp"
+
 namespace easyfailover {
 
 LocalApiStartupResult evaluateLocalApiStartup(const ApiConfig& config) {

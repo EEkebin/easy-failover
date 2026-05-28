@@ -82,7 +82,7 @@ int main(int argc, char** argv) {
 
         const auto api_startup = easyfailover::evaluateLocalApiStartup(config.api);
         if (api_startup.state == easyfailover::LocalApiStartupState::Rejected) {
-            spdlog::error("local API startup rejected bind={}: {}", api_startup.bind,
+            spdlog::error("local API startup rejected bind={} detail=\"{}\"", api_startup.bind,
                           api_startup.detail);
             return EXIT_FAILURE;
         }

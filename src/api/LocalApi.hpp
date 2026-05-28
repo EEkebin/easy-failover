@@ -1,11 +1,11 @@
 #pragma once
 
-#include "config/Config.hpp"
-
 #include <string>
 #include <string_view>
 
 namespace easyfailover {
+
+struct ApiConfig;
 
 enum class LocalApiStartupState {
     Disabled,

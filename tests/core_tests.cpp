@@ -323,7 +323,7 @@ void testLocalApiStartupDisabled(TestRunner& runner) {
 
     runner.expect(result.state == LocalApiStartupState::Disabled,
                   "disabled API config should produce disabled startup state");
-    runner.expect(result.bind == "127.0.0.1:8743",
+    runner.expect(result.bind == config.api.bind,
                   "disabled API startup should preserve configured bind for logging");
     runner.expect(result.detail == "local API disabled",
                   "disabled API startup should report stable detail");
@@ -338,7 +338,7 @@ void testLocalApiStartupReadyForReadOnlyEnabledConfig(TestRunner& runner) {
 
     runner.expect(result.state == LocalApiStartupState::Ready,
                   "read-only enabled API config should be ready for future listener");
-    runner.expect(result.bind == "127.0.0.1:8743",
+    runner.expect(result.bind == config.api.bind,
                   "read-only API startup should preserve configured bind");
     runner.expect(result.detail == "local API skeleton ready; listener not implemented",
                   "read-only API startup should report stable skeleton detail");
@@ -353,7 +353,7 @@ void testLocalApiStartupRejectsWriteMode(TestRunner& runner) {
 
     runner.expect(result.state == LocalApiStartupState::Rejected,
                   "enabled write-mode API config should be rejected by startup logic");
-    runner.expect(result.bind == "127.0.0.1:8743",
+    runner.expect(result.bind == config.api.bind,
                   "rejected API startup should preserve configured bind");
     runner.expect(result.detail ==
                       "local API write mode requires authentication and write-behavior design",
