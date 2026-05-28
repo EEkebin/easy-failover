@@ -86,7 +86,7 @@ LocalApiConfigResponse buildLocalApiConfigResponse(const Config& config) {
         .heartbeat = LocalApiConfigHeartbeat{.bind = config.heartbeat.bind,
                                              .interval_ms = config.heartbeat.interval_ms,
                                              .timeout_ms = config.heartbeat.timeout_ms},
-        .health = LocalApiConfigHealth{.command_redacted = true,
+        .health = LocalApiConfigHealth{.command_redacted = !config.health.command.empty(),
                                        .interval_ms = config.health.interval_ms,
                                        .timeout_ms = config.health.timeout_ms},
         .election = LocalApiConfigElection{.require_quorum = config.election.require_quorum,

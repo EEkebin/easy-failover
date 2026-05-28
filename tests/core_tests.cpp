@@ -507,6 +507,16 @@ void testLocalApiConfigResponseRedactsHealthCommand(TestRunner& runner) {
                   "config response should report redacted health command");
 }
 
+void testLocalApiConfigResponseReportsNoHealthCommand(TestRunner& runner) {
+    auto config = validConfig();
+    config.health.command.clear();
+
+    const auto response = buildLocalApiConfigResponse(config);
+
+    runner.expect(!response.health.command_redacted,
+                  "config response should report no health command when command is empty");
+}
+
 void testInvalidHeartbeatConfigFixture(TestRunner& runner) {
     const auto config = loadConfigFromFile("tests/fixtures/config/invalid-heartbeat.toml");
     const auto errors = config.validate();
@@ -1955,6 +1965,9 @@ int main() {
     });
     runner.run("local API config response redacts health command", [&runner] {
         testLocalApiConfigResponseRedactsHealthCommand(runner);
+    });
+    runner.run("local API config response reports no health command", [&runner] {
+        testLocalApiConfigResponseReportsNoHealthCommand(runner);
     });
     runner.run("invalid heartbeat config fixture reports validation errors", [&runner] {
         testInvalidHeartbeatConfigFixture(runner);
