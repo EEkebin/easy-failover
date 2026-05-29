@@ -27,6 +27,10 @@ cmake --install build --prefix "$PWD/stage"
 The staged config is named `config.example.toml` on purpose. Install rules must not overwrite an
 operator's active `/etc/easy-failover/config.toml`.
 
+The systemd unit directory is controlled by `EASY_FAILOVER_SYSTEMD_UNIT_DIR`, defaulting to
+`lib/systemd/system`. This is intentionally separate from `CMAKE_INSTALL_LIBDIR` because systemd
+unit paths are not library-architecture paths.
+
 Release tarballs are built from this same staged CMake install tree so their internal layout matches
 the install rules.
 

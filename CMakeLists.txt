@@ -15,6 +15,12 @@ include(FetchContent)
 include(CTest)
 include(GNUInstallDirs)
 
+set(
+    EASY_FAILOVER_SYSTEMD_UNIT_DIR
+    "lib/systemd/system"
+    CACHE STRING
+          "Install directory for systemd unit files, relative to CMAKE_INSTALL_PREFIX")
+
 FetchContent_Declare(
     spdlog
     GIT_REPOSITORY https://github.com/gabime/spdlog.git
@@ -103,7 +109,7 @@ install(
 
 install(
     FILES packaging/systemd/easy-failover.service
-    DESTINATION "${CMAKE_INSTALL_LIBDIR}/systemd/system")
+    DESTINATION "${EASY_FAILOVER_SYSTEMD_UNIT_DIR}")
 
 install(FILES README.md LICENSE DESTINATION "${CMAKE_INSTALL_DOCDIR}")
 install(
