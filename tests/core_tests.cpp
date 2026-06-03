@@ -30,6 +30,9 @@ using easyfailover::Config;
 using easyfailover::DaemonLifecycleRequest;
 using easyfailover::DaemonLifecycleResult;
 using easyfailover::DaemonLifecycleState;
+using easyfailover::DaemonLoopOptions;
+using easyfailover::DaemonLoopRequest;
+using easyfailover::DaemonLoopStopReason;
 using easyfailover::DaemonRuntimeOptions;
 using easyfailover::FailoverAction;
 using easyfailover::HealthCommandRunner;
@@ -81,6 +84,7 @@ using easyfailover::peerStatusFromHeartbeat;
 using easyfailover::pollShutdownSignals;
 using easyfailover::resetPendingShutdownSignalForTest;
 using easyfailover::runDaemonLifecycleOnce;
+using easyfailover::runDaemonRuntimeLoop;
 using easyfailover::runHeartbeatLoopOnce;
 using easyfailover::serializeHeartbeatMessage;
 using easyfailover::loadConfigFromFile;
@@ -1808,6 +1812,108 @@ void testDaemonLifecycleStateNames(TestRunner& runner) {
                   "faulted lifecycle state should stringify");
 }
 
+void testDaemonRuntimeLoopRunsBoundedIterations(TestRunner& runner) {
+    FakeVipManager vip_manager;
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = validConfig(),
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 3}},
+        vip_manager);
+
+    runner.expect(result.iterations_ran == 3,
+                  "daemon runtime loop should run the configured bounded iterations");
+    runner.expect(result.stop_reason == DaemonLoopStopReason::MaxIterations,
+                  "daemon runtime loop should stop after max iterations");
+    runner.expect(result.final_state == DaemonLifecycleState::Stopped,
+                  "bounded daemon runtime loop should finish stopped");
+    runner.expect(result.detail == "max iterations completed",
+                  "bounded daemon runtime loop should report max-iteration completion");
+    runner.expect(result.vip_operations.size() == 6,
+                  "daemon runtime loop should aggregate VIP operations across iterations");
+}
+
+void testDaemonRuntimeLoopStopsBeforeFirstIterationOnShutdown(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    auto shutdown_state = ShutdownSignalState{};
+    shutdown_state.requestShutdown(ShutdownSignal::Interrupt);
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = validConfig(),
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 3},
+                          .shutdown_state = &shutdown_state},
+        vip_manager);
+
+    runner.expect(result.iterations_ran == 0,
+                  "daemon runtime loop should stop before first iteration on shutdown");
+    runner.expect(result.stop_reason == DaemonLoopStopReason::ShutdownRequested,
+                  "daemon runtime loop should report shutdown stop reason");
+    runner.expect(result.detail == "shutdown requested by interrupt signal",
+                  "daemon runtime loop should preserve shutdown detail");
+    runner.expect(result.vip_operations.empty(),
+                  "daemon runtime loop should not run VIP operations after shutdown");
+    runner.expect(!vip_manager.add_called,
+                  "daemon runtime loop should not call VIP manager after shutdown");
+}
+
+void testDaemonRuntimeLoopStopsOnLifecycleFault(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    vip_manager.add_success = false;
+    vip_manager.add_error = "add failed";
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = validConfig(),
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 3}},
+        vip_manager);
+
+    runner.expect(result.iterations_ran == 1,
+                  "daemon runtime loop should stop after the first faulting iteration");
+    runner.expect(result.stop_reason == DaemonLoopStopReason::LifecycleFaulted,
+                  "daemon runtime loop should report lifecycle fault stop reason");
+    runner.expect(result.final_state == DaemonLifecycleState::Faulted,
+                  "daemon runtime loop should preserve faulted final state");
+    runner.expect(result.detail == "add failed",
+                  "daemon runtime loop should preserve lifecycle fault detail");
+    runner.expect(result.vip_operations.size() == 1,
+                  "daemon runtime loop should aggregate operations from the faulting iteration");
+}
+
+void testDaemonRuntimeLoopPreservesValidationErrors(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    auto config = validConfig();
+    config.node_id.clear();
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = config,
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 3}},
+        vip_manager);
+
+    runner.expect(result.iterations_ran == 0,
+                  "daemon runtime loop should not count invalid config as a completed iteration");
+    runner.expect(result.stop_reason == DaemonLoopStopReason::LifecycleFaulted,
+                  "daemon runtime loop should stop on invalid config fault");
+    runner.expect(contains(result.validation_errors, "node_id must not be empty"),
+                  "daemon runtime loop should preserve validation errors");
+    runner.expect(result.detail == "config validation failed",
+                  "daemon runtime loop should preserve validation failure detail");
+    runner.expect(!vip_manager.add_called,
+                  "daemon runtime loop should not run VIP operations after validation failure");
+}
+
+void testDaemonRuntimeLoopStopReasonNames(TestRunner& runner) {
+    runner.expect(easyfailover::toString(DaemonLoopStopReason::MaxIterations) == "max_iterations",
+                  "max-iterations stop reason should stringify");
+    runner.expect(easyfailover::toString(DaemonLoopStopReason::ShutdownRequested) ==
+                      "shutdown_requested",
+                  "shutdown stop reason should stringify");
+    runner.expect(easyfailover::toString(DaemonLoopStopReason::LifecycleFaulted) ==
+                      "lifecycle_faulted",
+                  "lifecycle-faulted stop reason should stringify");
+}
+
 void testShutdownSignalStateDefaultsToNotRequested(TestRunner& runner) {
     const auto shutdown_state = ShutdownSignalState{};
 
@@ -2397,6 +2503,21 @@ int main() {
     });
     runner.run("daemon lifecycle state names", [&runner] {
         testDaemonLifecycleStateNames(runner);
+    });
+    runner.run("daemon runtime loop runs bounded iterations", [&runner] {
+        testDaemonRuntimeLoopRunsBoundedIterations(runner);
+    });
+    runner.run("daemon runtime loop stops before first iteration on shutdown", [&runner] {
+        testDaemonRuntimeLoopStopsBeforeFirstIterationOnShutdown(runner);
+    });
+    runner.run("daemon runtime loop stops on lifecycle fault", [&runner] {
+        testDaemonRuntimeLoopStopsOnLifecycleFault(runner);
+    });
+    runner.run("daemon runtime loop preserves validation errors", [&runner] {
+        testDaemonRuntimeLoopPreservesValidationErrors(runner);
+    });
+    runner.run("daemon runtime loop stop reason names", [&runner] {
+        testDaemonRuntimeLoopStopReasonNames(runner);
     });
     runner.run("shutdown signal state defaults to not requested", [&runner] {
         testShutdownSignalStateDefaultsToNotRequested(runner);
