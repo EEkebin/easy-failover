@@ -30,3 +30,11 @@ file(
     WRITE
     "${EASY_FAILOVER_SYSTEMD_UNIT_INSTALL_DIR}/easy-failover.service"
     "${EASY_FAILOVER_SYSTEMD_UNIT_CONTENT}")
+file(
+    CHMOD
+    "${EASY_FAILOVER_SYSTEMD_UNIT_INSTALL_DIR}/easy-failover.service"
+    PERMISSIONS
+    OWNER_READ
+    OWNER_WRITE
+    GROUP_READ
+    WORLD_READ)

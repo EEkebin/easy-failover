@@ -49,6 +49,7 @@ cmake --install build --prefix "$PWD/stage"
 For package-style builds that configure absolute install directories, stage through `DESTDIR`:
 
 ```sh
+cmake -S . -B build -DCMAKE_INSTALL_SYSCONFDIR=/etc
 DESTDIR="$PWD/stage-root" cmake --install build --prefix /usr
 ```
 

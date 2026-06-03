@@ -32,7 +32,7 @@ jobs:
           echo "$RUNNER_TEMP/cmake-${CMAKE_VERSION}-linux-x86_64/bin" >> "$GITHUB_PATH"
 
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" -DCMAKE_INSTALL_SYSCONFDIR=/etc
 
       - name: Build
         run: cmake --build build --config "${BUILD_TYPE}" --parallel
@@ -46,7 +46,7 @@ jobs:
       - name: Package artifact
         run: |
           set -euo pipefail
-          cmake --install build --prefix "dist/easy-failover-linux-x86_64"
+          DESTDIR="$PWD/dist/easy-failover-linux-x86_64" cmake --install build --prefix /usr
           tar -C dist -czf "dist/easy-failover-linux-x86_64.tar.gz" easy-failover-linux-x86_64
 
       - name: Upload workflow artifact
