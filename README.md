@@ -85,7 +85,8 @@ capability notes live in [`docs/linux-capabilities.md`](docs/linux-capabilities.
 skeleton evaluates disabled/read-only startup state only; the future read-only API shape is
 documented in [`docs/local-api-design.md`](docs/local-api-design.md).
 Install/package layout notes live in
-[`docs/install-package-layout.md`](docs/install-package-layout.md).
+[`docs/install-package-layout.md`](docs/install-package-layout.md). Distro packaging guidance lives
+in [`docs/distro-packaging-notes.md`](docs/distro-packaging-notes.md).
 Real VIP movement is intentionally blocked until heartbeat, health, quorum/split-brain, and
 explicit operator-safety controls are designed and implemented.
 
