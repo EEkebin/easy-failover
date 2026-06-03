@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/bin/easy-failover --config /etc/easy-failover/config.toml
+ExecStart=@EASY_FAILOVER_SYSTEMD_BINDIR@/easy-failover --config @EASY_FAILOVER_SYSTEMD_SYSCONFDIR@/easy-failover/config.toml
 Restart=always
 RestartSec=2s
 

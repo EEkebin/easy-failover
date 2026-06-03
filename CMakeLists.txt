@@ -24,6 +24,11 @@ if(IS_ABSOLUTE "${EASY_FAILOVER_SYSTEMD_UNIT_DIR}")
     message(FATAL_ERROR "EASY_FAILOVER_SYSTEMD_UNIT_DIR must be relative to CMAKE_INSTALL_PREFIX")
 endif()
 
+configure_file(
+    cmake/install-systemd-unit.cmake.in
+    "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-systemd-unit.cmake"
+    @ONLY)
+
 FetchContent_Declare(
     spdlog
     GIT_REPOSITORY https://github.com/gabime/spdlog.git
@@ -110,9 +115,7 @@ install(
     DESTINATION "${CMAKE_INSTALL_SYSCONFDIR}/easy-failover"
     RENAME config.example.toml)
 
-install(
-    FILES packaging/systemd/easy-failover.service
-    DESTINATION "${EASY_FAILOVER_SYSTEMD_UNIT_DIR}")
+install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-systemd-unit.cmake")
 
 install(FILES README.md LICENSE DESTINATION "${CMAKE_INSTALL_DOCDIR}")
 install(

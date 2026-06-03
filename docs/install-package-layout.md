@@ -41,6 +41,10 @@ The systemd unit directory is controlled by `EASY_FAILOVER_SYSTEMD_UNIT_DIR`, de
 unit paths are not library-architecture paths. It must remain relative so `--prefix` and `DESTDIR`
 staging keep working.
 
+The systemd unit is generated from `packaging/systemd/easy-failover.service.in` at install time.
+Its `ExecStart` uses the configured install bindir and sysconfdir so custom-prefix staged installs
+are internally consistent for inspection.
+
 Release tarballs are built from this same staged CMake install tree so their internal layout matches
 the install rules.
 
