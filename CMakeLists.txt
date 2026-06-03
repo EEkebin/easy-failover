@@ -20,6 +20,9 @@ set(
     "lib/systemd/system"
     CACHE STRING
           "Install directory for systemd unit files, relative to CMAKE_INSTALL_PREFIX")
+if(IS_ABSOLUTE "${EASY_FAILOVER_SYSTEMD_UNIT_DIR}")
+    message(FATAL_ERROR "EASY_FAILOVER_SYSTEMD_UNIT_DIR must be relative to CMAKE_INSTALL_PREFIX")
+endif()
 
 FetchContent_Declare(
     spdlog

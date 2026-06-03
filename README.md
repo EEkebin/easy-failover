@@ -46,6 +46,12 @@ Stage the install layout without touching host paths:
 cmake --install build --prefix "$PWD/stage"
 ```
 
+For package-style builds that configure absolute install directories, stage through `DESTDIR`:
+
+```sh
+DESTDIR="$PWD/stage-root" cmake --install build --prefix /usr
+```
+
 ## Run
 
 Validate the sample config:

@@ -24,12 +24,22 @@ cmake --build build
 cmake --install build --prefix "$PWD/stage"
 ```
 
+If the build is configured with absolute install directories, use `DESTDIR` so those absolute paths
+are rooted under a staging directory:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_SYSCONFDIR=/etc
+cmake --build build
+DESTDIR="$PWD/stage-root" cmake --install build --prefix /usr
+```
+
 The staged config is named `config.example.toml` on purpose. Install rules must not overwrite an
 operator's active `/etc/easy-failover/config.toml`.
 
 The systemd unit directory is controlled by `EASY_FAILOVER_SYSTEMD_UNIT_DIR`, defaulting to
 `lib/systemd/system`. This is intentionally separate from `CMAKE_INSTALL_LIBDIR` because systemd
-unit paths are not library-architecture paths.
+unit paths are not library-architecture paths. It must remain relative so `--prefix` and `DESTDIR`
+staging keep working.
 
 Release tarballs are built from this same staged CMake install tree so their internal layout matches
 the install rules.
