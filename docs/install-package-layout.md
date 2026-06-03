@@ -48,6 +48,9 @@ are internally consistent for inspection.
 Release tarballs are built from this same staged CMake install tree so their internal layout matches
 the install rules.
 
+Distribution packaging guidance lives in
+[`distro-packaging-notes.md`](distro-packaging-notes.md).
+
 ## Production Paths
 
 The intended Linux package layout is:
