@@ -108,7 +108,14 @@ project on Linux, runs CTest, and runs smoke checks for `--version`, config vali
 mode.
 
 Release automation runs on tags matching `v*` and can also be started manually. Tagged releases
-build a Linux x86_64 tarball and publish it to the GitHub release.
+build a Linux x86_64 tarball, generate a SHA-256 checksum file, and publish both files to the
+GitHub release.
+
+Verify a downloaded release artifact:
+
+```sh
+sha256sum -c easy-failover-linux-x86_64.tar.gz.sha256
+```
 
 ## Contribution Workflow
 

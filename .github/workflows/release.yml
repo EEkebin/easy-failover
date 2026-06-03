@@ -48,12 +48,19 @@ jobs:
           set -euo pipefail
           DESTDIR="$PWD/dist/easy-failover-linux-x86_64" cmake --install build --prefix /usr
           tar -C dist -czf "dist/easy-failover-linux-x86_64.tar.gz" easy-failover-linux-x86_64
+          (
+            cd dist
+            sha256sum "easy-failover-linux-x86_64.tar.gz" > \
+              "easy-failover-linux-x86_64.tar.gz.sha256"
+          )
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v6
         with:
           name: easy-failover-linux-x86_64
-          path: dist/easy-failover-linux-x86_64.tar.gz
+          path: |
+            dist/easy-failover-linux-x86_64.tar.gz
+            dist/easy-failover-linux-x86_64.tar.gz.sha256
           if-no-files-found: error
 
       - name: Publish GitHub release
@@ -63,6 +70,7 @@ jobs:
         run: |
           gh release create "${GITHUB_REF_NAME}" \
             "dist/easy-failover-linux-x86_64.tar.gz" \
+            "dist/easy-failover-linux-x86_64.tar.gz.sha256" \
             --repo "${GITHUB_REPOSITORY}" \
             --title "${GITHUB_REF_NAME}" \
             --notes "Automated easyFailover Linux x86_64 release build."
