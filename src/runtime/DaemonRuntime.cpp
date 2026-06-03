@@ -95,6 +95,13 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request, VipManag
                                    .vip_operations = {},
                                    .detail = "max iterations completed"};
 
+    if (request.shutdown_state != nullptr && request.shutdown_state->shutdownRequested()) {
+        result.final_state = DaemonLifecycleState::Stopped;
+        result.stop_reason = DaemonLoopStopReason::ShutdownRequested;
+        result.detail = std::string{request.shutdown_state->reason()};
+        return result;
+    }
+
     auto current_state = request.initial_state;
     for (std::size_t index = 0; index < request.options.max_iterations; ++index) {
         if (request.shutdown_state != nullptr && request.shutdown_state->shutdownRequested()) {

@@ -1857,6 +1857,30 @@ void testDaemonRuntimeLoopStopsBeforeFirstIterationOnShutdown(TestRunner& runner
                   "daemon runtime loop should not call VIP manager after shutdown");
 }
 
+void testDaemonRuntimeLoopStopsOnShutdownWithZeroMaxIterations(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    auto shutdown_state = ShutdownSignalState{};
+    shutdown_state.requestShutdown(ShutdownSignal::Terminate);
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = validConfig(),
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 0},
+                          .shutdown_state = &shutdown_state},
+        vip_manager);
+
+    runner.expect(result.iterations_ran == 0,
+                  "zero-iteration runtime loop should not run lifecycle iterations");
+    runner.expect(result.stop_reason == DaemonLoopStopReason::ShutdownRequested,
+                  "zero-iteration runtime loop should still report pending shutdown");
+    runner.expect(result.detail == "shutdown requested by terminate signal",
+                  "zero-iteration runtime loop should preserve shutdown detail");
+    runner.expect(result.vip_operations.empty(),
+                  "zero-iteration runtime loop should not run VIP operations");
+    runner.expect(!vip_manager.add_called,
+                  "zero-iteration runtime loop should not call VIP manager");
+}
+
 void testDaemonRuntimeLoopStopsOnLifecycleFault(TestRunner& runner) {
     FakeVipManager vip_manager;
     vip_manager.add_success = false;
@@ -2509,6 +2533,9 @@ int main() {
     });
     runner.run("daemon runtime loop stops before first iteration on shutdown", [&runner] {
         testDaemonRuntimeLoopStopsBeforeFirstIterationOnShutdown(runner);
+    });
+    runner.run("daemon runtime loop stops on shutdown with zero max iterations", [&runner] {
+        testDaemonRuntimeLoopStopsOnShutdownWithZeroMaxIterations(runner);
     });
     runner.run("daemon runtime loop stops on lifecycle fault", [&runner] {
         testDaemonRuntimeLoopStopsOnLifecycleFault(runner);
