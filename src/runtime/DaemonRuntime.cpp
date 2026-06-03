@@ -1,5 +1,8 @@
 #include "runtime/DaemonRuntime.hpp"
 
+#include <chrono>
+#include <thread>
+
 namespace easyfailover {
 
 namespace {
@@ -80,6 +83,73 @@ DaemonLifecycleResult runDaemonLifecycleOnce(const DaemonLifecycleRequest& reque
 
     result.final_state = DaemonLifecycleState::Stopped;
     result.stopped = true;
+    return result;
+}
+
+DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request, VipManager& vip_manager) {
+    auto result = DaemonLoopResult{.initial_state = request.initial_state,
+                                   .final_state = request.initial_state,
+                                   .stop_reason = DaemonLoopStopReason::MaxIterations,
+                                   .iterations_ran = 0,
+                                   .validation_errors = {},
+                                   .vip_operations = {},
+                                   .detail = "max iterations completed"};
+
+    if (request.shutdown_state != nullptr && request.shutdown_state->shutdownRequested()) {
+        result.final_state = DaemonLifecycleState::Stopped;
+        result.stop_reason = DaemonLoopStopReason::ShutdownRequested;
+        result.detail = std::string{request.shutdown_state->reason()};
+        return result;
+    }
+
+    auto current_state = request.initial_state;
+    for (std::size_t index = 0; index < request.options.max_iterations; ++index) {
+        if (request.shutdown_state != nullptr && request.shutdown_state->shutdownRequested()) {
+            result.final_state = DaemonLifecycleState::Stopped;
+            result.stop_reason = DaemonLoopStopReason::ShutdownRequested;
+            result.detail = std::string{request.shutdown_state->reason()};
+            return result;
+        }
+
+        const auto lifecycle_result = runDaemonLifecycleOnce(
+            DaemonLifecycleRequest{.config = request.config,
+                                   .options = request.options.runtime_options,
+                                   .initial_state = current_state,
+                                   .shutdown_state = request.shutdown_state,
+                                   .config_prevalidated = request.config_prevalidated},
+            vip_manager);
+
+        current_state = lifecycle_result.final_state;
+        result.final_state = lifecycle_result.final_state;
+        result.detail = lifecycle_result.detail;
+        result.validation_errors.insert(result.validation_errors.end(),
+                                        lifecycle_result.validation_errors.begin(),
+                                        lifecycle_result.validation_errors.end());
+        result.vip_operations.insert(result.vip_operations.end(),
+                                     lifecycle_result.vip_operations.begin(),
+                                     lifecycle_result.vip_operations.end());
+
+        if (lifecycle_result.iteration_ran) {
+            ++result.iterations_ran;
+        }
+
+        if (lifecycle_result.final_state == DaemonLifecycleState::Faulted) {
+            result.stop_reason = DaemonLoopStopReason::LifecycleFaulted;
+            return result;
+        }
+
+        if (index + 1 == request.options.max_iterations) {
+            result.stop_reason = DaemonLoopStopReason::MaxIterations;
+            result.detail = "max iterations completed";
+            return result;
+        }
+
+        if (request.options.inter_iteration_delay_ms > 0) {
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds{request.options.inter_iteration_delay_ms});
+        }
+    }
+
     return result;
 }
 
