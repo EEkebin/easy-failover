@@ -108,6 +108,9 @@ GitHub Actions runs CI on pull requests and pushes to `main`. The current CI job
 project on Linux, runs CTest, and runs smoke checks for `--version`, config validation, and dry-run
 mode.
 
+CodeQL code scanning runs on pull requests, pushes to `main`, and a weekly schedule. The CodeQL
+workflow performs a manual CMake build for C/C++ analysis.
+
 Release automation runs on tags matching `v*` and can also be started manually. Tagged releases
 build a Linux x86_64 tarball, generate a SHA-256 checksum file, and publish both files to the
 GitHub release.

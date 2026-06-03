@@ -1,0 +1,58 @@
+name: CodeQL
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "31 3 * * 1"
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+env:
+  CMAKE_VERSION: 4.3.2
+  BUILD_TYPE: Release
+
+jobs:
+  analyze:
+    name: CodeQL C/C++
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install CMake
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 3 \
+            "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz" \
+            -o "$RUNNER_TEMP/cmake.tar.gz"
+          tar -xzf "$RUNNER_TEMP/cmake.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/cmake-${CMAKE_VERSION}-linux-x86_64/bin" >> "$GITHUB_PATH"
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: c-cpp
+          build-mode: manual
+
+      - name: Show tool versions
+        run: |
+          cmake --version
+          c++ --version
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
+
+      - name: Build
+        run: cmake --build build --config "${BUILD_TYPE}" --parallel
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:c-cpp"
