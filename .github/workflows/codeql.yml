@@ -29,10 +29,17 @@ jobs:
       - name: Install CMake
         run: |
           set -euo pipefail
+          cmake_archive="cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz"
           curl -L --fail --retry 3 \
-            "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz" \
-            -o "$RUNNER_TEMP/cmake.tar.gz"
-          tar -xzf "$RUNNER_TEMP/cmake.tar.gz" -C "$RUNNER_TEMP"
+            "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/${cmake_archive}" \
+            -o "$RUNNER_TEMP/${cmake_archive}"
+          curl -L --fail --retry 3 \
+            "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-SHA-256.txt" \
+            -o "$RUNNER_TEMP/cmake-SHA-256.txt"
+          grep -F "  ${cmake_archive}" "$RUNNER_TEMP/cmake-SHA-256.txt" > \
+            "$RUNNER_TEMP/cmake-linux-x86_64.sha256"
+          (cd "$RUNNER_TEMP" && sha256sum -c cmake-linux-x86_64.sha256)
+          tar -xzf "$RUNNER_TEMP/${cmake_archive}" -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/cmake-${CMAKE_VERSION}-linux-x86_64/bin" >> "$GITHUB_PATH"
 
       - name: Initialize CodeQL
