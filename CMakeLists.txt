@@ -13,6 +13,21 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 include(FetchContent)
 include(CTest)
+include(GNUInstallDirs)
+
+set(
+    EASY_FAILOVER_SYSTEMD_UNIT_DIR
+    "lib/systemd/system"
+    CACHE STRING
+          "Install directory for systemd unit files, relative to CMAKE_INSTALL_PREFIX")
+if(IS_ABSOLUTE "${EASY_FAILOVER_SYSTEMD_UNIT_DIR}")
+    message(FATAL_ERROR "EASY_FAILOVER_SYSTEMD_UNIT_DIR must be relative to CMAKE_INSTALL_PREFIX")
+endif()
+
+configure_file(
+    cmake/install-systemd-unit.cmake.in
+    "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-systemd-unit.cmake"
+    @ONLY)
 
 FetchContent_Declare(
     spdlog
@@ -93,4 +108,18 @@ if(BUILD_TESTING)
     set_tests_properties(easy-failover-core-tests PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 endif()
 
-install(TARGETS easy-failover RUNTIME DESTINATION bin)
+install(TARGETS easy-failover RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+
+install(
+    FILES configs/easy-failover.toml
+    DESTINATION "${CMAKE_INSTALL_SYSCONFDIR}/easy-failover"
+    RENAME config.example.toml)
+
+install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-systemd-unit.cmake")
+
+install(FILES README.md LICENSE DESTINATION "${CMAKE_INSTALL_DOCDIR}")
+install(
+    DIRECTORY docs/
+    DESTINATION "${CMAKE_INSTALL_DOCDIR}/docs"
+    FILES_MATCHING
+    PATTERN "*.md")

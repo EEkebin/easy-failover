@@ -40,6 +40,19 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+Stage the install layout without touching host paths:
+
+```sh
+cmake --install build --prefix "$PWD/stage"
+```
+
+For package-style builds that configure absolute install directories, stage through `DESTDIR`:
+
+```sh
+cmake -S . -B build -DCMAKE_INSTALL_SYSCONFDIR=/etc
+DESTDIR="$PWD/stage-root" cmake --install build --prefix /usr
+```
+
 ## Run
 
 Validate the sample config:
@@ -71,6 +84,8 @@ Failover safety notes live in [`docs/failover-safety.md`](docs/failover-safety.m
 capability notes live in [`docs/linux-capabilities.md`](docs/linux-capabilities.md). The local API
 skeleton evaluates disabled/read-only startup state only; the future read-only API shape is
 documented in [`docs/local-api-design.md`](docs/local-api-design.md).
+Install/package layout notes live in
+[`docs/install-package-layout.md`](docs/install-package-layout.md).
 Real VIP movement is intentionally blocked until heartbeat, health, quorum/split-brain, and
 explicit operator-safety controls are designed and implemented.
 

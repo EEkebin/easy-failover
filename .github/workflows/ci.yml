@@ -53,3 +53,15 @@ jobs:
 
       - name: Smoke test dry run
         run: ./build/easy-failover --config configs/easy-failover.toml --dry-run
+
+      - name: Smoke test staged install
+        run: |
+          set -euo pipefail
+          cmake --install build --prefix "$RUNNER_TEMP/easy-failover-install"
+          test -x "$RUNNER_TEMP/easy-failover-install/bin/easy-failover"
+          test -f "$RUNNER_TEMP/easy-failover-install/etc/easy-failover/config.example.toml"
+          test -f "$RUNNER_TEMP/easy-failover-install/lib/systemd/system/easy-failover.service"
+          grep -F "ExecStart=$RUNNER_TEMP/easy-failover-install/bin/easy-failover --config $RUNNER_TEMP/easy-failover-install/etc/easy-failover/config.toml" \
+            "$RUNNER_TEMP/easy-failover-install/lib/systemd/system/easy-failover.service"
+          test -f "$RUNNER_TEMP/easy-failover-install/share/doc/easy-failover/README.md"
+          test -f "$RUNNER_TEMP/easy-failover-install/share/doc/easy-failover/docs/install-package-layout.md"
