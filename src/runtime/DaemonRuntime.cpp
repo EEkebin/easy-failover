@@ -58,6 +58,15 @@ namespace {
                                             .expected_send_count = config.peers.size()};
 }
 
+[[nodiscard]] HeartbeatReceiveStateObservation evaluateHeartbeatReceiveState(
+    const std::size_t iteration_index,
+    const std::int64_t elapsed_ms) {
+    return HeartbeatReceiveStateObservation{.iteration_index = iteration_index,
+                                            .elapsed_ms = elapsed_ms,
+                                            .receive_attempted = false,
+                                            .peer_status = std::nullopt};
+}
+
 [[nodiscard]] std::int64_t effectiveIterationElapsedMs(const DaemonLoopOptions& options) {
     const auto elapsed_ms = options.logical_iteration_elapsed_ms > 0
                                 ? options.logical_iteration_elapsed_ms
@@ -133,6 +142,7 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request, VipManag
                                    .vip_operations = {},
                                    .health_schedules = {},
                                    .heartbeat_send_schedules = {},
+                                   .heartbeat_receive_states = {},
                                    .detail = "max iterations completed"};
 
     if (request.shutdown_state != nullptr && request.shutdown_state->shutdownRequested()) {
@@ -193,6 +203,9 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request, VipManag
                 last_heartbeat_send_due_elapsed_ms = elapsed_ms;
             }
             result.heartbeat_send_schedules.push_back(heartbeat_schedule);
+
+            result.heartbeat_receive_states.push_back(
+                evaluateHeartbeatReceiveState(result.iterations_ran, elapsed_ms));
             ++result.iterations_ran;
         }
 

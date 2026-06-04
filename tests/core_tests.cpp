@@ -1835,6 +1835,8 @@ void testDaemonRuntimeLoopRunsBoundedIterations(TestRunner& runner) {
                   "daemon runtime loop should record health schedule observations");
     runner.expect(result.heartbeat_send_schedules.size() == 3,
                   "daemon runtime loop should record heartbeat send schedule observations");
+    runner.expect(result.heartbeat_receive_states.size() == 3,
+                  "daemon runtime loop should record heartbeat receive state observations");
 }
 
 void testDaemonRuntimeLoopSchedulesFirstHealthCheckDue(TestRunner& runner) {
@@ -2094,6 +2096,75 @@ void testDaemonRuntimeLoopRejectsHeartbeatSendWithEmptyPeers(TestRunner& runner)
                   "daemon runtime loop should preserve empty peer validation error");
     runner.expect(result.heartbeat_send_schedules.empty(),
                   "daemon runtime loop should not schedule heartbeat sends for invalid config");
+}
+
+void testDaemonRuntimeLoopRecordsHeartbeatReceiveState(TestRunner& runner) {
+    FakeVipManager vip_manager;
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = validConfig(),
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 1}},
+        vip_manager);
+
+    runner.expect(result.heartbeat_receive_states.size() == 1,
+                  "daemon runtime loop should record first heartbeat receive state observation");
+    runner.expect(result.heartbeat_receive_states.at(0).iteration_index == 0,
+                  "first heartbeat receive state observation should report iteration index");
+    runner.expect(result.heartbeat_receive_states.at(0).elapsed_ms == 0,
+                  "first heartbeat receive state observation should start at zero elapsed time");
+    runner.expect(!result.heartbeat_receive_states.at(0).receive_attempted,
+                  "model-only runtime should not attempt heartbeat receive");
+}
+
+void testDaemonRuntimeLoopHeartbeatReceiveStateDefaultsNoPeerStatus(TestRunner& runner) {
+    FakeVipManager vip_manager;
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = validConfig(),
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 1}},
+        vip_manager);
+
+    runner.expect(!result.heartbeat_receive_states.at(0).peer_status.has_value(),
+                  "model-only runtime should report no observed peer status");
+}
+
+void testDaemonRuntimeLoopHeartbeatReceiveStateTracksElapsed(TestRunner& runner) {
+    FakeVipManager vip_manager;
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = validConfig(),
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 3,
+                                                       .logical_iteration_elapsed_ms = 250}},
+        vip_manager);
+
+    runner.expect(result.heartbeat_receive_states.size() == 3,
+                  "daemon runtime loop should record every heartbeat receive state observation");
+    runner.expect(result.heartbeat_receive_states.at(0).elapsed_ms == 0,
+                  "first heartbeat receive state should start at zero");
+    runner.expect(result.heartbeat_receive_states.at(1).elapsed_ms == 250,
+                  "second heartbeat receive state should report logical elapsed time");
+    runner.expect(result.heartbeat_receive_states.at(2).elapsed_ms == 500,
+                  "third heartbeat receive state should report logical elapsed time");
+}
+
+void testDaemonRuntimeLoopDoesNotRecordHeartbeatReceiveStateForInvalidConfig(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    auto config = validConfig();
+    config.peers.clear();
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = config,
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 1}},
+        vip_manager);
+
+    runner.expect(result.stop_reason == DaemonLoopStopReason::LifecycleFaulted,
+                  "daemon runtime loop should fault invalid config before receive observations");
+    runner.expect(result.heartbeat_receive_states.empty(),
+                  "daemon runtime loop should not record heartbeat receive state for invalid config");
 }
 
 void testDaemonRuntimeLoopStopsBeforeFirstIterationOnShutdown(TestRunner& runner) {
@@ -2827,6 +2898,19 @@ int main() {
     runner.run("daemon runtime loop rejects heartbeat send with empty peers", [&runner] {
         testDaemonRuntimeLoopRejectsHeartbeatSendWithEmptyPeers(runner);
     });
+    runner.run("daemon runtime loop records heartbeat receive state", [&runner] {
+        testDaemonRuntimeLoopRecordsHeartbeatReceiveState(runner);
+    });
+    runner.run("daemon runtime loop heartbeat receive state defaults no peer status", [&runner] {
+        testDaemonRuntimeLoopHeartbeatReceiveStateDefaultsNoPeerStatus(runner);
+    });
+    runner.run("daemon runtime loop heartbeat receive state tracks elapsed", [&runner] {
+        testDaemonRuntimeLoopHeartbeatReceiveStateTracksElapsed(runner);
+    });
+    runner.run("daemon runtime loop does not record heartbeat receive state for invalid config",
+               [&runner] {
+                   testDaemonRuntimeLoopDoesNotRecordHeartbeatReceiveStateForInvalidConfig(runner);
+               });
     runner.run("daemon runtime loop stops before first iteration on shutdown", [&runner] {
         testDaemonRuntimeLoopStopsBeforeFirstIterationOnShutdown(runner);
     });
