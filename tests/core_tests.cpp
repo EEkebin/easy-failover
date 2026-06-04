@@ -2075,7 +2075,7 @@ void testDaemonRuntimeLoopUsesDelayForDefaultHeartbeatSendElapsed(TestRunner& ru
                   "default heartbeat send schedule should use inter-iteration delay as elapsed time");
 }
 
-void testDaemonRuntimeLoopSchedulesHeartbeatSendWithEmptyPeers(TestRunner& runner) {
+void testDaemonRuntimeLoopRejectsHeartbeatSendWithEmptyPeers(TestRunner& runner) {
     FakeVipManager vip_manager;
     auto config = validConfig();
     config.peers.clear();
@@ -2083,18 +2083,17 @@ void testDaemonRuntimeLoopSchedulesHeartbeatSendWithEmptyPeers(TestRunner& runne
     const auto result = runDaemonRuntimeLoop(
         DaemonLoopRequest{.config = config,
                           .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
-                                                       .max_iterations = 1},
-                          .config_prevalidated = true},
+                                                       .max_iterations = 1}},
         vip_manager);
 
-    runner.expect(result.heartbeat_send_schedules.size() == 1,
-                  "daemon runtime loop should schedule heartbeat sends even with empty peers");
-    runner.expect(result.heartbeat_send_schedules.at(0).due,
-                  "empty peer heartbeat send schedule should still be due on first iteration");
-    runner.expect(!result.heartbeat_send_schedules.at(0).peers_configured,
-                  "empty peer heartbeat send schedule should report no configured peers");
-    runner.expect(result.heartbeat_send_schedules.at(0).expected_send_count == 0,
-                  "empty peer heartbeat send schedule should report zero expected sends");
+    runner.expect(result.iterations_ran == 0,
+                  "daemon runtime loop should not run iterations for empty peers");
+    runner.expect(result.stop_reason == DaemonLoopStopReason::LifecycleFaulted,
+                  "daemon runtime loop should fault invalid empty peer config");
+    runner.expect(contains(result.validation_errors, "at least one peer must be configured"),
+                  "daemon runtime loop should preserve empty peer validation error");
+    runner.expect(result.heartbeat_send_schedules.empty(),
+                  "daemon runtime loop should not schedule heartbeat sends for invalid config");
 }
 
 void testDaemonRuntimeLoopStopsBeforeFirstIterationOnShutdown(TestRunner& runner) {
@@ -2825,8 +2824,8 @@ int main() {
     runner.run("daemon runtime loop uses delay for default heartbeat send elapsed", [&runner] {
         testDaemonRuntimeLoopUsesDelayForDefaultHeartbeatSendElapsed(runner);
     });
-    runner.run("daemon runtime loop schedules heartbeat send with empty peers", [&runner] {
-        testDaemonRuntimeLoopSchedulesHeartbeatSendWithEmptyPeers(runner);
+    runner.run("daemon runtime loop rejects heartbeat send with empty peers", [&runner] {
+        testDaemonRuntimeLoopRejectsHeartbeatSendWithEmptyPeers(runner);
     });
     runner.run("daemon runtime loop stops before first iteration on shutdown", [&runner] {
         testDaemonRuntimeLoopStopsBeforeFirstIterationOnShutdown(runner);
