@@ -120,6 +120,9 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request, VipManag
 
     auto current_state = request.initial_state;
     auto elapsed_ms = std::int64_t{0};
+    const auto iteration_elapsed_ms = request.options.logical_iteration_elapsed_ms > 0
+                                          ? request.options.logical_iteration_elapsed_ms
+                                          : request.options.inter_iteration_delay_ms;
     auto health_check_has_run = false;
     auto last_health_check_elapsed_ms = std::int64_t{0};
     for (std::size_t index = 0; index < request.options.max_iterations; ++index) {
@@ -175,7 +178,7 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request, VipManag
             std::this_thread::sleep_for(
                 std::chrono::milliseconds{request.options.inter_iteration_delay_ms});
         }
-        elapsed_ms += request.options.logical_iteration_elapsed_ms;
+        elapsed_ms += iteration_elapsed_ms;
     }
 
     return result;

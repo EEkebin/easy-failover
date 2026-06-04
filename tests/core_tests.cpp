@@ -1906,6 +1906,30 @@ void testDaemonRuntimeLoopSchedulesHealthAtInterval(TestRunner& runner) {
                   "health schedule should report elapsed interval boundary");
 }
 
+void testDaemonRuntimeLoopUsesDelayForDefaultHealthElapsed(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    auto config = validConfig();
+    config.health.interval_ms = 2;
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = config,
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 3,
+                                                       .inter_iteration_delay_ms = 1}},
+        vip_manager);
+
+    runner.expect(result.health_schedules.size() == 3,
+                  "daemon runtime loop should record every default health schedule observation");
+    runner.expect(result.health_schedules.at(0).due,
+                  "first default health schedule observation should be due");
+    runner.expect(!result.health_schedules.at(1).due,
+                  "default health schedule should not be due before interval");
+    runner.expect(result.health_schedules.at(2).due,
+                  "default health schedule should be due after loop delay reaches interval");
+    runner.expect(result.health_schedules.at(2).elapsed_ms == 2,
+                  "default health schedule should use inter-iteration delay as elapsed time");
+}
+
 void testDaemonRuntimeLoopSchedulesEmptyHealthCommand(TestRunner& runner) {
     FakeVipManager vip_manager;
     auto config = validConfig();
@@ -2631,6 +2655,9 @@ int main() {
     });
     runner.run("daemon runtime loop schedules health at interval", [&runner] {
         testDaemonRuntimeLoopSchedulesHealthAtInterval(runner);
+    });
+    runner.run("daemon runtime loop uses delay for default health elapsed", [&runner] {
+        testDaemonRuntimeLoopUsesDelayForDefaultHealthElapsed(runner);
     });
     runner.run("daemon runtime loop schedules empty health command", [&runner] {
         testDaemonRuntimeLoopSchedulesEmptyHealthCommand(runner);
