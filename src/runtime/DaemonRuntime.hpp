@@ -45,6 +45,7 @@ struct DaemonLoopOptions {
     DaemonRuntimeOptions runtime_options;
     std::size_t max_iterations = 1;
     std::int64_t inter_iteration_delay_ms = 0;
+    std::int64_t logical_iteration_elapsed_ms = 0;
 };
 
 struct DaemonLifecycleRequest {
@@ -66,6 +67,14 @@ struct DaemonLifecycleResult {
     std::string detail;
 };
 
+struct HealthScheduleObservation {
+    std::size_t iteration_index = 0;
+    std::int64_t elapsed_ms = 0;
+    std::int64_t interval_ms = 0;
+    bool due = false;
+    bool command_configured = false;
+};
+
 struct DaemonLoopRequest {
     const Config& config;
     DaemonLoopOptions options;
@@ -81,6 +90,7 @@ struct DaemonLoopResult {
     std::size_t iterations_ran = 0;
     std::vector<std::string> validation_errors;
     std::vector<VipOperationResult> vip_operations;
+    std::vector<HealthScheduleObservation> health_schedules;
     std::string detail;
 };
 

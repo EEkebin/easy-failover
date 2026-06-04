@@ -27,6 +27,21 @@ namespace {
     return true;
 }
 
+[[nodiscard]] HealthScheduleObservation evaluateHealthSchedule(
+    const Config& config,
+    const std::size_t iteration_index,
+    const std::int64_t elapsed_ms,
+    const bool health_check_has_run,
+    const std::int64_t last_health_check_elapsed_ms) {
+    const auto due = !health_check_has_run ||
+                     elapsed_ms - last_health_check_elapsed_ms >= config.health.interval_ms;
+    return HealthScheduleObservation{.iteration_index = iteration_index,
+                                     .elapsed_ms = elapsed_ms,
+                                     .interval_ms = config.health.interval_ms,
+                                     .due = due,
+                                     .command_configured = !config.health.command.empty()};
+}
+
 } // namespace
 
 DaemonLifecycleResult runDaemonLifecycleOnce(const DaemonLifecycleRequest& request,
@@ -93,6 +108,7 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request, VipManag
                                    .iterations_ran = 0,
                                    .validation_errors = {},
                                    .vip_operations = {},
+                                   .health_schedules = {},
                                    .detail = "max iterations completed"};
 
     if (request.shutdown_state != nullptr && request.shutdown_state->shutdownRequested()) {
@@ -103,6 +119,9 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request, VipManag
     }
 
     auto current_state = request.initial_state;
+    auto elapsed_ms = std::int64_t{0};
+    auto health_check_has_run = false;
+    auto last_health_check_elapsed_ms = std::int64_t{0};
     for (std::size_t index = 0; index < request.options.max_iterations; ++index) {
         if (request.shutdown_state != nullptr && request.shutdown_state->shutdownRequested()) {
             result.final_state = DaemonLifecycleState::Stopped;
@@ -130,6 +149,14 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request, VipManag
                                      lifecycle_result.vip_operations.end());
 
         if (lifecycle_result.iteration_ran) {
+            auto health_schedule =
+                evaluateHealthSchedule(request.config, result.iterations_ran, elapsed_ms,
+                                       health_check_has_run, last_health_check_elapsed_ms);
+            if (health_schedule.due) {
+                health_check_has_run = true;
+                last_health_check_elapsed_ms = elapsed_ms;
+            }
+            result.health_schedules.push_back(health_schedule);
             ++result.iterations_ran;
         }
 
@@ -148,6 +175,7 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request, VipManag
             std::this_thread::sleep_for(
                 std::chrono::milliseconds{request.options.inter_iteration_delay_ms});
         }
+        elapsed_ms += request.options.logical_iteration_elapsed_ms;
     }
 
     return result;
