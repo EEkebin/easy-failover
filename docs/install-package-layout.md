@@ -67,9 +67,9 @@ Package scripts should copy or prompt from the example config into
 
 ## Safety Notes
 
-The packaged systemd unit currently runs as `root` and keeps hardening as TODOs. Do not tighten or
-grant capabilities in packaging until real VIP movement is implemented and validated on target
-distributions.
+The packaged systemd unit currently runs as `root` but includes baseline hardening and limits the
+capability set to `CAP_NET_ADMIN` and `CAP_NET_RAW`. Packaging should not loosen those defaults
+without distribution-specific validation of the command backend, `iproute2`, and `arping`.
 
 The default sample config keeps the local API disabled and does not enable real network mutation.
 Packaging should not change those safety defaults.

@@ -76,15 +76,16 @@ Recommended service lifecycle behavior:
 - avoid starting the service during package install unless the package manager has an explicit
   service-management policy for configured services.
 
-The packaged unit currently runs as `root` and intentionally carries hardening TODOs. Do not tighten
-the unit in distro packaging until runtime ownership, capability use, and real VIP movement are
-implemented and validated.
+The packaged unit currently runs as `root` but includes baseline hardening and a constrained
+capability set. Distro packaging should preserve those defaults unless the target distribution has
+validated a different service user, capability model, or command backend.
 
 ## Capabilities and Privilege
 
-Future real VIP movement is expected to need `CAP_NET_ADMIN` for interface address changes and
-`CAP_NET_RAW` for ARP announcement tooling. Running as `root` satisfies those privileges but is
-broader than the target operating model.
+Real VIP movement is expected to need `CAP_NET_ADMIN` for interface address changes and
+`CAP_NET_RAW` for ARP announcement tooling. The packaged unit grants only those capabilities while
+still running as `root`; a future dedicated service user remains the target operating model once it
+has been validated across distributions.
 
 Before a package grants file capabilities, ambient capabilities, or a dedicated service user, test
 the exact distribution builds of `iproute2`, `arping`, systemd, and easy-failover together. Some
