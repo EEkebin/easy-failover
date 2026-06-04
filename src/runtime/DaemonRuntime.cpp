@@ -136,15 +136,18 @@ DaemonLifecycleResult runDaemonLifecycleOnce(const DaemonLifecycleRequest& reque
     result.started = request.initial_state == DaemonLifecycleState::Stopped;
     result.iteration_ran = true;
 
+    const auto require_dry_run =
+        request.options.dry_run || !request.config.mutation_safety.allow_network_mutation;
+
     const auto add_result =
         vip_manager.addVip(request.config.vip.address, request.config.vip.interface);
-    if (!recordVipOperation(result, add_result, request.options.dry_run)) {
+    if (!recordVipOperation(result, add_result, require_dry_run)) {
         return result;
     }
 
     const auto announce_result =
         vip_manager.announceVip(request.config.vip.address, request.config.vip.interface);
-    if (!recordVipOperation(result, announce_result, request.options.dry_run)) {
+    if (!recordVipOperation(result, announce_result, require_dry_run)) {
         return result;
     }
 

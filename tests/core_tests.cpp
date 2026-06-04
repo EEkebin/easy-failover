@@ -1813,12 +1813,36 @@ void testDaemonLifecycleNonDryRunSafetyGateKeepsVipOperationsDryRun(TestRunner& 
                   "non-dry-run lifecycle should report safety gate detail");
 }
 
-void testDaemonLifecycleNonDryRunAcceptsRealVipOperations(TestRunner& runner) {
+void testDaemonLifecycleNonDryRunRejectsRealVipOperationsWithoutConfigOptIn(TestRunner& runner) {
     FakeVipManager vip_manager;
     vip_manager.operation_dry_run = false;
 
     const auto result = runDaemonLifecycleOnce(
         DaemonLifecycleRequest{.config = validConfig(),
+                               .options = DaemonRuntimeOptions{.dry_run = false},
+                               .initial_state = DaemonLifecycleState::Stopped},
+        vip_manager);
+
+    runner.expect(result.final_state == DaemonLifecycleState::Faulted,
+                  "non-dry-run lifecycle should reject real VIP operations without config opt-in");
+    runner.expect(!result.stopped,
+                  "non-dry-run lifecycle safety fault should not report clean stop");
+    runner.expect(result.detail == "dry-run lifecycle received non-dry-run VIP operation",
+                  "non-dry-run lifecycle should report stable safety fault detail");
+    runner.expect(result.vip_operations.size() == 1,
+                  "non-dry-run lifecycle should stop after first unsafe VIP operation");
+    runner.expect(!vip_manager.announce_called,
+                  "non-dry-run lifecycle should not continue after unsafe VIP operation");
+}
+
+void testDaemonLifecycleNonDryRunAcceptsRealVipOperations(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    vip_manager.operation_dry_run = false;
+    auto config = validConfig();
+    config.mutation_safety.allow_network_mutation = true;
+
+    const auto result = runDaemonLifecycleOnce(
+        DaemonLifecycleRequest{.config = config,
                                .options = DaemonRuntimeOptions{.dry_run = false},
                                .initial_state = DaemonLifecycleState::Stopped},
         vip_manager);
@@ -3123,6 +3147,10 @@ int main() {
     runner.run("daemon lifecycle non-dry-run safety gate keeps VIP operations dry-run", [&runner] {
         testDaemonLifecycleNonDryRunSafetyGateKeepsVipOperationsDryRun(runner);
     });
+    runner.run("daemon lifecycle non-dry-run rejects real VIP operations without config opt-in",
+               [&runner] {
+                   testDaemonLifecycleNonDryRunRejectsRealVipOperationsWithoutConfigOptIn(runner);
+               });
     runner.run("daemon lifecycle non-dry-run accepts real VIP operations", [&runner] {
         testDaemonLifecycleNonDryRunAcceptsRealVipOperations(runner);
     });
