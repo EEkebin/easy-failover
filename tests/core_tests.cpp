@@ -1831,6 +1831,147 @@ void testDaemonRuntimeLoopRunsBoundedIterations(TestRunner& runner) {
                   "bounded daemon runtime loop should report max-iteration completion");
     runner.expect(result.vip_operations.size() == 6,
                   "daemon runtime loop should aggregate VIP operations across iterations");
+    runner.expect(result.health_schedules.size() == 3,
+                  "daemon runtime loop should record health schedule observations");
+}
+
+void testDaemonRuntimeLoopSchedulesFirstHealthCheckDue(TestRunner& runner) {
+    FakeVipManager vip_manager;
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = validConfig(),
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 1}},
+        vip_manager);
+
+    runner.expect(result.health_schedules.size() == 1,
+                  "daemon runtime loop should record first health schedule observation");
+    runner.expect(result.health_schedules.at(0).iteration_index == 0,
+                  "first health schedule observation should report iteration index");
+    runner.expect(result.health_schedules.at(0).elapsed_ms == 0,
+                  "first health schedule observation should start at zero elapsed time");
+    runner.expect(result.health_schedules.at(0).interval_ms == validConfig().health.interval_ms,
+                  "health schedule observation should report configured interval");
+    runner.expect(result.health_schedules.at(0).due,
+                  "first health schedule observation should be due");
+    runner.expect(result.health_schedules.at(0).command_configured,
+                  "sample health command should be reported as configured");
+}
+
+void testDaemonRuntimeLoopDoesNotScheduleHealthBeforeInterval(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    auto config = validConfig();
+    config.health.interval_ms = 1000;
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = config,
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 3,
+                                                       .logical_iteration_elapsed_ms = 250}},
+        vip_manager);
+
+    runner.expect(result.health_schedules.size() == 3,
+                  "daemon runtime loop should record every health schedule observation");
+    runner.expect(result.health_schedules.at(0).due,
+                  "first health schedule observation should be due");
+    runner.expect(!result.health_schedules.at(1).due,
+                  "health schedule should not be due before configured interval");
+    runner.expect(!result.health_schedules.at(2).due,
+                  "health schedule should remain not due before configured interval");
+    runner.expect(result.health_schedules.at(2).elapsed_ms == 500,
+                  "health schedule should report deterministic logical elapsed time");
+}
+
+void testDaemonRuntimeLoopSchedulesHealthAtInterval(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    auto config = validConfig();
+    config.health.interval_ms = 1000;
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = config,
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 3,
+                                                       .logical_iteration_elapsed_ms = 500}},
+        vip_manager);
+
+    runner.expect(result.health_schedules.size() == 3,
+                  "daemon runtime loop should record every health schedule observation");
+    runner.expect(result.health_schedules.at(0).due,
+                  "first health schedule observation should be due");
+    runner.expect(!result.health_schedules.at(1).due,
+                  "health schedule should not be due before interval");
+    runner.expect(result.health_schedules.at(2).due,
+                  "health schedule should be due when interval elapses");
+    runner.expect(result.health_schedules.at(2).elapsed_ms == 1000,
+                  "health schedule should report elapsed interval boundary");
+}
+
+void testDaemonRuntimeLoopUsesDelayForDefaultHealthElapsed(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    auto config = validConfig();
+    config.health.interval_ms = 2;
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = config,
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 3,
+                                                       .inter_iteration_delay_ms = 1}},
+        vip_manager);
+
+    runner.expect(result.health_schedules.size() == 3,
+                  "daemon runtime loop should record every default health schedule observation");
+    runner.expect(result.health_schedules.at(0).due,
+                  "first default health schedule observation should be due");
+    runner.expect(!result.health_schedules.at(1).due,
+                  "default health schedule should not be due before interval");
+    runner.expect(result.health_schedules.at(2).due,
+                  "default health schedule should be due after loop delay reaches interval");
+    runner.expect(result.health_schedules.at(2).elapsed_ms == 2,
+                  "default health schedule should use inter-iteration delay as elapsed time");
+}
+
+void testDaemonRuntimeLoopClampsNegativeHealthElapsed(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    auto config = validConfig();
+    config.health.interval_ms = 1;
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = config,
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 3,
+                                                       .inter_iteration_delay_ms = -5,
+                                                       .logical_iteration_elapsed_ms = -10}},
+        vip_manager);
+
+    runner.expect(result.health_schedules.size() == 3,
+                  "daemon runtime loop should record negative elapsed schedule observations");
+    runner.expect(result.health_schedules.at(0).elapsed_ms == 0,
+                  "first negative elapsed schedule observation should start at zero");
+    runner.expect(result.health_schedules.at(1).elapsed_ms == 0,
+                  "negative elapsed schedule should not move time backward");
+    runner.expect(result.health_schedules.at(2).elapsed_ms == 0,
+                  "negative elapsed schedule should remain clamped at zero");
+    runner.expect(!result.health_schedules.at(1).due,
+                  "negative elapsed schedule should not become due before interval");
+}
+
+void testDaemonRuntimeLoopSchedulesEmptyHealthCommand(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    auto config = validConfig();
+    config.health.command.clear();
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = config,
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 1}},
+        vip_manager);
+
+    runner.expect(result.health_schedules.size() == 1,
+                  "daemon runtime loop should schedule even when health command is empty");
+    runner.expect(result.health_schedules.at(0).due,
+                  "empty health command schedule should still be due on first iteration");
+    runner.expect(!result.health_schedules.at(0).command_configured,
+                  "empty health command schedule should report no configured command");
 }
 
 void testDaemonRuntimeLoopStopsBeforeFirstIterationOnShutdown(TestRunner& runner) {
@@ -2530,6 +2671,24 @@ int main() {
     });
     runner.run("daemon runtime loop runs bounded iterations", [&runner] {
         testDaemonRuntimeLoopRunsBoundedIterations(runner);
+    });
+    runner.run("daemon runtime loop schedules first health check due", [&runner] {
+        testDaemonRuntimeLoopSchedulesFirstHealthCheckDue(runner);
+    });
+    runner.run("daemon runtime loop does not schedule health before interval", [&runner] {
+        testDaemonRuntimeLoopDoesNotScheduleHealthBeforeInterval(runner);
+    });
+    runner.run("daemon runtime loop schedules health at interval", [&runner] {
+        testDaemonRuntimeLoopSchedulesHealthAtInterval(runner);
+    });
+    runner.run("daemon runtime loop uses delay for default health elapsed", [&runner] {
+        testDaemonRuntimeLoopUsesDelayForDefaultHealthElapsed(runner);
+    });
+    runner.run("daemon runtime loop clamps negative health elapsed", [&runner] {
+        testDaemonRuntimeLoopClampsNegativeHealthElapsed(runner);
+    });
+    runner.run("daemon runtime loop schedules empty health command", [&runner] {
+        testDaemonRuntimeLoopSchedulesEmptyHealthCommand(runner);
     });
     runner.run("daemon runtime loop stops before first iteration on shutdown", [&runner] {
         testDaemonRuntimeLoopStopsBeforeFirstIterationOnShutdown(runner);
