@@ -1930,6 +1930,31 @@ void testDaemonRuntimeLoopUsesDelayForDefaultHealthElapsed(TestRunner& runner) {
                   "default health schedule should use inter-iteration delay as elapsed time");
 }
 
+void testDaemonRuntimeLoopClampsNegativeHealthElapsed(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    auto config = validConfig();
+    config.health.interval_ms = 1;
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = config,
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 3,
+                                                       .inter_iteration_delay_ms = -5,
+                                                       .logical_iteration_elapsed_ms = -10}},
+        vip_manager);
+
+    runner.expect(result.health_schedules.size() == 3,
+                  "daemon runtime loop should record negative elapsed schedule observations");
+    runner.expect(result.health_schedules.at(0).elapsed_ms == 0,
+                  "first negative elapsed schedule observation should start at zero");
+    runner.expect(result.health_schedules.at(1).elapsed_ms == 0,
+                  "negative elapsed schedule should not move time backward");
+    runner.expect(result.health_schedules.at(2).elapsed_ms == 0,
+                  "negative elapsed schedule should remain clamped at zero");
+    runner.expect(!result.health_schedules.at(1).due,
+                  "negative elapsed schedule should not become due before interval");
+}
+
 void testDaemonRuntimeLoopSchedulesEmptyHealthCommand(TestRunner& runner) {
     FakeVipManager vip_manager;
     auto config = validConfig();
@@ -2658,6 +2683,9 @@ int main() {
     });
     runner.run("daemon runtime loop uses delay for default health elapsed", [&runner] {
         testDaemonRuntimeLoopUsesDelayForDefaultHealthElapsed(runner);
+    });
+    runner.run("daemon runtime loop clamps negative health elapsed", [&runner] {
+        testDaemonRuntimeLoopClampsNegativeHealthElapsed(runner);
     });
     runner.run("daemon runtime loop schedules empty health command", [&runner] {
         testDaemonRuntimeLoopSchedulesEmptyHealthCommand(runner);
