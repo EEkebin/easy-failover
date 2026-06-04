@@ -64,9 +64,7 @@ namespace {
     return HeartbeatReceiveStateObservation{.iteration_index = iteration_index,
                                             .elapsed_ms = elapsed_ms,
                                             .receive_attempted = false,
-                                            .peer_status_observed = false,
-                                            .peer_id = "",
-                                            .heartbeat_seen = false};
+                                            .peer_status = std::nullopt};
 }
 
 [[nodiscard]] std::int64_t effectiveIterationElapsedMs(const DaemonLoopOptions& options) {

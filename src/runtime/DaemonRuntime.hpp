@@ -1,11 +1,13 @@
 #pragma once
 
 #include "config/Config.hpp"
+#include "core/FailoverDecision.hpp"
 #include "platform/VipManager.hpp"
 #include "runtime/ShutdownSignal.hpp"
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -88,9 +90,7 @@ struct HeartbeatReceiveStateObservation {
     std::size_t iteration_index = 0;
     std::int64_t elapsed_ms = 0;
     bool receive_attempted = false;
-    bool peer_status_observed = false;
-    std::string peer_id;
-    bool heartbeat_seen = false;
+    std::optional<PeerStatus> peer_status;
 };
 
 struct DaemonLoopRequest {

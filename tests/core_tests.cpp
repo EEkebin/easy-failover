@@ -2126,12 +2126,8 @@ void testDaemonRuntimeLoopHeartbeatReceiveStateDefaultsNoPeerStatus(TestRunner& 
                                                        .max_iterations = 1}},
         vip_manager);
 
-    runner.expect(!result.heartbeat_receive_states.at(0).peer_status_observed,
+    runner.expect(!result.heartbeat_receive_states.at(0).peer_status.has_value(),
                   "model-only runtime should report no observed peer status");
-    runner.expect(result.heartbeat_receive_states.at(0).peer_id.empty(),
-                  "model-only runtime should report no peer id");
-    runner.expect(!result.heartbeat_receive_states.at(0).heartbeat_seen,
-                  "model-only runtime should not report heartbeat seen");
 }
 
 void testDaemonRuntimeLoopHeartbeatReceiveStateTracksElapsed(TestRunner& runner) {
