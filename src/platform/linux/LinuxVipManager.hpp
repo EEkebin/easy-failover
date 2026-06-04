@@ -13,6 +13,7 @@ struct LinuxVipManagerOptions {
 class LinuxVipManager final : public VipManager {
   public:
     LinuxVipManager();
+    explicit LinuxVipManager(LinuxVipManagerOptions options);
     explicit LinuxVipManager(NetworkCommandRunner& command_runner,
                              LinuxVipManagerOptions options = {});
     LinuxVipManager(const LinuxVipManager&) = delete;

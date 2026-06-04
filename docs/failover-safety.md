@@ -58,12 +58,13 @@ in [`local-api-design.md`](local-api-design.md).
 
 ## Current Status
 
-Current behavior is intentionally non-mutating:
+Default behavior is intentionally non-mutating:
 
 - election and failover decision helpers are pure local logic;
 - Linux VIP manager methods build `iproute2` and `arping` command requests through a dry-run
   command runner by default;
-- the daemon lifecycle helper runs a single non-mutating iteration only;
+- the daemon lifecycle runs VIP operations in dry-run mode unless both runtime dry-run is disabled
+  and `mutation_safety.allow_network_mutation` is `true`;
 - runtime lifecycle and VIP operation observations are logged as stable `key=value` events for
   auditability;
 - SIGINT/SIGTERM handling records a shutdown request for the runtime to observe, but there is no

@@ -1647,6 +1647,55 @@ void testLinuxVipManagerSafetyGateForcesDryRun(TestRunner& runner) {
                   "safety gate should force command request dry-run");
 }
 
+void testLinuxVipManagerDefaultRunnerSafetyGateBlocksMutation(TestRunner& runner) {
+    LinuxVipManager manager{
+        LinuxVipManagerOptions{.allow_network_mutation = false, .dry_run = false}};
+
+    const auto result = manager.removeVip("10.0.0.50/24", "eth0");
+
+    runner.expect(result.success, "default runner safety-gated VIP operation should succeed");
+    runner.expect(result.dry_run, "default runner should keep VIP operation dry-run");
+    runner.expect(result.commands.size() == 1,
+                  "default runner safety-gated VIP operation should report command result");
+    runner.expect(result.commands.at(0).request.dry_run,
+                  "default config should force command request dry-run");
+    runner.expect(!result.commands.at(0).executed,
+                  "default dry-run runner should not execute command");
+}
+
+void testLinuxVipManagerDefaultRunnerAllowsExplicitMutationRequest(TestRunner& runner) {
+    LinuxVipManager manager{
+        LinuxVipManagerOptions{.allow_network_mutation = true, .dry_run = false}};
+
+    const auto result = manager.removeVip("10.0.0.50/24", "eth0");
+
+    runner.expect(result.success, "explicit mutation request should succeed with dry-run runner");
+    runner.expect(!result.dry_run,
+                  "explicit opt-in plus runtime non-dry-run should request real VIP operation");
+    runner.expect(result.commands.size() == 1,
+                  "explicit mutation request should report command result");
+    runner.expect(!result.commands.at(0).request.dry_run,
+                  "explicit opt-in plus runtime non-dry-run should request non-dry-run command");
+    runner.expect(result.commands.at(0).dry_run,
+                  "default dry-run command runner should still report non-execution");
+    runner.expect(!result.commands.at(0).executed,
+                  "default dry-run command runner should not execute command");
+}
+
+void testLinuxVipManagerRuntimeDryRunOverridesMutationOptIn(TestRunner& runner) {
+    LinuxVipManager manager{
+        LinuxVipManagerOptions{.allow_network_mutation = true, .dry_run = true}};
+
+    const auto result = manager.addVip("10.0.0.50/24", "eth0");
+
+    runner.expect(result.success, "runtime dry-run override should still succeed");
+    runner.expect(result.dry_run, "runtime dry-run should override mutation opt-in");
+    runner.expect(result.commands.size() == 1,
+                  "runtime dry-run override should report command result");
+    runner.expect(result.commands.at(0).request.dry_run,
+                  "runtime dry-run should force command request dry-run");
+}
+
 void testLinuxVipManagerBuildsAnnounceCommand(TestRunner& runner) {
     FakeNetworkCommandRunner command_runner;
     command_runner.result =
@@ -1739,7 +1788,7 @@ void testDaemonLifecycleStartsRunsDryRunAndStops(TestRunner& runner) {
                   "daemon lifecycle should report dry-run VIP operations");
 }
 
-void testDaemonLifecycleNonDryRunDoesNotMutate(TestRunner& runner) {
+void testDaemonLifecycleNonDryRunSafetyGateKeepsVipOperationsDryRun(TestRunner& runner) {
     FakeVipManager vip_manager;
 
     const auto result = runDaemonLifecycleOnce(
@@ -1750,12 +1799,68 @@ void testDaemonLifecycleNonDryRunDoesNotMutate(TestRunner& runner) {
 
     runner.expect(result.started, "non-dry-run lifecycle should still start skeleton");
     runner.expect(result.iteration_ran, "non-dry-run lifecycle should run one skeleton iteration");
-    runner.expect(result.vip_operations.empty(),
-                  "non-dry-run skeleton should not run VIP operations yet");
-    runner.expect(!vip_manager.add_called, "non-dry-run skeleton should not add VIP");
-    runner.expect(!vip_manager.announce_called, "non-dry-run skeleton should not announce VIP");
-    runner.expect(result.detail == "real VIP movement is not implemented yet; no network state changed",
-                  "non-dry-run lifecycle should report non-mutating status");
+    runner.expect(vip_manager.add_called, "non-dry-run lifecycle should request VIP add");
+    runner.expect(vip_manager.announce_called,
+                  "non-dry-run lifecycle should request VIP announce");
+    runner.expect(result.vip_operations.size() == 2,
+                  "non-dry-run lifecycle should report VIP operations");
+    runner.expect(result.vip_operations.at(0).dry_run,
+                  "safety-gated non-dry-run lifecycle should report dry-run add");
+    runner.expect(result.vip_operations.at(1).dry_run,
+                  "safety-gated non-dry-run lifecycle should report dry-run announce");
+    runner.expect(result.detail ==
+                      "mutation safety gate kept lifecycle VIP operations in dry-run mode",
+                  "non-dry-run lifecycle should report safety gate detail");
+}
+
+void testDaemonLifecycleNonDryRunRejectsRealVipOperationsWithoutConfigOptIn(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    vip_manager.operation_dry_run = false;
+
+    const auto result = runDaemonLifecycleOnce(
+        DaemonLifecycleRequest{.config = validConfig(),
+                               .options = DaemonRuntimeOptions{.dry_run = false},
+                               .initial_state = DaemonLifecycleState::Stopped},
+        vip_manager);
+
+    runner.expect(result.final_state == DaemonLifecycleState::Faulted,
+                  "non-dry-run lifecycle should reject real VIP operations without config opt-in");
+    runner.expect(!result.stopped,
+                  "non-dry-run lifecycle safety fault should not report clean stop");
+    runner.expect(result.detail == "dry-run lifecycle received non-dry-run VIP operation",
+                  "non-dry-run lifecycle should report stable safety fault detail");
+    runner.expect(result.vip_operations.size() == 1,
+                  "non-dry-run lifecycle should stop after first unsafe VIP operation");
+    runner.expect(!vip_manager.announce_called,
+                  "non-dry-run lifecycle should not continue after unsafe VIP operation");
+}
+
+void testDaemonLifecycleNonDryRunAcceptsRealVipOperations(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    vip_manager.operation_dry_run = false;
+    auto config = validConfig();
+    config.mutation_safety.allow_network_mutation = true;
+
+    const auto result = runDaemonLifecycleOnce(
+        DaemonLifecycleRequest{.config = config,
+                               .options = DaemonRuntimeOptions{.dry_run = false},
+                               .initial_state = DaemonLifecycleState::Stopped},
+        vip_manager);
+
+    runner.expect(result.final_state == DaemonLifecycleState::Stopped,
+                  "non-dry-run lifecycle should allow real VIP operations");
+    runner.expect(result.stopped, "non-dry-run lifecycle should stop cleanly after real VIP ops");
+    runner.expect(vip_manager.add_called, "non-dry-run lifecycle should request real VIP add");
+    runner.expect(vip_manager.announce_called,
+                  "non-dry-run lifecycle should request real VIP announce");
+    runner.expect(result.vip_operations.size() == 2,
+                  "non-dry-run lifecycle should report real VIP operations");
+    runner.expect(!result.vip_operations.at(0).dry_run,
+                  "non-dry-run lifecycle should preserve real VIP add observation");
+    runner.expect(!result.vip_operations.at(1).dry_run,
+                  "non-dry-run lifecycle should preserve real VIP announce observation");
+    runner.expect(result.detail == "real VIP lifecycle iteration completed",
+                  "non-dry-run lifecycle should report real VIP completion");
 }
 
 void testDaemonLifecycleRejectsInvalidConfig(TestRunner& runner) {
@@ -3018,6 +3123,15 @@ int main() {
     runner.run("Linux VIP manager safety gate forces dry-run", [&runner] {
         testLinuxVipManagerSafetyGateForcesDryRun(runner);
     });
+    runner.run("Linux VIP manager default runner safety gate blocks mutation", [&runner] {
+        testLinuxVipManagerDefaultRunnerSafetyGateBlocksMutation(runner);
+    });
+    runner.run("Linux VIP manager default runner allows explicit mutation request", [&runner] {
+        testLinuxVipManagerDefaultRunnerAllowsExplicitMutationRequest(runner);
+    });
+    runner.run("Linux VIP manager runtime dry-run overrides mutation opt-in", [&runner] {
+        testLinuxVipManagerRuntimeDryRunOverridesMutationOptIn(runner);
+    });
     runner.run("Linux VIP manager builds announce command", [&runner] {
         testLinuxVipManagerBuildsAnnounceCommand(runner);
     });
@@ -3030,8 +3144,15 @@ int main() {
     runner.run("daemon lifecycle starts runs dry-run and stops", [&runner] {
         testDaemonLifecycleStartsRunsDryRunAndStops(runner);
     });
-    runner.run("daemon lifecycle non-dry-run does not mutate", [&runner] {
-        testDaemonLifecycleNonDryRunDoesNotMutate(runner);
+    runner.run("daemon lifecycle non-dry-run safety gate keeps VIP operations dry-run", [&runner] {
+        testDaemonLifecycleNonDryRunSafetyGateKeepsVipOperationsDryRun(runner);
+    });
+    runner.run("daemon lifecycle non-dry-run rejects real VIP operations without config opt-in",
+               [&runner] {
+                   testDaemonLifecycleNonDryRunRejectsRealVipOperationsWithoutConfigOptIn(runner);
+               });
+    runner.run("daemon lifecycle non-dry-run accepts real VIP operations", [&runner] {
+        testDaemonLifecycleNonDryRunAcceptsRealVipOperations(runner);
     });
     runner.run("daemon lifecycle rejects invalid config", [&runner] {
         testDaemonLifecycleRejectsInvalidConfig(runner);
