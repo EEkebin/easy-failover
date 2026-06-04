@@ -43,10 +43,11 @@ interface = "eth0"
 - `address`: required non-empty virtual IP address string; CIDR/prefix-length format (for example `10.0.0.50/24`) is recommended but not currently validated.
 - `interface`: required non-empty Linux network interface name.
 
-No real VIP movement is implemented yet. Current VIP manager methods build dry-run `iproute2` and
-`arping` command requests behind explicit safety controls. See
-[`linux-capabilities.md`](linux-capabilities.md) for the Linux privileges expected before future
-real mutation is enabled.
+VIP movement is guarded by dry-run mode and the mutation safety config. By default, VIP manager
+methods build dry-run `iproute2` and `arping` command requests. Real command requests require both a
+non-dry-run runtime and explicit mutation safety opt-in. See
+[`linux-capabilities.md`](linux-capabilities.md) for the Linux privileges required before enabling
+real mutation on a host.
 
 ## Heartbeat
 
@@ -123,12 +124,12 @@ endpoints yet. Its intended read-only shape is documented in [`local-api-design.
 allow_network_mutation = false
 ```
 
-- `allow_network_mutation`: optional boolean reserved for future guarded VIP mutation. Defaults to
-  `false`.
+- `allow_network_mutation`: optional boolean that permits non-dry-run VIP manager command requests
+  only when the runtime is also not in dry-run mode. Defaults to `false`.
 
 The default is intentionally safe: real network mutation is not permitted unless an operator
-explicitly opts in. This setting is parsed and exposed for future runtime wiring, but the current
-runtime still does not enable real VIP mutation.
+explicitly opts in and starts the daemon without `--dry-run`. CLI/runtime dry-run remains an
+overriding safety control even when this setting is `true`.
 
 ## Peers
 

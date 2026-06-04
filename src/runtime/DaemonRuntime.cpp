@@ -1,5 +1,6 @@
 #include "runtime/DaemonRuntime.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <thread>
 #include <utility>
@@ -8,10 +9,11 @@ namespace easyfailover {
 
 namespace {
 
-[[nodiscard]] bool recordDryRunVipOperation(DaemonLifecycleResult& lifecycle_result,
-                                            const VipOperationResult& operation_result) {
+[[nodiscard]] bool recordVipOperation(DaemonLifecycleResult& lifecycle_result,
+                                      const VipOperationResult& operation_result,
+                                      const bool require_dry_run) {
     lifecycle_result.vip_operations.push_back(operation_result);
-    if (!operation_result.dry_run) {
+    if (require_dry_run && !operation_result.dry_run) {
         lifecycle_result.final_state = DaemonLifecycleState::Faulted;
         lifecycle_result.detail = "dry-run lifecycle received non-dry-run VIP operation";
         return false;
@@ -19,9 +21,11 @@ namespace {
 
     if (!operation_result.success) {
         lifecycle_result.final_state = DaemonLifecycleState::Faulted;
-        lifecycle_result.detail = operation_result.error.empty()
-                                      ? "dry-run lifecycle VIP operation failed"
-                                      : operation_result.error;
+        lifecycle_result.detail =
+            operation_result.error.empty()
+                ? (require_dry_run ? "dry-run lifecycle VIP operation failed"
+                                   : "lifecycle VIP operation failed")
+                : operation_result.error;
         return false;
     }
 
@@ -132,21 +136,27 @@ DaemonLifecycleResult runDaemonLifecycleOnce(const DaemonLifecycleRequest& reque
     result.started = request.initial_state == DaemonLifecycleState::Stopped;
     result.iteration_ran = true;
 
-    if (request.options.dry_run) {
-        const auto add_result =
-            vip_manager.addVip(request.config.vip.address, request.config.vip.interface);
-        if (!recordDryRunVipOperation(result, add_result)) {
-            return result;
-        }
+    const auto add_result =
+        vip_manager.addVip(request.config.vip.address, request.config.vip.interface);
+    if (!recordVipOperation(result, add_result, request.options.dry_run)) {
+        return result;
+    }
 
-        const auto announce_result =
-            vip_manager.announceVip(request.config.vip.address, request.config.vip.interface);
-        if (!recordDryRunVipOperation(result, announce_result)) {
-            return result;
-        }
+    const auto announce_result =
+        vip_manager.announceVip(request.config.vip.address, request.config.vip.interface);
+    if (!recordVipOperation(result, announce_result, request.options.dry_run)) {
+        return result;
+    }
+
+    const auto all_operations_dry_run =
+        std::all_of(result.vip_operations.begin(), result.vip_operations.end(),
+                    [](const VipOperationResult& operation) { return operation.dry_run; });
+    if (request.options.dry_run) {
         result.detail = "dry-run lifecycle iteration completed";
+    } else if (all_operations_dry_run) {
+        result.detail = "mutation safety gate kept lifecycle VIP operations in dry-run mode";
     } else {
-        result.detail = "real VIP movement is not implemented yet; no network state changed";
+        result.detail = "real VIP lifecycle iteration completed";
     }
 
     result.final_state = DaemonLifecycleState::Stopped;

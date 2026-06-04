@@ -52,15 +52,15 @@ and release tarball creation continue to work.
 ## Runtime Dependencies
 
 The current runtime requires a modern Linux userspace and the C++ runtime needed by the compiler used
-for the package build. Future real VIP movement will also require:
+for the package build. Deployments that enable real VIP movement also require:
 
 - `ip` from `iproute2`;
 - `arping`, commonly from `iputils` or `iputils-arping` depending on the distribution;
 - systemd when installing and enabling the packaged service unit.
 
-Do not add hard runtime dependencies for real VIP movement until mutation support is enabled and
-tested. While easy-failover remains non-mutating by default, package dependencies should stay aligned
-with the actual packaged behavior.
+Do not add hard runtime dependencies for real VIP movement until packaged mutation support is enabled
+and tested. While easy-failover remains non-mutating by default, package dependencies should stay
+aligned with the actual packaged behavior.
 
 ## systemd Service Lifecycle
 

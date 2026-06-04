@@ -48,6 +48,10 @@ LinuxVipManager::LinuxVipManager()
     : command_runner_{&default_command_runner_}, options_{} {
 }
 
+LinuxVipManager::LinuxVipManager(const LinuxVipManagerOptions options)
+    : command_runner_{&default_command_runner_}, options_{options} {
+}
+
 LinuxVipManager::LinuxVipManager(NetworkCommandRunner& command_runner,
                                  const LinuxVipManagerOptions options)
     : command_runner_{&command_runner}, options_{options} {

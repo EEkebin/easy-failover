@@ -1,11 +1,10 @@
 # Linux Capability Notes
 
-easy-failover does not currently perform real VIP movement. The Linux VIP backend builds
-non-mutating `iproute2` and `arping` command requests by default, and real mutation remains blocked
-behind explicit safety controls.
+easy-failover builds non-mutating `iproute2` and `arping` command requests by default. Real VIP
+movement is guarded by two controls: the daemon must run without runtime dry-run mode and
+`mutation_safety.allow_network_mutation` must be explicitly set to `true`.
 
-This document records the expected Linux privileges for the future point where real VIP movement is
-enabled.
+This document records the Linux privileges required for hosts where real VIP movement is enabled.
 
 ## Required Tools
 
@@ -38,7 +37,8 @@ capabilities required for the selected backend and packet announcement method.
 The packaged unit intentionally still runs as `root` and only contains hardening TODOs. Do not grant
 or tighten capabilities in the unit until runtime ownership logic is wired and tested.
 
-When real VIP movement is enabled, the unit should be revisited with settings such as:
+When real VIP movement is enabled for packaged deployments, the unit should be revisited with
+settings such as:
 
 ```ini
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
@@ -53,8 +53,7 @@ the same way.
 
 ## Safety Requirements
 
-Capabilities are not a substitute for failover safety. Before real mutation is enabled, the runtime
-must still enforce:
+Capabilities are not a substitute for failover safety. Real mutation must still enforce:
 
 - dry-run support for every VIP operation;
 - explicit operator opt-in for real network mutation;

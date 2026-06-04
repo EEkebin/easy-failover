@@ -97,7 +97,9 @@ int main(int argc, char** argv) {
             spdlog::warn("one or more shutdown signal handlers could not be installed");
         }
 
-        easyfailover::LinuxVipManager vip_manager;
+        easyfailover::LinuxVipManager vip_manager{easyfailover::LinuxVipManagerOptions{
+            .allow_network_mutation = config.mutation_safety.allow_network_mutation,
+            .dry_run = dry_run}};
         auto shutdown_state = easyfailover::ShutdownSignalState{};
         easyfailover::pollShutdownSignals(shutdown_state);
         const auto lifecycle_result = easyfailover::runDaemonLifecycleOnce(
