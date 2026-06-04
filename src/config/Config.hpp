@@ -35,6 +35,10 @@ struct ApiConfig {
     bool read_only = true;
 };
 
+struct MutationSafetyConfig {
+    bool allow_network_mutation = false;
+};
+
 struct PeerConfig {
     std::string id;
     std::string address;
@@ -48,6 +52,7 @@ struct Config {
     HealthConfig health;
     ElectionConfig election;
     ApiConfig api;
+    MutationSafetyConfig mutation_safety;
     std::vector<PeerConfig> peers;
 
     [[nodiscard]] std::vector<std::string> validate() const;

@@ -88,6 +88,7 @@ using easyfailover::runDaemonRuntimeLoop;
 using easyfailover::runHeartbeatLoopOnce;
 using easyfailover::serializeHeartbeatMessage;
 using easyfailover::loadConfigFromFile;
+using easyfailover::loadConfigFromTomlString;
 
 class TestRunner {
   public:
@@ -297,6 +298,12 @@ void testValidConfigHasNoValidationErrors(TestRunner& runner) {
     runner.expect(config.validate().empty(), "valid config should not produce validation errors");
 }
 
+void testConfigDefaultsMutationSafetyDisabled(TestRunner& runner) {
+    const auto config = Config{};
+    runner.expect(!config.mutation_safety.allow_network_mutation,
+                  "mutation safety should default to disabled network mutation");
+}
+
 void testConfigValidationRequiredFields(TestRunner& runner) {
     auto config = validConfig();
     config.node_id.clear();
@@ -341,6 +348,48 @@ void testConfigAllowsApiWriteModeForStartupRejection(TestRunner& runner) {
 
     runner.expect(config.validate().empty(),
                   "config validation should allow API write mode for startup rejection");
+}
+
+void testConfigParsesMutationSafetyEnabled(TestRunner& runner) {
+    const auto config = loadConfigFromTomlString("node_id = \"node-a\"\n"
+                                                "priority = 100\n"
+                                                "\n"
+                                                "[vip]\n"
+                                                "address = \"10.0.0.50/24\"\n"
+                                                "interface = \"eth0\"\n"
+                                                "\n"
+                                                "[mutation_safety]\n"
+                                                "allow_network_mutation = true\n"
+                                                "\n"
+                                                "[[peers]]\n"
+                                                "id = \"node-b\"\n"
+                                                "address = \"10.0.0.12:7432\"\n");
+
+    runner.expect(config.mutation_safety.allow_network_mutation,
+                  "explicit mutation safety opt-in should parse true");
+    runner.expect(config.validate().empty(),
+                  "explicit mutation safety opt-in should not fail validation");
+}
+
+void testConfigParsesMutationSafetyDisabled(TestRunner& runner) {
+    const auto config = loadConfigFromTomlString("node_id = \"node-a\"\n"
+                                                "priority = 100\n"
+                                                "\n"
+                                                "[vip]\n"
+                                                "address = \"10.0.0.50/24\"\n"
+                                                "interface = \"eth0\"\n"
+                                                "\n"
+                                                "[mutation_safety]\n"
+                                                "allow_network_mutation = false\n"
+                                                "\n"
+                                                "[[peers]]\n"
+                                                "id = \"node-b\"\n"
+                                                "address = \"10.0.0.12:7432\"\n");
+
+    runner.expect(!config.mutation_safety.allow_network_mutation,
+                  "explicit mutation safety disable should parse false");
+    runner.expect(config.validate().empty(),
+                  "explicit mutation safety disable should not fail validation");
 }
 
 void testLocalApiStartupDisabled(TestRunner& runner) {
@@ -491,6 +540,7 @@ void testLocalApiConfigResponseMapsEffectiveConfig(TestRunner& runner) {
     config.election.require_quorum = true;
     config.election.preempt = false;
     config.api.enabled = true;
+    config.mutation_safety.allow_network_mutation = true;
     config.peers.push_back(PeerConfig{.id = "node-c", .address = "10.0.0.13:7432"});
 
     const auto response = buildLocalApiConfigResponse(config);
@@ -522,6 +572,9 @@ void testLocalApiConfigResponseMapsEffectiveConfig(TestRunner& runner) {
                   "config response should include API bind");
     runner.expect(response.api.read_only == config.api.read_only,
                   "config response should include API read-only flag");
+    runner.expect(response.mutation_safety.allow_network_mutation ==
+                      config.mutation_safety.allow_network_mutation,
+                  "config response should include mutation safety gate");
     runner.expect(response.peers.size() == config.peers.size(),
                   "config response should include peers");
     runner.expect(response.peers.at(0).id == "node-b",
@@ -644,6 +697,32 @@ void testLocalApiConfigValidateRejectsInvalidConfigShape(TestRunner& runner) {
     runner.expect(response.error_message.find("Invalid type for config key: priority") !=
                       std::string::npos,
                   "invalid config shape should include decode detail");
+}
+
+void testLocalApiConfigValidateRejectsInvalidMutationSafetyShape(TestRunner& runner) {
+    const auto response = buildLocalApiConfigValidateResponse(
+        LocalApiConfigValidateRequest{.format = "toml",
+                                      .config = "node_id = \"node-a\"\n"
+                                                "priority = 100\n"
+                                                "\n"
+                                                "[vip]\n"
+                                                "address = \"10.0.0.50/24\"\n"
+                                                "interface = \"eth0\"\n"
+                                                "\n"
+                                                "[mutation_safety]\n"
+                                                "allow_network_mutation = \"yes\"\n"
+                                                "\n"
+                                                "[[peers]]\n"
+                                                "id = \"node-b\"\n"
+                                                "address = \"10.0.0.12:7432\"\n"});
+
+    runner.expect(response.outcome == LocalApiConfigValidateOutcome::RequestError,
+                  "invalid mutation safety shape should be request error");
+    runner.expect(response.error_code == "invalid_config_shape",
+                  "invalid mutation safety shape should return stable error code");
+    runner.expect(response.error_message.find(
+                      "Invalid type for config key: allow_network_mutation") != std::string::npos,
+                  "invalid mutation safety shape should include decode detail");
 }
 
 void testLocalApiConfigValidateRejectsInvalidPeersShape(TestRunner& runner) {
@@ -815,6 +894,8 @@ void testMinimalConfigAppliesDefaults(TestRunner& runner) {
     runner.expect(!config.api.enabled, "minimal config should default API disabled");
     runner.expect(config.api.bind == "127.0.0.1:8743", "minimal config should default API bind");
     runner.expect(config.api.read_only, "minimal config should default API read-only");
+    runner.expect(!config.mutation_safety.allow_network_mutation,
+                  "minimal config should default network mutation safety gate off");
     runner.expect(config.peers.size() == 2, "minimal config should load peers");
     runner.expect(config.validate().empty(), "minimal config with defaults should validate");
 }
@@ -868,6 +949,8 @@ void testSampleConfigLoads(TestRunner& runner) {
     runner.expect(!config.election.require_quorum, "sample election quorum should load");
     runner.expect(!config.api.enabled, "sample API enabled flag should load");
     runner.expect(config.api.read_only, "sample API read-only flag should load");
+    runner.expect(!config.mutation_safety.allow_network_mutation,
+                  "sample mutation safety gate should load disabled");
     runner.expect(config.peers.size() == 2, "sample peers should load");
     runner.expect(config.validate().empty(), "loaded sample config should validate");
 }
@@ -2738,11 +2821,20 @@ int main() {
     runner.run("valid config has no validation errors", [&runner] {
         testValidConfigHasNoValidationErrors(runner);
     });
+    runner.run("config defaults mutation safety disabled", [&runner] {
+        testConfigDefaultsMutationSafetyDisabled(runner);
+    });
     runner.run("config validation reports required fields", [&runner] {
         testConfigValidationRequiredFields(runner);
     });
     runner.run("config allows API write mode for startup rejection", [&runner] {
         testConfigAllowsApiWriteModeForStartupRejection(runner);
+    });
+    runner.run("config parses mutation safety enabled", [&runner] {
+        testConfigParsesMutationSafetyEnabled(runner);
+    });
+    runner.run("config parses mutation safety disabled", [&runner] {
+        testConfigParsesMutationSafetyDisabled(runner);
     });
     runner.run("local API startup disabled", [&runner] { testLocalApiStartupDisabled(runner); });
     runner.run("local API startup ready for read-only enabled config", [&runner] {
@@ -2789,6 +2881,9 @@ int main() {
     });
     runner.run("local API config validate rejects invalid config shape", [&runner] {
         testLocalApiConfigValidateRejectsInvalidConfigShape(runner);
+    });
+    runner.run("local API config validate rejects invalid mutation safety shape", [&runner] {
+        testLocalApiConfigValidateRejectsInvalidMutationSafetyShape(runner);
     });
     runner.run("local API config validate rejects invalid peers shape", [&runner] {
         testLocalApiConfigValidateRejectsInvalidPeersShape(runner);

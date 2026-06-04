@@ -110,6 +110,9 @@ LocalApiConfigResponse buildLocalApiConfigResponse(const Config& config) {
         .api = LocalApiConfigApi{.enabled = config.api.enabled,
                                  .bind = config.api.bind,
                                  .read_only = config.api.read_only},
+        .mutation_safety =
+            LocalApiConfigMutationSafety{
+                .allow_network_mutation = config.mutation_safety.allow_network_mutation},
         .peers = std::move(peers)};
 }
 
