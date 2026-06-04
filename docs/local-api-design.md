@@ -153,6 +153,9 @@ Draft response:
     "bind": "127.0.0.1:8743",
     "read_only": true
   },
+  "mutation_safety": {
+    "allow_network_mutation": false
+  },
   "peers": [
     {
       "id": "node-b",

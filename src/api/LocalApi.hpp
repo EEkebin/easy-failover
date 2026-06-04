@@ -100,6 +100,10 @@ struct LocalApiConfigApi {
     bool read_only = true;
 };
 
+struct LocalApiConfigMutationSafety {
+    bool allow_network_mutation = false;
+};
+
 struct LocalApiConfigPeer {
     std::string id;
     std::string address;
@@ -113,6 +117,7 @@ struct LocalApiConfigResponse {
     LocalApiConfigHealth health;
     LocalApiConfigElection election;
     LocalApiConfigApi api;
+    LocalApiConfigMutationSafety mutation_safety;
     std::vector<LocalApiConfigPeer> peers;
 };
 

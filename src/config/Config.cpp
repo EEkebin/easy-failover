@@ -103,6 +103,13 @@ Config configFromTable(const toml::table& root) {
         config.api.read_only = optionalBool(*api, "read_only", config.api.read_only);
     }
 
+    if (const auto* mutation_safety = optionalTable(root, "mutation_safety");
+        mutation_safety != nullptr) {
+        config.mutation_safety.allow_network_mutation =
+            optionalBool(*mutation_safety, "allow_network_mutation",
+                         config.mutation_safety.allow_network_mutation);
+    }
+
     if (const auto* peers_node = root.get("peers"); peers_node != nullptr) {
         const auto* peers = peers_node->as_array();
         if (peers == nullptr) {

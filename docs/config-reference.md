@@ -116,6 +116,20 @@ read_only = true
 The local API skeleton evaluates startup configuration but does not open a listener or serve
 endpoints yet. Its intended read-only shape is documented in [`local-api-design.md`](local-api-design.md).
 
+## Mutation Safety
+
+```toml
+[mutation_safety]
+allow_network_mutation = false
+```
+
+- `allow_network_mutation`: optional boolean reserved for future guarded VIP mutation. Defaults to
+  `false`.
+
+The default is intentionally safe: real network mutation is not permitted unless an operator
+explicitly opts in. This setting is parsed and exposed for future runtime wiring, but the current
+runtime still does not enable real VIP mutation.
+
 ## Peers
 
 ```toml
@@ -144,5 +158,5 @@ Config validation currently checks:
 - each peer has a non-empty `id` and `address`.
 - `api.bind` is not empty when `api.enabled = true`.
 
-Missing `[vip]` fails during config loading. `[heartbeat]`, `[health]`, `[election]`, and `[api]`
-may be omitted and will use defaults.
+Missing `[vip]` fails during config loading. `[heartbeat]`, `[health]`, `[election]`, `[api]`, and
+`[mutation_safety]` may be omitted and will use defaults.
