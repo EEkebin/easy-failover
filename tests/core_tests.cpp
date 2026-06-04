@@ -1833,6 +1833,8 @@ void testDaemonRuntimeLoopRunsBoundedIterations(TestRunner& runner) {
                   "daemon runtime loop should aggregate VIP operations across iterations");
     runner.expect(result.health_schedules.size() == 3,
                   "daemon runtime loop should record health schedule observations");
+    runner.expect(result.heartbeat_send_schedules.size() == 3,
+                  "daemon runtime loop should record heartbeat send schedule observations");
 }
 
 void testDaemonRuntimeLoopSchedulesFirstHealthCheckDue(TestRunner& runner) {
@@ -1972,6 +1974,126 @@ void testDaemonRuntimeLoopSchedulesEmptyHealthCommand(TestRunner& runner) {
                   "empty health command schedule should still be due on first iteration");
     runner.expect(!result.health_schedules.at(0).command_configured,
                   "empty health command schedule should report no configured command");
+}
+
+void testDaemonRuntimeLoopSchedulesFirstHeartbeatSendDue(TestRunner& runner) {
+    FakeVipManager vip_manager;
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = validConfig(),
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 1}},
+        vip_manager);
+
+    runner.expect(result.heartbeat_send_schedules.size() == 1,
+                  "daemon runtime loop should record first heartbeat send schedule observation");
+    runner.expect(result.heartbeat_send_schedules.at(0).iteration_index == 0,
+                  "first heartbeat send schedule observation should report iteration index");
+    runner.expect(result.heartbeat_send_schedules.at(0).elapsed_ms == 0,
+                  "first heartbeat send schedule observation should start at zero elapsed time");
+    runner.expect(result.heartbeat_send_schedules.at(0).interval_ms ==
+                      validConfig().heartbeat.interval_ms,
+                  "heartbeat send schedule observation should report configured interval");
+    runner.expect(result.heartbeat_send_schedules.at(0).due,
+                  "first heartbeat send schedule observation should be due");
+    runner.expect(result.heartbeat_send_schedules.at(0).peers_configured,
+                  "sample peers should be reported as configured");
+    runner.expect(result.heartbeat_send_schedules.at(0).expected_send_count ==
+                      validConfig().peers.size(),
+                  "heartbeat send schedule should report expected peer send count");
+}
+
+void testDaemonRuntimeLoopDoesNotScheduleHeartbeatSendBeforeInterval(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    auto config = validConfig();
+    config.heartbeat.interval_ms = 1000;
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = config,
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 3,
+                                                       .logical_iteration_elapsed_ms = 250}},
+        vip_manager);
+
+    runner.expect(result.heartbeat_send_schedules.size() == 3,
+                  "daemon runtime loop should record every heartbeat send schedule observation");
+    runner.expect(result.heartbeat_send_schedules.at(0).due,
+                  "first heartbeat send schedule observation should be due");
+    runner.expect(!result.heartbeat_send_schedules.at(1).due,
+                  "heartbeat send schedule should not be due before configured interval");
+    runner.expect(!result.heartbeat_send_schedules.at(2).due,
+                  "heartbeat send schedule should remain not due before configured interval");
+    runner.expect(result.heartbeat_send_schedules.at(2).elapsed_ms == 500,
+                  "heartbeat send schedule should report deterministic logical elapsed time");
+}
+
+void testDaemonRuntimeLoopSchedulesHeartbeatSendAtInterval(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    auto config = validConfig();
+    config.heartbeat.interval_ms = 1000;
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = config,
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 3,
+                                                       .logical_iteration_elapsed_ms = 500}},
+        vip_manager);
+
+    runner.expect(result.heartbeat_send_schedules.size() == 3,
+                  "daemon runtime loop should record every heartbeat send schedule observation");
+    runner.expect(result.heartbeat_send_schedules.at(0).due,
+                  "first heartbeat send schedule observation should be due");
+    runner.expect(!result.heartbeat_send_schedules.at(1).due,
+                  "heartbeat send schedule should not be due before interval");
+    runner.expect(result.heartbeat_send_schedules.at(2).due,
+                  "heartbeat send schedule should be due when interval elapses");
+    runner.expect(result.heartbeat_send_schedules.at(2).elapsed_ms == 1000,
+                  "heartbeat send schedule should report elapsed interval boundary");
+}
+
+void testDaemonRuntimeLoopUsesDelayForDefaultHeartbeatSendElapsed(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    auto config = validConfig();
+    config.heartbeat.interval_ms = 2;
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = config,
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 3,
+                                                       .inter_iteration_delay_ms = 1}},
+        vip_manager);
+
+    runner.expect(result.heartbeat_send_schedules.size() == 3,
+                  "daemon runtime loop should record every default heartbeat send observation");
+    runner.expect(result.heartbeat_send_schedules.at(0).due,
+                  "first default heartbeat send schedule observation should be due");
+    runner.expect(!result.heartbeat_send_schedules.at(1).due,
+                  "default heartbeat send schedule should not be due before interval");
+    runner.expect(result.heartbeat_send_schedules.at(2).due,
+                  "default heartbeat send schedule should be due after loop delay reaches interval");
+    runner.expect(result.heartbeat_send_schedules.at(2).elapsed_ms == 2,
+                  "default heartbeat send schedule should use inter-iteration delay as elapsed time");
+}
+
+void testDaemonRuntimeLoopRejectsHeartbeatSendWithEmptyPeers(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    auto config = validConfig();
+    config.peers.clear();
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = config,
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 1}},
+        vip_manager);
+
+    runner.expect(result.iterations_ran == 0,
+                  "daemon runtime loop should not run iterations for empty peers");
+    runner.expect(result.stop_reason == DaemonLoopStopReason::LifecycleFaulted,
+                  "daemon runtime loop should fault invalid empty peer config");
+    runner.expect(contains(result.validation_errors, "at least one peer must be configured"),
+                  "daemon runtime loop should preserve empty peer validation error");
+    runner.expect(result.heartbeat_send_schedules.empty(),
+                  "daemon runtime loop should not schedule heartbeat sends for invalid config");
 }
 
 void testDaemonRuntimeLoopStopsBeforeFirstIterationOnShutdown(TestRunner& runner) {
@@ -2689,6 +2811,21 @@ int main() {
     });
     runner.run("daemon runtime loop schedules empty health command", [&runner] {
         testDaemonRuntimeLoopSchedulesEmptyHealthCommand(runner);
+    });
+    runner.run("daemon runtime loop schedules first heartbeat send due", [&runner] {
+        testDaemonRuntimeLoopSchedulesFirstHeartbeatSendDue(runner);
+    });
+    runner.run("daemon runtime loop does not schedule heartbeat send before interval", [&runner] {
+        testDaemonRuntimeLoopDoesNotScheduleHeartbeatSendBeforeInterval(runner);
+    });
+    runner.run("daemon runtime loop schedules heartbeat send at interval", [&runner] {
+        testDaemonRuntimeLoopSchedulesHeartbeatSendAtInterval(runner);
+    });
+    runner.run("daemon runtime loop uses delay for default heartbeat send elapsed", [&runner] {
+        testDaemonRuntimeLoopUsesDelayForDefaultHeartbeatSendElapsed(runner);
+    });
+    runner.run("daemon runtime loop rejects heartbeat send with empty peers", [&runner] {
+        testDaemonRuntimeLoopRejectsHeartbeatSendWithEmptyPeers(runner);
     });
     runner.run("daemon runtime loop stops before first iteration on shutdown", [&runner] {
         testDaemonRuntimeLoopStopsBeforeFirstIterationOnShutdown(runner);

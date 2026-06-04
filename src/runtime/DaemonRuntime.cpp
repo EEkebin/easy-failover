@@ -42,6 +42,22 @@ namespace {
                                      .command_configured = !config.health.command.empty()};
 }
 
+[[nodiscard]] HeartbeatSendScheduleObservation evaluateHeartbeatSendSchedule(
+    const Config& config,
+    const std::size_t iteration_index,
+    const std::int64_t elapsed_ms,
+    const bool heartbeat_send_was_due,
+    const std::int64_t last_due_elapsed_ms) {
+    const auto due =
+        !heartbeat_send_was_due || elapsed_ms - last_due_elapsed_ms >= config.heartbeat.interval_ms;
+    return HeartbeatSendScheduleObservation{.iteration_index = iteration_index,
+                                            .elapsed_ms = elapsed_ms,
+                                            .interval_ms = config.heartbeat.interval_ms,
+                                            .due = due,
+                                            .peers_configured = !config.peers.empty(),
+                                            .expected_send_count = config.peers.size()};
+}
+
 [[nodiscard]] std::int64_t effectiveIterationElapsedMs(const DaemonLoopOptions& options) {
     const auto elapsed_ms = options.logical_iteration_elapsed_ms > 0
                                 ? options.logical_iteration_elapsed_ms
@@ -116,6 +132,7 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request, VipManag
                                    .validation_errors = {},
                                    .vip_operations = {},
                                    .health_schedules = {},
+                                   .heartbeat_send_schedules = {},
                                    .detail = "max iterations completed"};
 
     if (request.shutdown_state != nullptr && request.shutdown_state->shutdownRequested()) {
@@ -130,6 +147,8 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request, VipManag
     const auto iteration_elapsed_ms = effectiveIterationElapsedMs(request.options);
     auto health_check_was_due = false;
     auto last_due_elapsed_ms = std::int64_t{0};
+    auto heartbeat_send_was_due = false;
+    auto last_heartbeat_send_due_elapsed_ms = std::int64_t{0};
     for (std::size_t index = 0; index < request.options.max_iterations; ++index) {
         if (request.shutdown_state != nullptr && request.shutdown_state->shutdownRequested()) {
             result.final_state = DaemonLifecycleState::Stopped;
@@ -165,6 +184,15 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request, VipManag
                 last_due_elapsed_ms = elapsed_ms;
             }
             result.health_schedules.push_back(health_schedule);
+
+            auto heartbeat_schedule = evaluateHeartbeatSendSchedule(
+                request.config, result.iterations_ran, elapsed_ms, heartbeat_send_was_due,
+                last_heartbeat_send_due_elapsed_ms);
+            if (heartbeat_schedule.due) {
+                heartbeat_send_was_due = true;
+                last_heartbeat_send_due_elapsed_ms = elapsed_ms;
+            }
+            result.heartbeat_send_schedules.push_back(heartbeat_schedule);
             ++result.iterations_ran;
         }
 
