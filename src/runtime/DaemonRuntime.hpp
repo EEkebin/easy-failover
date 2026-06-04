@@ -84,6 +84,15 @@ struct HeartbeatSendScheduleObservation {
     std::size_t expected_send_count = 0;
 };
 
+struct HeartbeatReceiveStateObservation {
+    std::size_t iteration_index = 0;
+    std::int64_t elapsed_ms = 0;
+    bool receive_attempted = false;
+    bool peer_status_observed = false;
+    std::string peer_id;
+    bool heartbeat_seen = false;
+};
+
 struct DaemonLoopRequest {
     const Config& config;
     DaemonLoopOptions options;
@@ -101,6 +110,7 @@ struct DaemonLoopResult {
     std::vector<VipOperationResult> vip_operations;
     std::vector<HealthScheduleObservation> health_schedules;
     std::vector<HeartbeatSendScheduleObservation> heartbeat_send_schedules;
+    std::vector<HeartbeatReceiveStateObservation> heartbeat_receive_states;
     std::string detail;
 };
 
