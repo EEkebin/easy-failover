@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <thread>
+#include <utility>
 
 namespace easyfailover {
 
@@ -65,6 +66,26 @@ namespace {
                                             .elapsed_ms = elapsed_ms,
                                             .receive_attempted = false,
                                             .peer_status = std::nullopt};
+}
+
+[[nodiscard]] FailoverDecisionObservation evaluateFailoverDecision(
+    const Config& config,
+    const HeartbeatReceiveStateObservation& receive_state) {
+    auto local_status = LocalNodeStatus{.node_id = config.node_id,
+                                        .priority = config.priority,
+                                        .healthy = true,
+                                        .state = NodeState::Backup};
+    auto peer_statuses = std::vector<PeerStatus>{};
+    if (receive_state.peer_status.has_value()) {
+        peer_statuses.push_back(*receive_state.peer_status);
+    }
+
+    auto decision = decideFailoverAction(local_status, peer_statuses);
+    return FailoverDecisionObservation{.iteration_index = receive_state.iteration_index,
+                                       .elapsed_ms = receive_state.elapsed_ms,
+                                       .local_status = std::move(local_status),
+                                       .peer_statuses = std::move(peer_statuses),
+                                       .decision = std::move(decision)};
 }
 
 [[nodiscard]] std::int64_t effectiveIterationElapsedMs(const DaemonLoopOptions& options) {
@@ -143,6 +164,7 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request, VipManag
                                    .health_schedules = {},
                                    .heartbeat_send_schedules = {},
                                    .heartbeat_receive_states = {},
+                                   .failover_decisions = {},
                                    .detail = "max iterations completed"};
 
     if (request.shutdown_state != nullptr && request.shutdown_state->shutdownRequested()) {
@@ -204,8 +226,11 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request, VipManag
             }
             result.heartbeat_send_schedules.push_back(heartbeat_schedule);
 
-            result.heartbeat_receive_states.push_back(
-                evaluateHeartbeatReceiveState(result.iterations_ran, elapsed_ms));
+            auto heartbeat_receive_state =
+                evaluateHeartbeatReceiveState(result.iterations_ran, elapsed_ms);
+            result.heartbeat_receive_states.push_back(heartbeat_receive_state);
+            result.failover_decisions.push_back(
+                evaluateFailoverDecision(request.config, heartbeat_receive_state));
             ++result.iterations_ran;
         }
 

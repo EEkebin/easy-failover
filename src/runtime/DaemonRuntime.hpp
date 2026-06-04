@@ -93,6 +93,14 @@ struct HeartbeatReceiveStateObservation {
     std::optional<PeerStatus> peer_status;
 };
 
+struct FailoverDecisionObservation {
+    std::size_t iteration_index = 0;
+    std::int64_t elapsed_ms = 0;
+    LocalNodeStatus local_status;
+    std::vector<PeerStatus> peer_statuses;
+    FailoverDecision decision;
+};
+
 struct DaemonLoopRequest {
     const Config& config;
     DaemonLoopOptions options;
@@ -111,6 +119,7 @@ struct DaemonLoopResult {
     std::vector<HealthScheduleObservation> health_schedules;
     std::vector<HeartbeatSendScheduleObservation> heartbeat_send_schedules;
     std::vector<HeartbeatReceiveStateObservation> heartbeat_receive_states;
+    std::vector<FailoverDecisionObservation> failover_decisions;
     std::string detail;
 };
 

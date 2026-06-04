@@ -1837,6 +1837,8 @@ void testDaemonRuntimeLoopRunsBoundedIterations(TestRunner& runner) {
                   "daemon runtime loop should record heartbeat send schedule observations");
     runner.expect(result.heartbeat_receive_states.size() == 3,
                   "daemon runtime loop should record heartbeat receive state observations");
+    runner.expect(result.failover_decisions.size() == 3,
+                  "daemon runtime loop should record failover decision observations");
 }
 
 void testDaemonRuntimeLoopSchedulesFirstHealthCheckDue(TestRunner& runner) {
@@ -2165,6 +2167,99 @@ void testDaemonRuntimeLoopDoesNotRecordHeartbeatReceiveStateForInvalidConfig(Tes
                   "daemon runtime loop should fault invalid config before receive observations");
     runner.expect(result.heartbeat_receive_states.empty(),
                   "daemon runtime loop should not record heartbeat receive state for invalid config");
+}
+
+void testDaemonRuntimeLoopRecordsFailoverDecisionObservation(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    const auto config = validConfig();
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = config,
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 1}},
+        vip_manager);
+
+    runner.expect(result.failover_decisions.size() == 1,
+                  "daemon runtime loop should record first failover decision observation");
+    const auto& observation = result.failover_decisions.at(0);
+    runner.expect(observation.iteration_index == 0,
+                  "first failover decision observation should report iteration index");
+    runner.expect(observation.elapsed_ms == 0,
+                  "first failover decision observation should start at zero elapsed time");
+    runner.expect(observation.local_status.node_id == config.node_id,
+                  "failover decision observation should record local node id");
+    runner.expect(observation.local_status.priority == config.priority,
+                  "failover decision observation should record local priority");
+    runner.expect(observation.local_status.healthy,
+                  "model-only failover decision should treat local node as healthy");
+    runner.expect(observation.local_status.state == NodeState::Backup,
+                  "model-only failover decision should start from backup state");
+}
+
+void testDaemonRuntimeLoopFailoverDecisionDefaultsNoPeerInputs(TestRunner& runner) {
+    FakeVipManager vip_manager;
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = validConfig(),
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 1}},
+        vip_manager);
+
+    runner.expect(result.failover_decisions.at(0).peer_statuses.empty(),
+                  "model-only failover decision should default to no peer inputs");
+}
+
+void testDaemonRuntimeLoopFailoverDecisionDefaultsBecomeMaster(TestRunner& runner) {
+    FakeVipManager vip_manager;
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = validConfig(),
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 1}},
+        vip_manager);
+
+    const auto& decision = result.failover_decisions.at(0).decision;
+    runner.expect(decision.action == FailoverAction::BecomeMaster,
+                  "model-only failover decision should promote local backup without live peers");
+    runner.expect(decision.selected_master == "node-a",
+                  "model-only failover decision should select local node as master");
+}
+
+void testDaemonRuntimeLoopFailoverDecisionTracksElapsed(TestRunner& runner) {
+    FakeVipManager vip_manager;
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = validConfig(),
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 3,
+                                                       .logical_iteration_elapsed_ms = 250}},
+        vip_manager);
+
+    runner.expect(result.failover_decisions.size() == 3,
+                  "daemon runtime loop should record every failover decision observation");
+    runner.expect(result.failover_decisions.at(0).elapsed_ms == 0,
+                  "first failover decision should start at zero");
+    runner.expect(result.failover_decisions.at(1).elapsed_ms == 250,
+                  "second failover decision should report logical elapsed time");
+    runner.expect(result.failover_decisions.at(2).elapsed_ms == 500,
+                  "third failover decision should report logical elapsed time");
+}
+
+void testDaemonRuntimeLoopDoesNotRecordFailoverDecisionForInvalidConfig(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    auto config = validConfig();
+    config.peers.clear();
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = config,
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 1}},
+        vip_manager);
+
+    runner.expect(result.stop_reason == DaemonLoopStopReason::LifecycleFaulted,
+                  "daemon runtime loop should fault invalid config before failover decisions");
+    runner.expect(result.failover_decisions.empty(),
+                  "daemon runtime loop should not record failover decisions for invalid config");
 }
 
 void testDaemonRuntimeLoopStopsBeforeFirstIterationOnShutdown(TestRunner& runner) {
@@ -2910,6 +3005,22 @@ int main() {
     runner.run("daemon runtime loop does not record heartbeat receive state for invalid config",
                [&runner] {
                    testDaemonRuntimeLoopDoesNotRecordHeartbeatReceiveStateForInvalidConfig(runner);
+               });
+    runner.run("daemon runtime loop records failover decision observation", [&runner] {
+        testDaemonRuntimeLoopRecordsFailoverDecisionObservation(runner);
+    });
+    runner.run("daemon runtime loop failover decision defaults no peer inputs", [&runner] {
+        testDaemonRuntimeLoopFailoverDecisionDefaultsNoPeerInputs(runner);
+    });
+    runner.run("daemon runtime loop failover decision defaults become master", [&runner] {
+        testDaemonRuntimeLoopFailoverDecisionDefaultsBecomeMaster(runner);
+    });
+    runner.run("daemon runtime loop failover decision tracks elapsed", [&runner] {
+        testDaemonRuntimeLoopFailoverDecisionTracksElapsed(runner);
+    });
+    runner.run("daemon runtime loop does not record failover decision for invalid config",
+               [&runner] {
+                   testDaemonRuntimeLoopDoesNotRecordFailoverDecisionForInvalidConfig(runner);
                });
     runner.run("daemon runtime loop stops before first iteration on shutdown", [&runner] {
         testDaemonRuntimeLoopStopsBeforeFirstIterationOnShutdown(runner);
