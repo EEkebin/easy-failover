@@ -229,8 +229,10 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request, VipManag
             auto heartbeat_receive_state =
                 evaluateHeartbeatReceiveState(result.iterations_ran, elapsed_ms);
             result.heartbeat_receive_states.push_back(heartbeat_receive_state);
-            result.failover_decisions.push_back(
-                evaluateFailoverDecision(request.config, heartbeat_receive_state));
+            if (lifecycle_result.final_state != DaemonLifecycleState::Faulted) {
+                result.failover_decisions.push_back(
+                    evaluateFailoverDecision(request.config, heartbeat_receive_state));
+            }
             ++result.iterations_ran;
         }
 

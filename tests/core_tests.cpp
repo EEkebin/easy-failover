@@ -2331,6 +2331,8 @@ void testDaemonRuntimeLoopStopsOnLifecycleFault(TestRunner& runner) {
                   "daemon runtime loop should preserve lifecycle fault detail");
     runner.expect(result.vip_operations.size() == 1,
                   "daemon runtime loop should aggregate operations from the faulting iteration");
+    runner.expect(result.failover_decisions.empty(),
+                  "daemon runtime loop should not record failover decisions for faulted iterations");
 }
 
 void testDaemonRuntimeLoopPreservesValidationErrors(TestRunner& runner) {
