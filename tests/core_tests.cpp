@@ -235,10 +235,18 @@ class FakeNetworkCommandRunner final : public NetworkCommandRunner {
         was_called = true;
         observed_request = request;
         observed_requests.push_back(request);
+        if (result_index < results.size()) {
+            auto configured_result = results.at(result_index);
+            ++result_index;
+            return configured_result;
+        }
+
         return result;
     }
 
     NetworkCommandResult result;
+    std::vector<NetworkCommandResult> results;
+    std::size_t result_index = 0;
     bool was_called = false;
     NetworkCommandRequest observed_request;
     std::vector<NetworkCommandRequest> observed_requests;
@@ -1987,6 +1995,7 @@ void testLinuxVipManagerBuildsAddCommand(TestRunner& runner) {
                              .exit_code = 0,
                              .executed = false,
                              .dry_run = true,
+                             .output = "",
                              .error = ""};
     LinuxVipManager manager{command_runner};
 
@@ -2042,6 +2051,7 @@ void testLinuxVipManagerSafetyGateForcesDryRun(TestRunner& runner) {
                              .exit_code = 0,
                              .executed = false,
                              .dry_run = true,
+                             .output = "",
                              .error = ""};
     LinuxVipManager manager{
         command_runner,
@@ -2123,6 +2133,7 @@ void testLinuxVipManagerBuildsAnnounceCommand(TestRunner& runner) {
                              .exit_code = 0,
                              .executed = false,
                              .dry_run = true,
+                             .output = "",
                              .error = ""};
     LinuxVipManager manager{command_runner};
 
@@ -2131,11 +2142,64 @@ void testLinuxVipManagerBuildsAnnounceCommand(TestRunner& runner) {
     runner.expect(result.success, "announce VIP dry-run should report success");
     runner.expect(result.request.type == VipOperationType::Announce,
                   "announce VIP result should preserve operation type");
-    runner.expect(command_runner.observed_request.executable == "arping",
-                  "announce VIP should use arping executable");
-    runner.expect(command_runner.observed_request.arguments ==
-                      std::vector<std::string>{"-A", "-c", "3", "-I", "eth0", "10.0.0.50"},
-                  "announce VIP should build gratuitous ARP command without CIDR prefix");
+    runner.expect(result.commands.size() == 2,
+                  "announce VIP should report both gratuitous ARP commands");
+    runner.expect(command_runner.observed_requests.size() == 2,
+                  "announce VIP should run both gratuitous ARP commands");
+    if (command_runner.observed_requests.size() != 2) {
+        return;
+    }
+
+    runner.expect(command_runner.observed_requests.at(0).executable == "arping",
+                  "announce VIP announcement should use arping executable");
+    runner.expect(command_runner.observed_requests.at(0).arguments ==
+                      std::vector<std::string>{"-A", "-c", "10", "-I", "eth0", "10.0.0.50"},
+                  "announce VIP should build ARP announcement command without CIDR prefix");
+    runner.expect(command_runner.observed_requests.at(0).dry_run,
+                  "announce VIP ARP announcement should preserve dry-run");
+    runner.expect(command_runner.observed_requests.at(1).executable == "arping",
+                  "announce VIP update should use arping executable");
+    runner.expect(command_runner.observed_requests.at(1).arguments ==
+                      std::vector<std::string>{"-U", "-c", "10", "-I", "eth0", "10.0.0.50"},
+                  "announce VIP should build unsolicited ARP update without CIDR prefix");
+    runner.expect(command_runner.observed_requests.at(1).dry_run,
+                  "announce VIP unsolicited ARP update should preserve dry-run");
+}
+
+void testLinuxVipManagerAnnounceFailsWhenSecondArpCommandFails(TestRunner& runner) {
+    FakeNetworkCommandRunner command_runner;
+    command_runner.results = {
+        NetworkCommandResult{.request = NetworkCommandRequest{.executable = "arping",
+                                                              .arguments = {"-A"},
+                                                              .dry_run = false},
+                             .exit_code = 0,
+                             .executed = true,
+                             .dry_run = false,
+                             .output = "",
+                             .error = ""},
+        NetworkCommandResult{.request = NetworkCommandRequest{.executable = "arping",
+                                                              .arguments = {"-U"},
+                                                              .dry_run = false},
+                             .exit_code = 2,
+                             .executed = true,
+                             .dry_run = false,
+                             .output = "",
+                             .error = "arping update failed"},
+    };
+    LinuxVipManager manager{
+        command_runner,
+        LinuxVipManagerOptions{.allow_network_mutation = true, .dry_run = false}};
+
+    const auto result = manager.announceVip("10.0.0.50/24", "eth0");
+
+    runner.expect(!result.success,
+                  "announce VIP should fail when the unsolicited ARP update fails");
+    runner.expect(result.error == "arping update failed",
+                  "announce VIP should preserve the failing ARP command error");
+    runner.expect(result.commands.size() == 2,
+                  "announce VIP failure should preserve both ARP command results");
+    runner.expect(command_runner.observed_requests.size() == 2,
+                  "announce VIP should attempt both ARP commands before reporting failure");
 }
 
 void testLinuxVipManagerRejectsInvalidInputs(TestRunner& runner) {
@@ -4125,6 +4189,9 @@ int main() {
     });
     runner.run("Linux VIP manager builds announce command", [&runner] {
         testLinuxVipManagerBuildsAnnounceCommand(runner);
+    });
+    runner.run("Linux VIP manager announce fails when second ARP command fails", [&runner] {
+        testLinuxVipManagerAnnounceFailsWhenSecondArpCommandFails(runner);
     });
     runner.run("Linux VIP manager rejects invalid inputs", [&runner] {
         testLinuxVipManagerRejectsInvalidInputs(runner);

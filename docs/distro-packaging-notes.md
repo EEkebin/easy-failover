@@ -55,7 +55,8 @@ The current runtime requires a modern Linux userspace and the C++ runtime needed
 for the package build. Deployments that enable real VIP movement also require:
 
 - `ip` from `iproute2`;
-- `arping`, commonly from `iputils` or `iputils-arping` depending on the distribution;
+- `arping`, commonly from `iputils` or `iputils-arping` depending on the distribution, for both
+  ARP announcement and unsolicited ARP update packets;
 - systemd when installing and enabling the packaged service unit.
 
 Do not add hard runtime dependencies for real VIP movement until packaged mutation support is enabled
