@@ -25,6 +25,7 @@ Thumbs.db
 # Future Node/Next.js dashboard
 node_modules/
 .next/
+next-env.d.ts
 npm-debug.log*
 pnpm-debug.log*
 yarn-debug.log*

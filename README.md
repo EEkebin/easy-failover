@@ -135,7 +135,16 @@ git push -u origin feature/my-change
 Pull requests must pass the `Linux smoke build` status check before merging. The repository uses
 squash merging to keep `main` linear and readable.
 
-## Future Dashboard
+## Optional Dashboard
 
-A future optional Next.js dashboard may be added under `web/` in this same repository. It is not
-implemented yet.
+An optional read-only Next.js dashboard lives under `web/`. It is not built or installed by CMake
+and remains separate from the daemon binary.
+
+```sh
+cd web
+npm install
+npm run dev
+```
+
+The dashboard falls back to sample data until the local HTTP API listener is implemented. It does
+not expose VIP mutation, daemon controls, config writes, or other privileged actions.
