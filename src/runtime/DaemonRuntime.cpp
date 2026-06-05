@@ -189,6 +189,18 @@ void expirePeers(std::map<std::string, RecentPeerStatus>& recent_peers,
     return elapsed_ms > 0 ? elapsed_ms : 0;
 }
 
+[[nodiscard]] bool realNetworkMutationRequested(const DaemonLoopRequest& request) {
+    return !request.options.runtime_options.dry_run &&
+           request.config.mutation_safety.allow_network_mutation;
+}
+
+[[nodiscard]] bool heartbeatSendFailed(const HeartbeatLoopResult& heartbeat_result) {
+    return std::any_of(heartbeat_result.sends.begin(), heartbeat_result.sends.end(),
+                       [](const HeartbeatSendObservation& observation) {
+                           return !observation.sent || !observation.error.empty();
+                       });
+}
+
 } // namespace
 
 DaemonLifecycleResult runDaemonLifecycleOnce(const DaemonLifecycleRequest& request,
@@ -334,6 +346,7 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request,
                                         .priority = request.config.priority,
                                         .healthy = true,
                                         .state = NodeState::Backup};
+    auto real_mutation_warmup_complete = false;
     for (std::size_t index = 0;
          request.options.run_until_shutdown || index < request.options.max_iterations; ++index) {
         if (request.shutdown_state != nullptr) {
@@ -371,6 +384,17 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request,
                                request.options.max_recorded_observations);
             heartbeat_receive_state = heartbeatReceiveStateFromLoopResult(
                 result.iterations_ran, elapsed_ms, heartbeat_result);
+            if (realNetworkMutationRequested(request) &&
+                (heartbeatSendFailed(heartbeat_result) || !heartbeat_receive_state.error.empty())) {
+                pushObservation(result.heartbeat_send_schedules, heartbeat_schedule,
+                                request.options.max_recorded_observations);
+                pushObservation(result.heartbeat_receive_states, heartbeat_receive_state,
+                                request.options.max_recorded_observations);
+                result.final_state = DaemonLifecycleState::Faulted;
+                result.stop_reason = DaemonLoopStopReason::LifecycleFaulted;
+                result.detail = "heartbeat transport failed before real VIP mutation";
+                return result;
+            }
             if (heartbeat_result.receive.peer_status.has_value() &&
                 peerIsConfigured(request.config,
                                  heartbeat_result.receive.peer_status->node_id)) {
@@ -382,8 +406,15 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request,
         expirePeers(recent_peers, elapsed_ms, request.config.heartbeat.timeout_ms);
 
         const auto peer_statuses = activePeerStatuses(recent_peers);
+        auto lifecycle_config = request.config;
+        const auto heartbeat_cycle_warmed_up =
+            heartbeat_schedule.due && heartbeat_receive_state.receive_attempted &&
+            heartbeat_receive_state.error.empty();
+        if (realNetworkMutationRequested(request) && !real_mutation_warmup_complete) {
+            lifecycle_config.mutation_safety.allow_network_mutation = false;
+        }
         const auto lifecycle_result = runDaemonLifecycleOnce(
-            DaemonLifecycleRequest{.config = request.config,
+            DaemonLifecycleRequest{.config = lifecycle_config,
                                    .options = request.options.runtime_options,
                                    .initial_state = current_state,
                                    .shutdown_state = request.shutdown_state,
@@ -432,6 +463,9 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request,
         if (lifecycle_result.final_state == DaemonLifecycleState::Faulted) {
             result.stop_reason = DaemonLoopStopReason::LifecycleFaulted;
             return result;
+        }
+        if (realNetworkMutationRequested(request) && heartbeat_cycle_warmed_up) {
+            real_mutation_warmup_complete = true;
         }
 
         if (!request.options.run_until_shutdown && index + 1 == request.options.max_iterations) {

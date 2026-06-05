@@ -62,7 +62,9 @@ timeout_ms = 3000
 - `interval_ms`: optional positive heartbeat interval in milliseconds. Defaults to `1000`.
 - `timeout_ms`: optional positive peer timeout in milliseconds. Defaults to `3000`.
 
-Real heartbeat networking is not implemented yet.
+The daemon uses UDP heartbeat datagrams on the configured bind address. Current production
+transport support is IPv4 `host:port` only, such as `0.0.0.0:7432`, `127.0.0.1:7432`, or
+`10.0.0.13:7432`. Peer addresses use the same IPv4 `host:port` format.
 
 ## Health
 
@@ -130,8 +132,11 @@ The default is intentionally safe: real network mutation is not permitted unless
 explicitly opts in and starts the daemon without `--dry-run`. CLI/runtime dry-run remains an
 overriding safety control even when this setting is `true`. The installed systemd unit runs without
 `--dry-run`, so keep this setting `false` until real VIP movement has been tested in the target
-environment. Current service startup rejects real mutation while the CLI path still uses the
-disabled heartbeat transport.
+environment.
+
+When real mutation is enabled, the runtime still waits through one successful heartbeat cycle before
+allowing real VIP add/remove/announce operations. Heartbeat send or receive errors fail closed
+before real VIP mutation.
 
 ## Peers
 
@@ -142,7 +147,7 @@ address = "10.0.0.12:7432"
 ```
 
 - `id`: required non-empty peer node identifier.
-- `address`: required non-empty peer heartbeat address.
+- `address`: required non-empty peer heartbeat IPv4 `host:port` address.
 
 Each peer entry must be a TOML table.
 At least one peer is required.

@@ -211,6 +211,12 @@ The installed systemd unit uses `--run-forever`. Without that flag, the CLI runs
 iteration by default for smoke tests and development checks. Use `--max-iterations N` to run a
 bounded multi-iteration check.
 
+For a two-node lab, set each node's `node_id`, `vip.interface`, and single peer address, then keep
+`mutation_safety.allow_network_mutation = false` for the first dry-run service start. The daemon
+binds UDP heartbeat on `[heartbeat].bind` and sends to each `[[peers]].address`. When real mutation
+is later enabled, the daemon waits through one successful heartbeat cycle before allowing real VIP
+operations.
+
 ## Runtime Logging
 
 The normal runtime path emits stable logfmt-style runtime events. Current event names are
@@ -232,8 +238,8 @@ Install/package layout notes live in
 [`docs/install-package-layout.md`](docs/install-package-layout.md). Distro packaging guidance lives
 in [`docs/distro-packaging-notes.md`](docs/distro-packaging-notes.md).
 Real VIP movement is guarded by runtime dry-run mode and
-`mutation_safety.allow_network_mutation`. Quorum/fencing behavior remains future work, so validate
-carefully before using real network mutation.
+`mutation_safety.allow_network_mutation`. UDP heartbeat is wired into the daemon, but quorum/fencing
+behavior remains future work, so validate carefully before using real network mutation.
 
 Example production config path:
 

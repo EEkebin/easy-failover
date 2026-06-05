@@ -70,6 +70,7 @@ add_library(
     src/heartbeat/HeartbeatLoop.cpp
     src/heartbeat/HeartbeatMessage.cpp
     src/heartbeat/HeartbeatTransport.cpp
+    src/heartbeat/UdpHeartbeatTransport.cpp
     src/platform/NetworkCommandRunner.cpp
     src/platform/linux/LinuxHealthCommandRunner.cpp
     src/platform/linux/LinuxHostname.cpp

@@ -1,9 +1,8 @@
 # Failover Safety Notes
 
 easy-failover must avoid moving a virtual IP until the agent has enough safety controls to reduce
-split-brain risk. The current codebase only models local decisions and builds non-mutating VIP
-command requests. It does not send heartbeats, confirm quorum, fence peers, or change network
-state.
+split-brain risk. The current codebase sends UDP heartbeats, models local decisions, and keeps real
+VIP command execution behind explicit opt-in. It does not yet confirm quorum or fence peers.
 
 ## Split-Brain Risk
 
@@ -12,8 +11,8 @@ For a VIP failover agent, that can route traffic to the wrong host, create ARP o
 conflicts, and hide service failures behind inconsistent ownership.
 
 The current election helper chooses the highest-priority healthy candidate known to the local
-process. That result is advisory only. It must not be treated as permission to move the VIP until
-runtime heartbeat, health, and safety checks exist.
+process. That result must still be treated conservatively because quorum and fencing are not
+implemented yet.
 
 ## Required Guardrails Before VIP Movement
 
@@ -30,6 +29,11 @@ The first real VIP backend should still be conservative. It should shell out to 
 `arping` only behind explicit safety controls. A later native netlink backend can replace shelling
 out after the behavior is well covered. The expected Linux privileges are documented in
 [`linux-capabilities.md`](linux-capabilities.md).
+
+The current daemon uses a startup warmup before real mutation: when
+`mutation_safety.allow_network_mutation = true` and the runtime is not in `--dry-run`, the first
+successful heartbeat cycle warms the daemon up, and real VIP operations can only happen on a later
+iteration. Heartbeat send or receive errors fail closed before real VIP mutation.
 
 ## Quorum
 
@@ -61,6 +65,7 @@ in [`local-api-design.md`](local-api-design.md).
 Default behavior is intentionally non-mutating:
 
 - election and failover decision helpers are pure local logic;
+- the daemon sends and receives IPv4 UDP heartbeat datagrams for configured peers;
 - Linux VIP manager methods build `iproute2` and `arping` command requests through a dry-run
   command runner by default;
 - the daemon lifecycle runs VIP operations in dry-run mode unless both runtime dry-run is disabled
@@ -69,6 +74,6 @@ Default behavior is intentionally non-mutating:
   auditability;
 - SIGINT/SIGTERM handling records a shutdown request for the long-running runtime loop to observe;
 - `--dry-run` does not change system state;
-- service startup rejects real VIP mutation while the CLI path still uses the disabled heartbeat
-  transport;
+- real mutation waits for a successful heartbeat warmup cycle and fails closed on heartbeat
+  transport errors;
 - real VIP mutation still needs careful lab validation before production use.

@@ -5,6 +5,7 @@
 #include "heartbeat/HeartbeatLoop.hpp"
 #include "heartbeat/HeartbeatMessage.hpp"
 #include "heartbeat/HeartbeatTransport.hpp"
+#include "heartbeat/UdpHeartbeatTransport.hpp"
 #include "health/HealthCheck.hpp"
 #include "platform/NetworkCommandRunner.hpp"
 #include "platform/linux/LinuxHealthCommandRunner.hpp"
@@ -92,6 +93,7 @@ using easyfailover::formatRuntimeLifecycleEvent;
 using easyfailover::formatRuntimeLoopEvent;
 using easyfailover::formatRuntimeVipOperationEvent;
 using easyfailover::parseHeartbeatMessage;
+using easyfailover::parseUdpHeartbeatEndpoint;
 using easyfailover::peerStatusFromHeartbeat;
 using easyfailover::pollShutdownSignals;
 using easyfailover::resetPendingShutdownSignalForTest;
@@ -107,6 +109,7 @@ using easyfailover::serveLocalApiHttp;
 using easyfailover::serveLocalApiHttpOnce;
 using easyfailover::loadConfigFromFile;
 using easyfailover::loadConfigFromTomlString;
+using easyfailover::UdpHeartbeatTransport;
 
 class TestRunner {
   public:
@@ -245,6 +248,7 @@ class FakeVipManager final : public VipManager {
   public:
     [[nodiscard]] VipOperationResult addVip(const std::string& address,
                                             const std::string& interface) override {
+        const auto dry_run = nextOperationDryRun();
         add_called = true;
         add_address = address;
         add_interface = interface;
@@ -252,15 +256,16 @@ class FakeVipManager final : public VipManager {
         return VipOperationResult{.request = {.type = VipOperationType::Add,
                                               .address = address,
                                               .interface = interface,
-                                              .dry_run = operation_dry_run},
+                                              .dry_run = dry_run},
                                   .success = add_success,
-                                  .dry_run = operation_dry_run,
+                                  .dry_run = dry_run,
                                   .commands = {},
                                   .error = add_error};
     }
 
     [[nodiscard]] VipOperationResult removeVip(const std::string& address,
                                                const std::string& interface) override {
+        const auto dry_run = nextOperationDryRun();
         remove_called = true;
         remove_address = address;
         remove_interface = interface;
@@ -268,15 +273,16 @@ class FakeVipManager final : public VipManager {
         return VipOperationResult{.request = {.type = VipOperationType::Remove,
                                               .address = address,
                                               .interface = interface,
-                                              .dry_run = operation_dry_run},
+                                              .dry_run = dry_run},
                                   .success = true,
-                                  .dry_run = operation_dry_run,
+                                  .dry_run = dry_run,
                                   .commands = {},
                                   .error = ""};
     }
 
     [[nodiscard]] VipOperationResult announceVip(const std::string& address,
                                                  const std::string& interface) override {
+        const auto dry_run = nextOperationDryRun();
         announce_called = true;
         announce_address = address;
         announce_interface = interface;
@@ -284,9 +290,9 @@ class FakeVipManager final : public VipManager {
         return VipOperationResult{.request = {.type = VipOperationType::Announce,
                                               .address = address,
                                               .interface = interface,
-                                              .dry_run = operation_dry_run},
+                                              .dry_run = dry_run},
                                   .success = announce_success,
-                                  .dry_run = operation_dry_run,
+                                  .dry_run = dry_run,
                                   .commands = {},
                                   .error = announce_error};
     }
@@ -301,11 +307,24 @@ class FakeVipManager final : public VipManager {
     std::string announce_address;
     std::string announce_interface;
     bool operation_dry_run = true;
+    std::vector<bool> operation_dry_run_results;
+    std::size_t operation_dry_run_results_index = 0;
     bool add_success = true;
     bool announce_success = true;
     std::string add_error;
     std::string announce_error;
     std::vector<VipOperationType> operations;
+
+  private:
+    [[nodiscard]] bool nextOperationDryRun() {
+        if (operation_dry_run_results_index < operation_dry_run_results.size()) {
+            const auto dry_run = operation_dry_run_results.at(operation_dry_run_results_index);
+            ++operation_dry_run_results_index;
+            return dry_run;
+        }
+
+        return operation_dry_run;
+    }
 };
 
 class FakeVipOwnershipProbe final : public VipOwnershipProbe {
@@ -1619,6 +1638,81 @@ void testDisabledHeartbeatTransportReportsDisabled(TestRunner& runner) {
                   "disabled heartbeat receive should echo timeout budget");
     runner.expect(receive_result.error == kHeartbeatTransportDisabledError,
                   "disabled heartbeat receive should report stable error");
+}
+
+void testUdpHeartbeatEndpointParsesIpv4HostPort(TestRunner& runner) {
+    const auto result = parseUdpHeartbeatEndpoint("127.0.0.1:7432");
+
+    runner.expect(result.endpoint.has_value(), "UDP heartbeat endpoint should parse IPv4 host:port");
+    runner.expect(result.error.empty(), "valid UDP heartbeat endpoint should not report error");
+    if (!result.endpoint.has_value()) {
+        return;
+    }
+
+    runner.expect(result.endpoint->host == "127.0.0.1",
+                  "UDP heartbeat endpoint should preserve host");
+    runner.expect(result.endpoint->port == 7432,
+                  "UDP heartbeat endpoint should preserve port");
+    runner.expect(result.endpoint->normalized_address == "127.0.0.1:7432",
+                  "UDP heartbeat endpoint should report normalized address");
+}
+
+void testUdpHeartbeatEndpointRejectsInvalidAddress(TestRunner& runner) {
+    const auto missing_port = parseUdpHeartbeatEndpoint("127.0.0.1");
+    runner.expect(!missing_port.endpoint.has_value(),
+                  "UDP heartbeat endpoint should reject missing port");
+    runner.expect(!missing_port.error.empty(),
+                  "UDP heartbeat endpoint should explain missing port");
+
+    const auto invalid_port = parseUdpHeartbeatEndpoint("127.0.0.1:abc");
+    runner.expect(!invalid_port.endpoint.has_value(),
+                  "UDP heartbeat endpoint should reject non-numeric port");
+    runner.expect(!invalid_port.error.empty(),
+                  "UDP heartbeat endpoint should explain invalid port");
+
+    const auto invalid_host = parseUdpHeartbeatEndpoint("example.invalid:7432");
+    runner.expect(!invalid_host.endpoint.has_value(),
+                  "UDP heartbeat endpoint should reject non-IPv4 host");
+    runner.expect(!invalid_host.error.empty(),
+                  "UDP heartbeat endpoint should explain invalid host");
+}
+
+void testUdpHeartbeatTransportSendsAndReceivesLoopback(TestRunner& runner) {
+    UdpHeartbeatTransport receiver{"127.0.0.1:0"};
+    UdpHeartbeatTransport sender{"127.0.0.1:0"};
+
+    const auto send_result = sender.send(receiver.localAddress(), "payload");
+    runner.expect(send_result.sent, "UDP heartbeat transport should send loopback datagram");
+    runner.expect(send_result.error.empty(),
+                  "UDP heartbeat transport send should not report loopback error");
+
+    const auto receive_result = receiver.receive(100);
+    runner.expect(receive_result.datagram.has_value(),
+                  "UDP heartbeat transport should receive loopback datagram");
+    runner.expect(!receive_result.timed_out,
+                  "UDP heartbeat transport loopback receive should not time out");
+    runner.expect(receive_result.error.empty(),
+                  "UDP heartbeat transport receive should not report loopback error");
+    if (!receive_result.datagram.has_value()) {
+        return;
+    }
+
+    runner.expect(receive_result.datagram->payload == "payload",
+                  "UDP heartbeat transport should preserve datagram payload");
+}
+
+void testUdpHeartbeatTransportReceiveTimeout(TestRunner& runner) {
+    UdpHeartbeatTransport receiver{"127.0.0.1:0"};
+
+    const auto receive_result = receiver.receive(1);
+
+    runner.expect(!receive_result.datagram.has_value(),
+                  "UDP heartbeat timeout should not return datagram");
+    runner.expect(receive_result.timed_out, "UDP heartbeat timeout should be reported");
+    runner.expect(receive_result.timeout_ms == 1,
+                  "UDP heartbeat timeout should preserve timeout budget");
+    runner.expect(receive_result.error.empty(),
+                  "UDP heartbeat timeout should not report an error");
 }
 
 LocalNodeStatus healthyLocalStatus() {
@@ -3105,6 +3199,78 @@ void testDaemonRuntimeLoopPeerExpiresAndAllowsPromotion(TestRunner& runner) {
                   "local promotion after peer expiry should add and announce VIP once");
 }
 
+void testDaemonRuntimeLoopRealMutationWaitsForHeartbeatWarmup(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    vip_manager.operation_dry_run_results = {true, true, false, false};
+    FakeVipOwnershipProbe ownership_probe;
+    ownership_probe.local_owner_results = {false, false};
+    FakeHeartbeatTransport heartbeat_transport;
+    heartbeat_transport.receive_results = {
+        HeartbeatReceiveResult{.datagram = std::nullopt,
+                               .timed_out = true,
+                               .timeout_ms = 0,
+                               .error = ""},
+        HeartbeatReceiveResult{.datagram = std::nullopt,
+                               .timed_out = true,
+                               .timeout_ms = 0,
+                               .error = ""},
+    };
+    auto config = validConfig();
+    config.mutation_safety.allow_network_mutation = true;
+
+    const auto result = runDaemonRuntimeLoopWithHeartbeat(
+        DaemonLoopRequest{.config = config,
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = false},
+                                                       .max_iterations = 2,
+                                                       .logical_iteration_elapsed_ms = 1000}},
+        vip_manager, ownership_probe, heartbeat_transport);
+
+    runner.expect(result.final_state == DaemonLifecycleState::Stopped,
+                  "real-mutation runtime should complete after heartbeat warmup");
+    runner.expect(result.vip_operations.size() == 4,
+                  "real-mutation runtime should record warmup and real VIP operations");
+    if (result.vip_operations.size() != 4) {
+        return;
+    }
+
+    runner.expect(result.vip_operations.at(0).dry_run,
+                  "first warmup VIP add should remain dry-run");
+    runner.expect(result.vip_operations.at(1).dry_run,
+                  "first warmup VIP announce should remain dry-run");
+    runner.expect(!result.vip_operations.at(2).dry_run,
+                  "second VIP add should allow real mutation after warmup");
+    runner.expect(!result.vip_operations.at(3).dry_run,
+                  "second VIP announce should allow real mutation after warmup");
+}
+
+void testDaemonRuntimeLoopRealMutationFailsClosedOnHeartbeatError(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    vip_manager.operation_dry_run = false;
+    FakeVipOwnershipProbe ownership_probe;
+    FakeHeartbeatTransport heartbeat_transport;
+    heartbeat_transport.send_result = FakeHeartbeatTransport::ConfiguredSendResult{
+        .sent = false, .error = "send failed"};
+    auto config = validConfig();
+    config.mutation_safety.allow_network_mutation = true;
+
+    const auto result = runDaemonRuntimeLoopWithHeartbeat(
+        DaemonLoopRequest{.config = config,
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = false},
+                                                       .max_iterations = 1}},
+        vip_manager, ownership_probe, heartbeat_transport);
+
+    runner.expect(result.final_state == DaemonLifecycleState::Faulted,
+                  "real-mutation runtime should fault on heartbeat error");
+    runner.expect(result.stop_reason == DaemonLoopStopReason::LifecycleFaulted,
+                  "real-mutation heartbeat error should stop as lifecycle fault");
+    runner.expect(result.detail == "heartbeat transport failed before real VIP mutation",
+                  "real-mutation heartbeat error should report stable detail");
+    runner.expect(result.vip_operations.empty(),
+                  "real-mutation heartbeat error should prevent VIP operations");
+    runner.expect(!vip_manager.add_called,
+                  "real-mutation heartbeat error should not call VIP add");
+}
+
 void testDaemonRuntimeLoopFailoverDecisionTracksElapsed(TestRunner& runner) {
     FakeVipManager vip_manager;
 
@@ -3894,6 +4060,18 @@ int main() {
     runner.run("disabled heartbeat transport reports disabled", [&runner] {
         testDisabledHeartbeatTransportReportsDisabled(runner);
     });
+    runner.run("UDP heartbeat endpoint parses IPv4 host port", [&runner] {
+        testUdpHeartbeatEndpointParsesIpv4HostPort(runner);
+    });
+    runner.run("UDP heartbeat endpoint rejects invalid address", [&runner] {
+        testUdpHeartbeatEndpointRejectsInvalidAddress(runner);
+    });
+    runner.run("UDP heartbeat transport sends and receives loopback", [&runner] {
+        testUdpHeartbeatTransportSendsAndReceivesLoopback(runner);
+    });
+    runner.run("UDP heartbeat transport receive timeout", [&runner] {
+        testUdpHeartbeatTransportReceiveTimeout(runner);
+    });
     runner.run("heartbeat loop sends local heartbeat to peers", [&runner] {
         testHeartbeatLoopSendsLocalHeartbeatToPeers(runner);
     });
@@ -4081,6 +4259,12 @@ int main() {
     });
     runner.run("daemon runtime loop peer expires and allows promotion", [&runner] {
         testDaemonRuntimeLoopPeerExpiresAndAllowsPromotion(runner);
+    });
+    runner.run("daemon runtime loop real mutation waits for heartbeat warmup", [&runner] {
+        testDaemonRuntimeLoopRealMutationWaitsForHeartbeatWarmup(runner);
+    });
+    runner.run("daemon runtime loop real mutation fails closed on heartbeat error", [&runner] {
+        testDaemonRuntimeLoopRealMutationFailsClosedOnHeartbeatError(runner);
     });
     runner.run("daemon runtime loop failover decision tracks elapsed", [&runner] {
         testDaemonRuntimeLoopFailoverDecisionTracksElapsed(runner);
