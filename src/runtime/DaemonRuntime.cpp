@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <map>
 #include <thread>
 #include <utility>
 
@@ -63,13 +64,54 @@ namespace {
                                             .expected_send_count = config.peers.size()};
 }
 
-[[nodiscard]] HeartbeatReceiveStateObservation evaluateHeartbeatReceiveState(
+struct RecentPeerStatus {
+    PeerStatus status;
+    std::int64_t last_seen_elapsed_ms = 0;
+};
+
+[[nodiscard]] bool peerIsConfigured(const Config& config, const std::string& node_id) {
+    return std::any_of(config.peers.begin(), config.peers.end(),
+                       [&node_id](const PeerConfig& peer) { return peer.id == node_id; });
+}
+
+void expirePeers(std::map<std::string, RecentPeerStatus>& recent_peers,
+                 const std::int64_t elapsed_ms,
+                 const std::int64_t timeout_ms) {
+    for (auto iter = recent_peers.begin(); iter != recent_peers.end();) {
+        if (elapsed_ms - iter->second.last_seen_elapsed_ms >= timeout_ms) {
+            iter = recent_peers.erase(iter);
+        } else {
+            ++iter;
+        }
+    }
+}
+
+[[nodiscard]] std::vector<PeerStatus> activePeerStatuses(
+    const std::map<std::string, RecentPeerStatus>& recent_peers) {
+    auto peers = std::vector<PeerStatus>{};
+    peers.reserve(recent_peers.size());
+    for (const auto& [_, recent] : recent_peers) {
+        peers.push_back(recent.status);
+    }
+
+    return peers;
+}
+
+[[nodiscard]] HeartbeatReceiveStateObservation heartbeatReceiveStateFromLoopResult(
     const std::size_t iteration_index,
-    const std::int64_t elapsed_ms) {
+    const std::int64_t elapsed_ms,
+    const HeartbeatLoopResult& heartbeat_result) {
     return HeartbeatReceiveStateObservation{.iteration_index = iteration_index,
                                             .elapsed_ms = elapsed_ms,
-                                            .receive_attempted = false,
-                                            .peer_status = std::nullopt};
+                                            .receive_attempted =
+                                                heartbeat_result.receive.attempted,
+                                            .timed_out = heartbeat_result.receive.timed_out,
+                                            .timeout_ms = heartbeat_result.receive.timeout_ms,
+                                            .peer_address =
+                                                heartbeat_result.receive.peer_address,
+                                            .peer_status =
+                                                heartbeat_result.receive.peer_status,
+                                            .error = heartbeat_result.receive.error};
 }
 
 [[nodiscard]] LocalNodeStatus localStatusFromOwnership(const Config& config,
@@ -109,12 +151,9 @@ namespace {
     const Config& config,
     const bool local_healthy,
     const bool local_vip_owner,
-    const HeartbeatReceiveStateObservation& receive_state) {
+    const HeartbeatReceiveStateObservation& receive_state,
+    std::vector<PeerStatus> peer_statuses) {
     auto local_status = localStatusFromOwnership(config, local_healthy, local_vip_owner);
-    auto peer_statuses = std::vector<PeerStatus>{};
-    if (receive_state.peer_status.has_value()) {
-        peer_statuses.push_back(*receive_state.peer_status);
-    }
 
     auto decision = decideFailoverAction(local_status, peer_statuses);
     return FailoverDecisionObservation{.iteration_index = receive_state.iteration_index,
@@ -232,7 +271,8 @@ DaemonLifecycleResult runDaemonLifecycleOnce(const DaemonLifecycleRequest& reque
 
 DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request,
                                       VipManager& vip_manager,
-                                      VipOwnershipProbe& ownership_probe) {
+                                      VipOwnershipProbe& ownership_probe,
+                                      HeartbeatTransport& heartbeat_transport) {
     auto result = DaemonLoopResult{.initial_state = request.initial_state,
                                    .final_state = request.initial_state,
                                    .stop_reason = DaemonLoopStopReason::MaxIterations,
@@ -241,6 +281,7 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request,
                                    .vip_operations = {},
                                    .health_schedules = {},
                                    .heartbeat_send_schedules = {},
+                                   .heartbeat_sends = {},
                                    .heartbeat_receive_states = {},
                                    .failover_decisions = {},
                                    .detail = "max iterations completed"};
@@ -252,6 +293,16 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request,
         return result;
     }
 
+    if (!request.config_prevalidated) {
+        result.validation_errors = request.config.validate();
+        if (!result.validation_errors.empty()) {
+            result.final_state = DaemonLifecycleState::Faulted;
+            result.stop_reason = DaemonLoopStopReason::LifecycleFaulted;
+            result.detail = "config validation failed";
+            return result;
+        }
+    }
+
     auto current_state = request.initial_state;
     auto elapsed_ms = std::int64_t{0};
     const auto iteration_elapsed_ms = effectiveIterationElapsedMs(request.options);
@@ -259,6 +310,11 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request,
     auto last_due_elapsed_ms = std::int64_t{0};
     auto heartbeat_send_was_due = false;
     auto last_heartbeat_send_due_elapsed_ms = std::int64_t{0};
+    auto recent_peers = std::map<std::string, RecentPeerStatus>{};
+    auto local_status = LocalNodeStatus{.node_id = request.config.node_id,
+                                        .priority = request.config.priority,
+                                        .healthy = true,
+                                        .state = NodeState::Backup};
     for (std::size_t index = 0; index < request.options.max_iterations; ++index) {
         if (request.shutdown_state != nullptr && request.shutdown_state->shutdownRequested()) {
             result.final_state = DaemonLifecycleState::Stopped;
@@ -267,14 +323,51 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request,
             return result;
         }
 
+        expirePeers(recent_peers, elapsed_ms, request.config.heartbeat.timeout_ms);
+
+        auto heartbeat_schedule = evaluateHeartbeatSendSchedule(
+            request.config, result.iterations_ran, elapsed_ms, heartbeat_send_was_due,
+            last_heartbeat_send_due_elapsed_ms);
+        auto heartbeat_receive_state =
+            HeartbeatReceiveStateObservation{.iteration_index = result.iterations_ran,
+                                             .elapsed_ms = elapsed_ms,
+                                             .receive_attempted = false,
+                                             .timed_out = false,
+                                             .timeout_ms = request.config.heartbeat.timeout_ms,
+                                             .peer_address = "",
+                                             .peer_status = std::nullopt,
+                                             .error = ""};
+        if (heartbeat_schedule.due) {
+            heartbeat_send_was_due = true;
+            last_heartbeat_send_due_elapsed_ms = elapsed_ms;
+
+            const auto heartbeat_result = runHeartbeatLoopOnce(
+                local_status, request.config.peers, request.config.heartbeat.timeout_ms,
+                heartbeat_transport);
+            result.heartbeat_sends.insert(result.heartbeat_sends.end(),
+                                          heartbeat_result.sends.begin(),
+                                          heartbeat_result.sends.end());
+            heartbeat_receive_state = heartbeatReceiveStateFromLoopResult(
+                result.iterations_ran, elapsed_ms, heartbeat_result);
+            if (heartbeat_result.receive.peer_status.has_value() &&
+                peerIsConfigured(request.config,
+                                 heartbeat_result.receive.peer_status->node_id)) {
+                recent_peers[heartbeat_result.receive.peer_status->node_id] =
+                    RecentPeerStatus{.status = *heartbeat_result.receive.peer_status,
+                                     .last_seen_elapsed_ms = elapsed_ms};
+            }
+        }
+        expirePeers(recent_peers, elapsed_ms, request.config.heartbeat.timeout_ms);
+
+        const auto peer_statuses = activePeerStatuses(recent_peers);
         const auto lifecycle_result = runDaemonLifecycleOnce(
             DaemonLifecycleRequest{.config = request.config,
                                    .options = request.options.runtime_options,
                                    .initial_state = current_state,
                                    .shutdown_state = request.shutdown_state,
-                                   .config_prevalidated = request.config_prevalidated,
+                                   .config_prevalidated = true,
                                    .local_healthy = true,
-                                   .peer_statuses = {}},
+                                   .peer_statuses = peer_statuses},
             vip_manager, ownership_probe);
 
         current_state = lifecycle_result.final_state;
@@ -288,6 +381,8 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request,
                                      lifecycle_result.vip_operations.end());
 
         if (lifecycle_result.iteration_ran) {
+            local_status = lifecycle_result.local_status;
+
             auto health_schedule =
                 evaluateHealthSchedule(request.config, result.iterations_ran, elapsed_ms,
                                        health_check_was_due, last_due_elapsed_ms);
@@ -297,23 +392,14 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request,
             }
             result.health_schedules.push_back(health_schedule);
 
-            auto heartbeat_schedule = evaluateHeartbeatSendSchedule(
-                request.config, result.iterations_ran, elapsed_ms, heartbeat_send_was_due,
-                last_heartbeat_send_due_elapsed_ms);
-            if (heartbeat_schedule.due) {
-                heartbeat_send_was_due = true;
-                last_heartbeat_send_due_elapsed_ms = elapsed_ms;
-            }
             result.heartbeat_send_schedules.push_back(heartbeat_schedule);
 
-            auto heartbeat_receive_state =
-                evaluateHeartbeatReceiveState(result.iterations_ran, elapsed_ms);
             result.heartbeat_receive_states.push_back(heartbeat_receive_state);
             if (lifecycle_result.final_state != DaemonLifecycleState::Faulted) {
                 result.failover_decisions.push_back(
                     evaluateFailoverDecision(request.config, lifecycle_result.local_status.healthy,
                                              lifecycle_result.local_vip_owner,
-                                             heartbeat_receive_state));
+                                             heartbeat_receive_state, peer_statuses));
             }
             ++result.iterations_ran;
         }

@@ -1,5 +1,6 @@
 #include "api/LocalApi.hpp"
 #include "config/Config.hpp"
+#include "heartbeat/HeartbeatTransport.hpp"
 #include "platform/linux/LinuxVipOwnershipProbe.hpp"
 #include "platform/linux/LinuxVipManager.hpp"
 #include "runtime/DaemonRuntime.hpp"
@@ -101,32 +102,33 @@ int main(int argc, char** argv) {
             .allow_network_mutation = config.mutation_safety.allow_network_mutation,
             .dry_run = dry_run}};
         easyfailover::LinuxVipOwnershipProbe ownership_probe;
+        easyfailover::DisabledHeartbeatTransport heartbeat_transport;
         auto shutdown_state = easyfailover::ShutdownSignalState{};
         easyfailover::pollShutdownSignals(shutdown_state);
-        const auto lifecycle_result = easyfailover::runDaemonLifecycleOnce(
-            easyfailover::DaemonLifecycleRequest{
+        const auto loop_result = easyfailover::runDaemonRuntimeLoop(
+            easyfailover::DaemonLoopRequest{
                 .config = config,
-                .options = easyfailover::DaemonRuntimeOptions{.dry_run = dry_run},
+                .options = easyfailover::DaemonLoopOptions{
+                    .runtime_options = easyfailover::DaemonRuntimeOptions{.dry_run = dry_run},
+                    .max_iterations = 1},
                 .initial_state = easyfailover::DaemonLifecycleState::Stopped,
                 .shutdown_state = &shutdown_state,
-                .config_prevalidated = true,
-                .local_healthy = true,
-                .peer_statuses = {}},
-            vip_manager, ownership_probe);
-        spdlog::info("{}", easyfailover::formatRuntimeLifecycleEvent(
-                              lifecycle_result,
+                .config_prevalidated = true},
+            vip_manager, ownership_probe, heartbeat_transport);
+        spdlog::info("{}", easyfailover::formatRuntimeLoopEvent(
+                              loop_result,
                               easyfailover::RuntimeLogContext{.node_id = config.node_id,
                                                               .dry_run = dry_run}));
-        for (std::size_t index = 0; index < lifecycle_result.vip_operations.size(); ++index) {
+        for (std::size_t index = 0; index < loop_result.vip_operations.size(); ++index) {
             spdlog::info("{}",
                          easyfailover::formatRuntimeVipOperationEvent(
-                             lifecycle_result.vip_operations.at(index), index));
+                             loop_result.vip_operations.at(index), index));
         }
-        if (!lifecycle_result.validation_errors.empty()) {
-            logValidationErrors(lifecycle_result.validation_errors);
+        if (!loop_result.validation_errors.empty()) {
+            logValidationErrors(loop_result.validation_errors);
             return EXIT_FAILURE;
         }
-        if (lifecycle_result.final_state == easyfailover::DaemonLifecycleState::Faulted) {
+        if (loop_result.final_state == easyfailover::DaemonLifecycleState::Faulted) {
             return EXIT_FAILURE;
         }
 

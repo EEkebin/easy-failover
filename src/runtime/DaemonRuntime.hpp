@@ -3,6 +3,7 @@
 #include "config/Config.hpp"
 #include "core/FailoverDecision.hpp"
 #include "health/HealthCheck.hpp"
+#include "heartbeat/HeartbeatLoop.hpp"
 #include "platform/VipManager.hpp"
 #include "platform/VipOwnershipProbe.hpp"
 #include "runtime/ShutdownSignal.hpp"
@@ -98,7 +99,11 @@ struct HeartbeatReceiveStateObservation {
     std::size_t iteration_index = 0;
     std::int64_t elapsed_ms = 0;
     bool receive_attempted = false;
+    bool timed_out = false;
+    std::int64_t timeout_ms = 0;
+    std::string peer_address;
     std::optional<PeerStatus> peer_status;
+    std::string error;
 };
 
 struct FailoverDecisionObservation {
@@ -126,6 +131,7 @@ struct DaemonLoopResult {
     std::vector<VipOperationResult> vip_operations;
     std::vector<HealthScheduleObservation> health_schedules;
     std::vector<HeartbeatSendScheduleObservation> heartbeat_send_schedules;
+    std::vector<HeartbeatSendObservation> heartbeat_sends;
     std::vector<HeartbeatReceiveStateObservation> heartbeat_receive_states;
     std::vector<FailoverDecisionObservation> failover_decisions;
     std::string detail;
@@ -151,6 +157,7 @@ struct DaemonLoopResult {
 
 [[nodiscard]] DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request,
                                                    VipManager& vip_manager,
-                                                   VipOwnershipProbe& ownership_probe);
+                                                   VipOwnershipProbe& ownership_probe,
+                                                   HeartbeatTransport& heartbeat_transport);
 
 } // namespace easyfailover

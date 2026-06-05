@@ -17,6 +17,9 @@ struct RuntimeLogContext {
     const DaemonLifecycleResult& result,
     const RuntimeLogContext& context);
 
+[[nodiscard]] std::string formatRuntimeLoopEvent(const DaemonLoopResult& result,
+                                                 const RuntimeLogContext& context);
+
 [[nodiscard]] std::string formatRuntimeVipOperationEvent(
     const VipOperationResult& result,
     std::size_t zero_based_index);
