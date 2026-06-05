@@ -75,6 +75,27 @@ std::string formatRuntimeLifecycleEvent(const DaemonLifecycleResult& result,
     return output.str();
 }
 
+std::string formatRuntimeLoopEvent(const DaemonLoopResult& result,
+                                   const RuntimeLogContext& context) {
+    auto output = std::ostringstream{};
+    output << "event=daemon_loop_result"
+           << " node_id=" << quotedValue(context.node_id)
+           << " initial_state=" << toString(result.initial_state)
+           << " final_state=" << toString(result.final_state)
+           << " stop_reason=" << toString(result.stop_reason)
+           << " iterations_ran=" << result.iterations_ran
+           << " dry_run=" << boolValue(context.dry_run)
+           << " validation_errors=" << result.validation_errors.size()
+           << " vip_operations=" << result.vip_operations.size()
+           << " health_schedules=" << result.health_schedules.size()
+           << " heartbeat_send_schedules=" << result.heartbeat_send_schedules.size()
+           << " heartbeat_sends=" << result.heartbeat_sends.size()
+           << " heartbeat_receive_states=" << result.heartbeat_receive_states.size()
+           << " failover_decisions=" << result.failover_decisions.size()
+           << " detail=" << quotedValue(result.detail);
+    return output.str();
+}
+
 std::string formatRuntimeVipOperationEvent(const VipOperationResult& result,
                                            const std::size_t zero_based_index) {
     auto output = std::ostringstream{};

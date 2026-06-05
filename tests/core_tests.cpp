@@ -73,6 +73,7 @@ using easyfailover::VipOperationType;
 using easyfailover::VipOperationResult;
 using easyfailover::VipManager;
 using easyfailover::VipOwnershipProbe;
+using easyfailover::VipOwnershipProbeRequest;
 using easyfailover::VipOwnershipProbeResult;
 using easyfailover::buildLocalApiConfigResponse;
 using easyfailover::buildLocalApiConfigValidateResponse;
@@ -85,6 +86,7 @@ using easyfailover::decideFailoverAction;
 using easyfailover::evaluateLocalApiStartup;
 using easyfailover::evaluateHealthCheck;
 using easyfailover::formatRuntimeLifecycleEvent;
+using easyfailover::formatRuntimeLoopEvent;
 using easyfailover::formatRuntimeVipOperationEvent;
 using easyfailover::parseHeartbeatMessage;
 using easyfailover::peerStatusFromHeartbeat;
@@ -300,9 +302,16 @@ class FakeVipOwnershipProbe final : public VipOwnershipProbe {
         was_called = true;
         observed_address = address;
         observed_interface = interface;
+        observed_requests.push_back(VipOwnershipProbeRequest{.address = address,
+                                                             .interface = interface});
+        auto observed_local_owner = local_owner;
+        if (local_owner_results_index < local_owner_results.size()) {
+            observed_local_owner = local_owner_results.at(local_owner_results_index);
+            ++local_owner_results_index;
+        }
         return VipOwnershipProbeResult{.request = {.address = address, .interface = interface},
                                        .success = success,
-                                       .local_owner = local_owner,
+                                       .local_owner = observed_local_owner,
                                        .commands = {},
                                        .error = error};
     }
@@ -313,6 +322,9 @@ class FakeVipOwnershipProbe final : public VipOwnershipProbe {
     bool was_called = false;
     std::string observed_address;
     std::string observed_interface;
+    std::vector<VipOwnershipProbeRequest> observed_requests;
+    std::vector<bool> local_owner_results;
+    std::size_t local_owner_results_index = 0;
 };
 
 [[nodiscard]] DaemonLifecycleResult runDaemonLifecycleOnce(
@@ -2764,6 +2776,53 @@ void testDaemonRuntimeLoopReceivedPeerHeartbeatBlocksPromotion(TestRunner& runne
                   "higher-priority peer heartbeat should block VIP add");
 }
 
+void testDaemonRuntimeLoopSendsLatestLifecycleState(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    FakeVipOwnershipProbe ownership_probe;
+    ownership_probe.local_owner_results = {true, true};
+    FakeHeartbeatTransport heartbeat_transport;
+    heartbeat_transport.receive_results = {
+        HeartbeatReceiveResult{.datagram = std::nullopt,
+                               .timed_out = true,
+                               .timeout_ms = 0,
+                               .error = ""},
+        HeartbeatReceiveResult{.datagram = std::nullopt,
+                               .timed_out = true,
+                               .timeout_ms = 0,
+                               .error = ""},
+    };
+    auto config = validConfig();
+    config.heartbeat.interval_ms = 1;
+
+    const auto result = runDaemonRuntimeLoopWithHeartbeat(
+        DaemonLoopRequest{.config = config,
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 2,
+                                                       .logical_iteration_elapsed_ms = 1}},
+        vip_manager, ownership_probe, heartbeat_transport);
+
+    runner.expect(result.iterations_ran == 2,
+                  "heartbeat state regression should run two lifecycle iterations");
+    runner.expect(heartbeat_transport.sent_datagrams.size() == 2,
+                  "runtime loop should send one heartbeat per configured peer per due send");
+    if (heartbeat_transport.sent_datagrams.size() != 2) {
+        return;
+    }
+
+    const auto first = parseHeartbeatMessage(heartbeat_transport.sent_datagrams.at(0).payload);
+    const auto second = parseHeartbeatMessage(heartbeat_transport.sent_datagrams.at(1).payload);
+    runner.expect(first.message.has_value(), "first runtime heartbeat should parse");
+    runner.expect(second.message.has_value(), "second runtime heartbeat should parse");
+    if (!first.message.has_value() || !second.message.has_value()) {
+        return;
+    }
+
+    runner.expect(first.message->state == NodeState::Backup,
+                  "first runtime heartbeat should use conservative backup default");
+    runner.expect(second.message->state == NodeState::Master,
+                  "second runtime heartbeat should advertise latest lifecycle master state");
+}
+
 void testDaemonRuntimeLoopMalformedHeartbeatDoesNotAffectOwnership(TestRunner& runner) {
     FakeVipManager vip_manager;
     FakeVipOwnershipProbe ownership_probe;
@@ -3054,6 +3113,37 @@ void testRuntimeLifecycleLogEventIncludesStableFields(TestRunner& runner) {
     runner.expect(event.find("detail=\"dry-run lifecycle iteration completed\"") !=
                       std::string::npos,
                   "runtime lifecycle event should include quoted detail");
+}
+
+void testRuntimeLoopLogEventIncludesStableFields(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = validConfig(),
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 1}},
+        vip_manager);
+
+    const auto event =
+        formatRuntimeLoopEvent(result, RuntimeLogContext{.node_id = "node-a", .dry_run = true});
+
+    runner.expect(event.find("event=daemon_loop_result") != std::string::npos,
+                  "runtime loop event should include event name");
+    runner.expect(event.find("node_id=\"node-a\"") != std::string::npos,
+                  "runtime loop event should include node id");
+    runner.expect(event.find("initial_state=stopped") != std::string::npos,
+                  "runtime loop event should include initial state");
+    runner.expect(event.find("final_state=stopped") != std::string::npos,
+                  "runtime loop event should include final state");
+    runner.expect(event.find("stop_reason=max_iterations") != std::string::npos,
+                  "runtime loop event should include stop reason");
+    runner.expect(event.find("iterations_ran=1") != std::string::npos,
+                  "runtime loop event should include iteration count");
+    runner.expect(event.find("dry_run=true") != std::string::npos,
+                  "runtime loop event should include dry-run flag");
+    runner.expect(event.find("heartbeat_sends=1") != std::string::npos,
+                  "runtime loop event should include heartbeat send count");
+    runner.expect(event.find("detail=\"max iterations completed\"") != std::string::npos,
+                  "runtime loop event should include quoted detail");
 }
 
 void testRuntimeVipOperationLogEventIncludesStableFields(TestRunner& runner) {
@@ -3694,6 +3784,9 @@ int main() {
     runner.run("daemon runtime loop received peer heartbeat blocks promotion", [&runner] {
         testDaemonRuntimeLoopReceivedPeerHeartbeatBlocksPromotion(runner);
     });
+    runner.run("daemon runtime loop sends latest lifecycle state", [&runner] {
+        testDaemonRuntimeLoopSendsLatestLifecycleState(runner);
+    });
     runner.run("daemon runtime loop malformed heartbeat does not affect ownership", [&runner] {
         testDaemonRuntimeLoopMalformedHeartbeatDoesNotAffectOwnership(runner);
     });
@@ -3733,6 +3826,9 @@ int main() {
     });
     runner.run("runtime lifecycle log event includes stable fields", [&runner] {
         testRuntimeLifecycleLogEventIncludesStableFields(runner);
+    });
+    runner.run("runtime loop log event includes stable fields", [&runner] {
+        testRuntimeLoopLogEventIncludesStableFields(runner);
     });
     runner.run("runtime VIP operation log event includes stable fields", [&runner] {
         testRuntimeVipOperationLogEventIncludesStableFields(runner);

@@ -311,6 +311,10 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request,
     auto heartbeat_send_was_due = false;
     auto last_heartbeat_send_due_elapsed_ms = std::int64_t{0};
     auto recent_peers = std::map<std::string, RecentPeerStatus>{};
+    auto local_status = LocalNodeStatus{.node_id = request.config.node_id,
+                                        .priority = request.config.priority,
+                                        .healthy = true,
+                                        .state = NodeState::Backup};
     for (std::size_t index = 0; index < request.options.max_iterations; ++index) {
         if (request.shutdown_state != nullptr && request.shutdown_state->shutdownRequested()) {
             result.final_state = DaemonLifecycleState::Stopped;
@@ -338,11 +342,7 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request,
             last_heartbeat_send_due_elapsed_ms = elapsed_ms;
 
             const auto heartbeat_result = runHeartbeatLoopOnce(
-                LocalNodeStatus{.node_id = request.config.node_id,
-                                .priority = request.config.priority,
-                                .healthy = true,
-                                .state = NodeState::Backup},
-                request.config.peers, request.config.heartbeat.timeout_ms,
+                local_status, request.config.peers, request.config.heartbeat.timeout_ms,
                 heartbeat_transport);
             result.heartbeat_sends.insert(result.heartbeat_sends.end(),
                                           heartbeat_result.sends.begin(),
@@ -381,6 +381,8 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request,
                                      lifecycle_result.vip_operations.end());
 
         if (lifecycle_result.iteration_ran) {
+            local_status = lifecycle_result.local_status;
+
             auto health_schedule =
                 evaluateHealthSchedule(request.config, result.iterations_ran, elapsed_ms,
                                        health_check_was_due, last_due_elapsed_ms);
