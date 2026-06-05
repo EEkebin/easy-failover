@@ -2,6 +2,7 @@
 #include "config/Config.hpp"
 #include "health/HealthCheck.hpp"
 #include "heartbeat/HeartbeatTransport.hpp"
+#include "heartbeat/UdpHeartbeatTransport.hpp"
 #include "platform/linux/LinuxVipOwnershipProbe.hpp"
 #include "platform/linux/LinuxVipManager.hpp"
 #include "runtime/DaemonRuntime.hpp"
@@ -89,11 +90,6 @@ int main(int argc, char** argv) {
             return EXIT_FAILURE;
         }
 
-        if (!dry_run && config.mutation_safety.allow_network_mutation) {
-            spdlog::error("real VIP mutation requires an enabled heartbeat transport");
-            return EXIT_FAILURE;
-        }
-
         const auto api_startup = easyfailover::evaluateLocalApiStartup(config.api);
         if (api_startup.state == easyfailover::LocalApiStartupState::Rejected) {
             spdlog::error("local API startup rejected bind={} detail=\"{}\"", api_startup.bind,
@@ -115,7 +111,7 @@ int main(int argc, char** argv) {
             .allow_network_mutation = config.mutation_safety.allow_network_mutation,
             .dry_run = dry_run}};
         easyfailover::LinuxVipOwnershipProbe ownership_probe;
-        easyfailover::DisabledHeartbeatTransport heartbeat_transport;
+        easyfailover::UdpHeartbeatTransport heartbeat_transport{config.heartbeat.bind};
         auto shutdown_state = easyfailover::ShutdownSignalState{};
         easyfailover::pollShutdownSignals(shutdown_state);
         const auto loop_result = easyfailover::runDaemonRuntimeLoop(
