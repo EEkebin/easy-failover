@@ -10,11 +10,22 @@ ExecStart=@EASY_FAILOVER_SYSTEMD_BINDIR@/easy-failover --config @EASY_FAILOVER_S
 Restart=always
 RestartSec=2s
 
-# TODO: Add least-privilege hardening once real VIP movement exists.
-# TODO: See docs/linux-capabilities.md before changing granted capabilities.
-# TODO: Use CAP_NET_ADMIN and CAP_NET_RAW instead of broad root privileges where possible.
-# TODO: Evaluate ProtectSystem=strict with explicit writable paths.
-# TODO: Enable NoNewPrivileges=true after validating required capabilities.
+# Baseline hardening keeps host networking available for VIP and heartbeat operations.
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK AF_PACKET
+SystemCallArchitectures=native
 
 [Install]
 WantedBy=multi-user.target

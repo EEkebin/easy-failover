@@ -34,22 +34,32 @@ capabilities required for the selected backend and packet announcement method.
 
 ## systemd Guidance
 
-The packaged unit intentionally still runs as `root` and only contains hardening TODOs. Do not grant
-or tighten capabilities in the unit until runtime ownership logic is wired and tested.
-
-When real VIP movement is enabled for packaged deployments, the unit should be revisited with
-settings such as:
+The packaged unit still runs as `root`, but it constrains the service with baseline hardening and
+the capabilities expected by the current command backend:
 
 ```ini
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
 NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK AF_PACKET
+SystemCallArchitectures=native
 ```
 
-Those settings must be validated with the exact command backend, distribution packages, and service
-user. Some `arping` builds may use file capabilities or setuid behavior differently, so the final
-packaging pass should test the actual target distributions rather than assuming all builds behave
-the same way.
+The unit intentionally does not use `PrivateNetwork=true`, because the daemon must observe host
+networking and may need to manage host VIP addresses. These settings should still be validated with
+the exact command backend, distribution packages, and service user. Some `arping` builds may use file
+capabilities or setuid behavior differently, so distro packaging should test the actual target
+distributions rather than assuming all builds behave the same way.
 
 ## Safety Requirements
 
