@@ -188,14 +188,21 @@ class FakeHeartbeatTransport final : public HeartbeatTransport {
     [[nodiscard]] HeartbeatReceiveResult receive(const std::int64_t timeout_ms) override {
         receive_called = true;
         observed_timeout_ms = timeout_ms;
-        return HeartbeatReceiveResult{.datagram = receive_result.datagram,
-                                      .timed_out = receive_result.timed_out,
+        auto configured = receive_result;
+        if (receive_result_index < receive_results.size()) {
+            configured = receive_results.at(receive_result_index);
+            ++receive_result_index;
+        }
+        return HeartbeatReceiveResult{.datagram = configured.datagram,
+                                      .timed_out = configured.timed_out,
                                       .timeout_ms = timeout_ms,
-                                      .error = receive_result.error};
+                                      .error = configured.error};
     }
 
     ConfiguredSendResult send_result;
     HeartbeatReceiveResult receive_result;
+    std::vector<HeartbeatReceiveResult> receive_results;
+    std::size_t receive_result_index = 0;
     bool send_called = false;
     bool receive_called = false;
     std::vector<HeartbeatDatagram> sent_datagrams;
@@ -319,7 +326,18 @@ class FakeVipOwnershipProbe final : public VipOwnershipProbe {
     const DaemonLoopRequest& request,
     VipManager& vip_manager) {
     auto ownership_probe = FakeVipOwnershipProbe{};
-    return easyfailover::runDaemonRuntimeLoop(request, vip_manager, ownership_probe);
+    auto heartbeat_transport = DisabledHeartbeatTransport{};
+    return easyfailover::runDaemonRuntimeLoop(request, vip_manager, ownership_probe,
+                                             heartbeat_transport);
+}
+
+[[nodiscard]] easyfailover::DaemonLoopResult runDaemonRuntimeLoopWithHeartbeat(
+    const DaemonLoopRequest& request,
+    VipManager& vip_manager,
+    VipOwnershipProbe& ownership_probe,
+    HeartbeatTransport& heartbeat_transport) {
+    return easyfailover::runDaemonRuntimeLoop(request, vip_manager, ownership_probe,
+                                             heartbeat_transport);
 }
 
 Config validConfig() {
@@ -2598,8 +2616,10 @@ void testDaemonRuntimeLoopRecordsHeartbeatReceiveState(TestRunner& runner) {
                   "first heartbeat receive state observation should report iteration index");
     runner.expect(result.heartbeat_receive_states.at(0).elapsed_ms == 0,
                   "first heartbeat receive state observation should start at zero elapsed time");
-    runner.expect(!result.heartbeat_receive_states.at(0).receive_attempted,
-                  "model-only runtime should not attempt heartbeat receive");
+    runner.expect(result.heartbeat_receive_states.at(0).receive_attempted,
+                  "daemon runtime loop should attempt heartbeat receive through transport");
+    runner.expect(result.heartbeat_receive_states.at(0).error == kHeartbeatTransportDisabledError,
+                  "default disabled heartbeat transport should report disabled receive");
 }
 
 void testDaemonRuntimeLoopHeartbeatReceiveStateDefaultsNoPeerStatus(TestRunner& runner) {
@@ -2706,6 +2726,119 @@ void testDaemonRuntimeLoopFailoverDecisionDefaultsBecomeMaster(TestRunner& runne
                   "model-only failover decision should promote local backup without live peers");
     runner.expect(decision.selected_master == "node-a",
                   "model-only failover decision should select local node as master");
+}
+
+void testDaemonRuntimeLoopReceivedPeerHeartbeatBlocksPromotion(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    FakeVipOwnershipProbe ownership_probe;
+    ownership_probe.local_owner = false;
+    FakeHeartbeatTransport heartbeat_transport;
+    const auto peer_payload = serializeHeartbeatMessage(HeartbeatMessage{.node_id = "node-b",
+                                                                         .priority = 200,
+                                                                         .healthy = true,
+                                                                         .state = NodeState::Master});
+    heartbeat_transport.receive_result =
+        HeartbeatReceiveResult{.datagram = HeartbeatDatagram{.peer_address = "10.0.0.12:7432",
+                                                             .payload = peer_payload},
+                               .timed_out = false,
+                               .timeout_ms = 0,
+                               .error = ""};
+
+    const auto result = runDaemonRuntimeLoopWithHeartbeat(
+        DaemonLoopRequest{.config = validConfig(),
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 1}},
+        vip_manager, ownership_probe, heartbeat_transport);
+
+    runner.expect(result.heartbeat_sends.size() == validConfig().peers.size(),
+                  "heartbeat-driven runtime should send heartbeat to configured peers");
+    runner.expect(result.heartbeat_receive_states.at(0).receive_attempted,
+                  "heartbeat-driven runtime should attempt receive on due heartbeat");
+    runner.expect(result.heartbeat_receive_states.at(0).peer_status.has_value(),
+                  "received heartbeat should be recorded as peer status");
+    runner.expect(result.failover_decisions.at(0).peer_statuses.size() == 1,
+                  "received heartbeat should feed failover peer inputs");
+    runner.expect(result.failover_decisions.at(0).decision.action == FailoverAction::StayBackup,
+                  "higher-priority peer heartbeat should keep local node backup");
+    runner.expect(!vip_manager.add_called,
+                  "higher-priority peer heartbeat should block VIP add");
+}
+
+void testDaemonRuntimeLoopMalformedHeartbeatDoesNotAffectOwnership(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    FakeVipOwnershipProbe ownership_probe;
+    ownership_probe.local_owner = false;
+    FakeHeartbeatTransport heartbeat_transport;
+    heartbeat_transport.receive_result =
+        HeartbeatReceiveResult{.datagram = HeartbeatDatagram{.peer_address = "10.0.0.12:7432",
+                                                             .payload = "not toml"},
+                               .timed_out = false,
+                               .timeout_ms = 0,
+                               .error = ""};
+
+    const auto result = runDaemonRuntimeLoopWithHeartbeat(
+        DaemonLoopRequest{.config = validConfig(),
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 1}},
+        vip_manager, ownership_probe, heartbeat_transport);
+
+    runner.expect(!result.heartbeat_receive_states.at(0).peer_status.has_value(),
+                  "malformed heartbeat should not produce peer status");
+    runner.expect(!result.heartbeat_receive_states.at(0).error.empty(),
+                  "malformed heartbeat should preserve parse error");
+    runner.expect(result.failover_decisions.at(0).peer_statuses.empty(),
+                  "malformed heartbeat should not feed failover peer inputs");
+    runner.expect(result.failover_decisions.at(0).decision.action == FailoverAction::BecomeMaster,
+                  "malformed heartbeat should not block local promotion");
+    runner.expect(vip_manager.add_called,
+                  "local node should still request VIP add without valid peer heartbeat");
+}
+
+void testDaemonRuntimeLoopPeerExpiresAndAllowsPromotion(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    FakeVipOwnershipProbe ownership_probe;
+    ownership_probe.local_owner = false;
+    FakeHeartbeatTransport heartbeat_transport;
+    const auto peer_payload = serializeHeartbeatMessage(HeartbeatMessage{.node_id = "node-b",
+                                                                         .priority = 200,
+                                                                         .healthy = true,
+                                                                         .state = NodeState::Master});
+    heartbeat_transport.receive_results = {
+        HeartbeatReceiveResult{.datagram = HeartbeatDatagram{.peer_address = "10.0.0.12:7432",
+                                                             .payload = peer_payload},
+                               .timed_out = false,
+                               .timeout_ms = 0,
+                               .error = ""},
+        HeartbeatReceiveResult{.datagram = std::nullopt,
+                               .timed_out = true,
+                               .timeout_ms = 0,
+                               .error = ""},
+        HeartbeatReceiveResult{.datagram = std::nullopt,
+                               .timed_out = true,
+                               .timeout_ms = 0,
+                               .error = ""},
+    };
+    auto config = validConfig();
+    config.heartbeat.interval_ms = 1000;
+    config.heartbeat.timeout_ms = 3000;
+
+    const auto result = runDaemonRuntimeLoopWithHeartbeat(
+        DaemonLoopRequest{.config = config,
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 3,
+                                                       .logical_iteration_elapsed_ms = 2000}},
+        vip_manager, ownership_probe, heartbeat_transport);
+
+    runner.expect(result.failover_decisions.at(0).decision.action == FailoverAction::StayBackup,
+                  "fresh higher-priority peer should block local promotion");
+    runner.expect(result.failover_decisions.at(1).decision.action == FailoverAction::StayBackup,
+                  "timed-out receive should not clear peer before expiry");
+    runner.expect(result.failover_decisions.at(2).decision.action == FailoverAction::BecomeMaster,
+                  "expired peer should allow local promotion");
+    runner.expect(vip_manager.operations ==
+                      std::vector<VipOperationType>{VipOperationType::Add,
+                                                    VipOperationType::Announce},
+                  "local promotion after peer expiry should add and announce VIP once");
 }
 
 void testDaemonRuntimeLoopFailoverDecisionTracksElapsed(TestRunner& runner) {
@@ -3557,6 +3690,15 @@ int main() {
     });
     runner.run("daemon runtime loop failover decision defaults become master", [&runner] {
         testDaemonRuntimeLoopFailoverDecisionDefaultsBecomeMaster(runner);
+    });
+    runner.run("daemon runtime loop received peer heartbeat blocks promotion", [&runner] {
+        testDaemonRuntimeLoopReceivedPeerHeartbeatBlocksPromotion(runner);
+    });
+    runner.run("daemon runtime loop malformed heartbeat does not affect ownership", [&runner] {
+        testDaemonRuntimeLoopMalformedHeartbeatDoesNotAffectOwnership(runner);
+    });
+    runner.run("daemon runtime loop peer expires and allows promotion", [&runner] {
+        testDaemonRuntimeLoopPeerExpiresAndAllowsPromotion(runner);
     });
     runner.run("daemon runtime loop failover decision tracks elapsed", [&runner] {
         testDaemonRuntimeLoopFailoverDecisionTracksElapsed(runner);
