@@ -7,13 +7,25 @@ easy-failover is a lightweight C++ Linux agent for automatic virtual IP failover
 This repository is named `easy-failover`, and the binary is named `easy-failover`.
 The project is licensed under Apache-2.0.
 
+## Contents
+
+- [Status](#status)
+- [Platform Targets](#platform-targets)
+- [Build](#build)
+- [Install](#install)
+- [Run](#run)
+- [Runtime Logging](#runtime-logging)
+- [Configuration](#configuration)
+- [Automation](#automation)
+- [Contribution Workflow](#contribution-workflow)
+- [Optional Dashboard](#optional-dashboard)
+
 ## Status
 
-early WIP. The current codebase is a compiling project skeleton with CLI parsing, logging,
-TOML config parsing, config validation, basic node state types, a simple election helper, and
-non-mutating Linux VIP command construction. It includes a one-iteration daemon lifecycle skeleton,
-and minimal SIGINT/SIGTERM shutdown observation, but it does not move VIPs, run heartbeat
-networking, or run a real daemon loop yet.
+early WIP. The current codebase builds and tests a Linux VIP failover agent with CLI parsing,
+logging, TOML config loading and validation, heartbeat transport integration, guarded VIP
+operations, a runtime decision loop, and a disabled-by-default read-only local API. Real VIP
+movement is still opt-in and should be validated in a lab before production use.
 
 ## Platform Targets
 
@@ -53,6 +65,94 @@ cmake -S . -B build -DCMAKE_INSTALL_SYSCONFDIR=/etc
 DESTDIR="$PWD/stage-root" cmake --install build --prefix /usr
 ```
 
+## Install
+
+easy-failover does not publish distro packages yet. Install from source with CMake or stage the
+install tree and package it yourself. The install rules place the binary, example config, systemd
+unit, README, license, and docs using the layout described in
+[`docs/install-package-layout.md`](docs/install-package-layout.md).
+
+Install build dependencies with your distro package manager. Package names vary, but a typical
+Linux build host needs:
+
+- a C++23-capable compiler such as GCC or Clang;
+- CMake;
+- `make` or Ninja;
+- Git;
+- `iproute2` and `arping` for hosts that will test real VIP movement.
+
+For a production-style source install under `/usr`, with configuration under `/etc`, use:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_SYSCONFDIR=/etc
+cmake --build build
+sudo cmake --install build --prefix /usr
+```
+
+The install step stages an example config, not an active config:
+
+```text
+/etc/easy-failover/config.example.toml
+```
+
+Create the active config yourself and edit it for the node before starting the daemon:
+
+```sh
+sudo install -d -m 0755 /etc/easy-failover
+sudo cp /etc/easy-failover/config.example.toml /etc/easy-failover/config.toml
+sudo editor /etc/easy-failover/config.toml
+easy-failover --config /etc/easy-failover/config.toml --validate-config
+```
+
+For a local `/usr/local` install instead, leave `CMAKE_INSTALL_SYSCONFDIR` at its default:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+sudo cmake --install build --prefix /usr/local
+```
+
+That installs the example config under the local prefix:
+
+```text
+/usr/local/etc/easy-failover/config.example.toml
+```
+
+Use the same prefix when creating and validating the active config:
+
+```sh
+sudo install -d -m 0755 /usr/local/etc/easy-failover
+sudo cp /usr/local/etc/easy-failover/config.example.toml /usr/local/etc/easy-failover/config.toml
+sudo editor /usr/local/etc/easy-failover/config.toml
+easy-failover --config /usr/local/etc/easy-failover/config.toml --validate-config
+```
+
+If the systemd unit was installed, reload systemd and enable/start only after the config is valid:
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now easy-failover.service
+sudo systemctl status easy-failover.service
+```
+
+For a source checkout without installing, keep using the build-tree binary:
+
+```sh
+./build/easy-failover --config configs/easy-failover.toml --dry-run
+```
+
+Uninstalling a manual CMake install is distro- and prefix-dependent. For package builds, prefer the
+package manager. For manual source installs, inspect the staged layout first with:
+
+```sh
+cmake --install build --prefix "$PWD/stage"
+find "$PWD/stage" -type f | sort
+```
+
+Packaging guidance lives in [`docs/distro-packaging-notes.md`](docs/distro-packaging-notes.md).
+Do not enable real VIP mutation until the node config, Linux capabilities, and failover behavior
+have been tested in your target environment.
+
 ## Run
 
 Validate the sample config:
@@ -87,8 +187,9 @@ read-only API is disabled by default and documented in
 Install/package layout notes live in
 [`docs/install-package-layout.md`](docs/install-package-layout.md). Distro packaging guidance lives
 in [`docs/distro-packaging-notes.md`](docs/distro-packaging-notes.md).
-Real VIP movement is intentionally blocked until heartbeat, health, quorum/split-brain, and
-explicit operator-safety controls are designed and implemented.
+Real VIP movement is guarded by runtime dry-run mode and
+`mutation_safety.allow_network_mutation`. Quorum/fencing behavior remains future work, so validate
+carefully before using real network mutation.
 
 Example production config path:
 
