@@ -103,6 +103,18 @@ Review the planned commands without changing the host:
 ./scripts/install.sh --dry-run
 ```
 
+Uninstall a source install while keeping `/etc/easy-failover/config.toml`:
+
+```sh
+./scripts/uninstall.sh
+```
+
+Remove the active config directory too:
+
+```sh
+./scripts/uninstall.sh --purge-config
+```
+
 For a manual production-style source install under `/usr`, with configuration under `/etc`, use:
 
 ```sh
@@ -163,8 +175,8 @@ For a source checkout without installing, keep using the build-tree binary:
 ./build/easy-failover --config configs/easy-failover.toml --dry-run
 ```
 
-Uninstalling a manual CMake install is distro- and prefix-dependent. For package builds, prefer the
-package manager. For manual source installs, inspect the staged layout first with:
+Uninstalling package builds should use the package manager. For manual source installs, use
+`./scripts/uninstall.sh`, or inspect the staged layout first with:
 
 ```sh
 cmake --install build --prefix "$PWD/stage"
