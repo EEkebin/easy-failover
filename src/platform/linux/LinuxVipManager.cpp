@@ -34,9 +34,13 @@ namespace {
                                       .dry_run = dry_run}};
     case VipOperationType::Announce:
         return {NetworkCommandRequest{
-            .executable = "arping",
-            .arguments = {"-A", "-c", "3", "-I", interface, addressWithoutPrefix(address)},
-            .dry_run = dry_run}};
+                    .executable = "arping",
+                    .arguments = {"-A", "-c", "10", "-I", interface, addressWithoutPrefix(address)},
+                    .dry_run = dry_run},
+                NetworkCommandRequest{
+                    .executable = "arping",
+                    .arguments = {"-U", "-c", "10", "-I", interface, addressWithoutPrefix(address)},
+                    .dry_run = dry_run}};
     }
 
     return {};

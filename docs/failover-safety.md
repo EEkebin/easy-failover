@@ -30,6 +30,10 @@ The first real VIP backend should still be conservative. It should shell out to 
 out after the behavior is well covered. The expected Linux privileges are documented in
 [`linux-capabilities.md`](linux-capabilities.md).
 
+After adding a VIP, the Linux backend sends both ARP announcement and unsolicited ARP update packets
+with `arping` to reduce client neighbor-cache delay. This improves convergence, but real deployments
+should still validate client, switch, and hypervisor behavior in the target network.
+
 The current daemon uses a startup warmup before real mutation: when
 `mutation_safety.allow_network_mutation = true` and the runtime is not in `--dry-run`, the first
 successful heartbeat cycle warms the daemon up, and real VIP operations can only happen on a later
@@ -66,8 +70,8 @@ Default behavior is intentionally non-mutating:
 
 - election and failover decision helpers are pure local logic;
 - the daemon sends and receives IPv4 UDP heartbeat datagrams for configured peers;
-- Linux VIP manager methods build `iproute2` and `arping` command requests through a dry-run
-  command runner by default;
+- Linux VIP manager methods build `iproute2` and multi-form `arping` command requests through a
+  dry-run command runner by default;
 - the daemon lifecycle runs VIP operations in dry-run mode unless both runtime dry-run is disabled
   and `mutation_safety.allow_network_mutation` is `true`;
 - runtime lifecycle and VIP operation observations are logged as stable `key=value` events for

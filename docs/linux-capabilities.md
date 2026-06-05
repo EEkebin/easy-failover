@@ -12,12 +12,16 @@ The first Linux VIP backend shells out through `NetworkCommandRunner`. A host th
 movement will need:
 
 - `ip` from `iproute2` for `ip addr add` and `ip addr del`;
-- `arping` for IPv4 gratuitous ARP announcements;
+- `arping` for IPv4 gratuitous ARP announcements and unsolicited ARP updates;
 - a service environment where those binaries are available through an explicit path or a controlled
   `PATH`.
 
 Package names vary by distribution. Common examples are `iproute2` for `ip` and either `iputils` or
 `iputils-arping` for `arping`.
+
+When a node claims the VIP, easy-failover currently sends both common IPv4 ARP refresh forms:
+`arping -A` for ARP announcement and `arping -U` for unsolicited ARP update. Both are sent multiple
+times to improve client neighbor-cache convergence after failover.
 
 ## Expected Capabilities
 
