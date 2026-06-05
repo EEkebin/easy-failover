@@ -14,6 +14,7 @@ struct Config;
 struct DaemonLifecycleResult;
 struct HealthCheckResult;
 struct RuntimeLogContext;
+class ShutdownSignalState;
 struct VipOperationResult;
 enum class NodeState;
 
@@ -158,6 +159,30 @@ struct LocalApiEventsResponse {
     std::vector<LocalApiEvent> events;
 };
 
+struct LocalApiHttpRequest {
+    std::string method;
+    std::string path;
+    std::string body;
+};
+
+struct LocalApiHttpResponse {
+    int status_code = 200;
+    std::string content_type = "application/json";
+    std::string body;
+};
+
+struct LocalApiHttpSnapshot {
+    LocalApiStatusResponse status;
+    LocalApiConfigResponse config;
+    LocalApiEventsResponse events;
+};
+
+struct LocalApiHttpServeResult {
+    bool started = false;
+    bool served_request = false;
+    std::string error;
+};
+
 [[nodiscard]] constexpr std::string_view toString(const LocalApiStartupState state) {
     switch (state) {
     case LocalApiStartupState::Disabled:
@@ -209,5 +234,28 @@ struct LocalApiEventsResponse {
     std::uint64_t sequence,
     const VipOperationResult& result,
     std::size_t zero_based_index);
+
+[[nodiscard]] std::string serializeLocalApiStatusResponse(const LocalApiStatusResponse& response);
+[[nodiscard]] std::string serializeLocalApiConfigResponse(const LocalApiConfigResponse& response);
+[[nodiscard]] std::string serializeLocalApiConfigValidateResponse(
+    const LocalApiConfigValidateResponse& response);
+[[nodiscard]] std::string serializeLocalApiEventsResponse(const LocalApiEventsResponse& response);
+
+[[nodiscard]] LocalApiHttpResponse buildLocalApiHttpResponse(
+    const LocalApiHttpRequest& request,
+    const LocalApiHttpSnapshot& snapshot);
+
+[[nodiscard]] LocalApiHttpServeResult serveLocalApiHttpOnce(
+    std::string_view bind,
+    const LocalApiHttpSnapshot& snapshot);
+
+[[nodiscard]] LocalApiHttpServeResult serveLocalApiHttp(
+    std::string_view bind,
+    const LocalApiHttpSnapshot& snapshot);
+
+[[nodiscard]] LocalApiHttpServeResult serveLocalApiHttp(
+    std::string_view bind,
+    const LocalApiHttpSnapshot& snapshot,
+    ShutdownSignalState* shutdown_state);
 
 } // namespace easyfailover

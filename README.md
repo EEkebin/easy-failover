@@ -81,9 +81,9 @@ peer/server pool. See [`docs/config-reference.md`](docs/config-reference.md) for
 schema, defaults, and validation rules.
 
 Failover safety notes live in [`docs/failover-safety.md`](docs/failover-safety.md). Linux
-capability notes live in [`docs/linux-capabilities.md`](docs/linux-capabilities.md). The local API
-skeleton evaluates disabled/read-only startup state only; the future read-only API shape is
-documented in [`docs/local-api-design.md`](docs/local-api-design.md).
+capability notes live in [`docs/linux-capabilities.md`](docs/linux-capabilities.md). The local
+read-only API is disabled by default and documented in
+[`docs/local-api-design.md`](docs/local-api-design.md).
 Install/package layout notes live in
 [`docs/install-package-layout.md`](docs/install-package-layout.md). Distro packaging guidance lives
 in [`docs/distro-packaging-notes.md`](docs/distro-packaging-notes.md).
@@ -146,5 +146,6 @@ npm install
 npm run dev
 ```
 
-The dashboard falls back to sample data until the local HTTP API listener is implemented. It does
-not expose VIP mutation, daemon controls, config writes, or other privileged actions.
+The dashboard reads the local HTTP API when the daemon is running with `api.enabled = true` and
+falls back to sample data otherwise. It does not expose VIP mutation, daemon controls, config
+writes, or other privileged actions.

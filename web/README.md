@@ -2,8 +2,8 @@
 
 This optional dashboard is a read-only Next.js app for local easy-failover state.
 
-The daemon does not serve the local HTTP API yet, so the dashboard falls back to sample data that
-matches the planned `/api/v1` response shapes.
+The dashboard reads the local HTTP API when the daemon is running with `api.enabled = true` and
+falls back to sample data when the API is unavailable.
 
 ## Run locally
 
@@ -29,7 +29,7 @@ The dashboard reads from `http://127.0.0.1:8743` by default. Override it with:
 NEXT_PUBLIC_EASY_FAILOVER_API_BASE=http://127.0.0.1:8743 npm run dev
 ```
 
-The dashboard only reads these planned endpoints:
+The dashboard only reads these endpoints:
 
 - `GET /api/v1/status`
 - `GET /api/v1/config`

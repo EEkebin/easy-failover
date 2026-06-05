@@ -2,12 +2,12 @@
 
 easy-failover includes an optional Next.js dashboard under `web/`.
 
-The dashboard should talk to a future local API exposed by the agent. The API should be disabled
-by default, bind to `127.0.0.1:8743`, and be read-only at first. The planned API contract is
-tracked in [`local-api-design.md`](local-api-design.md).
+The dashboard should talk to the local API exposed by the agent. The API is disabled by default,
+binds to `127.0.0.1:8743`, and is read-only at first. The API contract is tracked in
+[`local-api-design.md`](local-api-design.md).
 
-Until the daemon has an HTTP listener, the dashboard renders sample data shaped like the planned
-local API responses.
+When the daemon is not running with `api.enabled = true`, the dashboard renders sample data shaped
+like the local API responses.
 
 ## Local Development
 
