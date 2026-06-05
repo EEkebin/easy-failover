@@ -7,6 +7,7 @@ NetworkCommandResult DryRunNetworkCommandRunner::run(const NetworkCommandRequest
                                 .exit_code = 0,
                                 .executed = false,
                                 .dry_run = true,
+                                .output = "",
                                 .error = ""};
 }
 

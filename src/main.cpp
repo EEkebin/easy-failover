@@ -1,6 +1,6 @@
 #include "api/LocalApi.hpp"
 #include "config/Config.hpp"
-#include "core/FailoverNode.hpp"
+#include "platform/linux/LinuxVipOwnershipProbe.hpp"
 #include "platform/linux/LinuxVipManager.hpp"
 #include "runtime/DaemonRuntime.hpp"
 #include "runtime/RuntimeLog.hpp"
@@ -100,6 +100,7 @@ int main(int argc, char** argv) {
         easyfailover::LinuxVipManager vip_manager{easyfailover::LinuxVipManagerOptions{
             .allow_network_mutation = config.mutation_safety.allow_network_mutation,
             .dry_run = dry_run}};
+        easyfailover::LinuxVipOwnershipProbe ownership_probe;
         auto shutdown_state = easyfailover::ShutdownSignalState{};
         easyfailover::pollShutdownSignals(shutdown_state);
         const auto lifecycle_result = easyfailover::runDaemonLifecycleOnce(
@@ -108,8 +109,10 @@ int main(int argc, char** argv) {
                 .options = easyfailover::DaemonRuntimeOptions{.dry_run = dry_run},
                 .initial_state = easyfailover::DaemonLifecycleState::Stopped,
                 .shutdown_state = &shutdown_state,
-                .config_prevalidated = true},
-            vip_manager);
+                .config_prevalidated = true,
+                .local_healthy = true,
+                .peer_statuses = {}},
+            vip_manager, ownership_probe);
         spdlog::info("{}", easyfailover::formatRuntimeLifecycleEvent(
                               lifecycle_result,
                               easyfailover::RuntimeLogContext{.node_id = config.node_id,
@@ -126,9 +129,6 @@ int main(int argc, char** argv) {
         if (lifecycle_result.final_state == easyfailover::DaemonLifecycleState::Faulted) {
             return EXIT_FAILURE;
         }
-
-        easyfailover::FailoverNode node{config.node_id, config.vip.address, config.priority};
-        node.printStatus();
 
         spdlog::info("heartbeat bind={} interval_ms={} timeout_ms={}", config.heartbeat.bind,
                      config.heartbeat.interval_ms, config.heartbeat.timeout_ms);

@@ -16,6 +16,7 @@ struct NetworkCommandResult {
     int exit_code = 0;
     bool executed = false;
     bool dry_run = true;
+    std::string output;
     std::string error;
 };
 

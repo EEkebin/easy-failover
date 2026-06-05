@@ -72,13 +72,45 @@ namespace {
                                             .peer_status = std::nullopt};
 }
 
+[[nodiscard]] LocalNodeStatus localStatusFromOwnership(const Config& config,
+                                                       const bool local_healthy,
+                                                       const bool local_vip_owner) {
+    return LocalNodeStatus{.node_id = config.node_id,
+                           .priority = config.priority,
+                           .healthy = local_healthy,
+                           .state = local_vip_owner ? NodeState::Master : NodeState::Backup};
+}
+
+[[nodiscard]] bool wantsMaster(const FailoverAction action) {
+    return action == FailoverAction::BecomeMaster || action == FailoverAction::StayMaster;
+}
+
+[[nodiscard]] bool wantsBackup(const FailoverAction action) {
+    return action == FailoverAction::BecomeBackup || action == FailoverAction::StayBackup;
+}
+
+[[nodiscard]] std::string lifecycleDetailForOperations(
+    const DaemonLifecycleRequest& request,
+    const std::vector<VipOperationResult>& operations) {
+    const auto all_operations_dry_run =
+        std::all_of(operations.begin(), operations.end(),
+                    [](const VipOperationResult& operation) { return operation.dry_run; });
+    if (request.options.dry_run) {
+        return "dry-run lifecycle iteration completed";
+    }
+    if (all_operations_dry_run) {
+        return "mutation safety gate kept lifecycle VIP operations in dry-run mode";
+    }
+
+    return "real VIP lifecycle iteration completed";
+}
+
 [[nodiscard]] FailoverDecisionObservation evaluateFailoverDecision(
     const Config& config,
+    const bool local_healthy,
+    const bool local_vip_owner,
     const HeartbeatReceiveStateObservation& receive_state) {
-    auto local_status = LocalNodeStatus{.node_id = config.node_id,
-                                        .priority = config.priority,
-                                        .healthy = true,
-                                        .state = NodeState::Backup};
+    auto local_status = localStatusFromOwnership(config, local_healthy, local_vip_owner);
     auto peer_statuses = std::vector<PeerStatus>{};
     if (receive_state.peer_status.has_value()) {
         peer_statuses.push_back(*receive_state.peer_status);
@@ -102,7 +134,8 @@ namespace {
 } // namespace
 
 DaemonLifecycleResult runDaemonLifecycleOnce(const DaemonLifecycleRequest& request,
-                                             VipManager& vip_manager) {
+                                             VipManager& vip_manager,
+                                             VipOwnershipProbe& ownership_probe) {
     auto result = DaemonLifecycleResult{.initial_state = request.initial_state,
                                         .final_state = request.initial_state,
                                         .started = false,
@@ -110,6 +143,10 @@ DaemonLifecycleResult runDaemonLifecycleOnce(const DaemonLifecycleRequest& reque
                                         .stopped = false,
                                         .validation_errors = {},
                                         .vip_operations = {},
+                                        .local_vip_owner_known = false,
+                                        .local_vip_owner = false,
+                                        .local_status = {},
+                                        .failover_decision = {},
                                         .detail = ""};
 
     if (request.initial_state == DaemonLifecycleState::Faulted) {
@@ -139,35 +176,63 @@ DaemonLifecycleResult runDaemonLifecycleOnce(const DaemonLifecycleRequest& reque
     const auto require_dry_run =
         request.options.dry_run || !request.config.mutation_safety.allow_network_mutation;
 
-    const auto add_result =
-        vip_manager.addVip(request.config.vip.address, request.config.vip.interface);
-    if (!recordVipOperation(result, add_result, require_dry_run)) {
-        return result;
-    }
+    const auto ownership =
+        ownership_probe.probeLocalVip(request.config.vip.address, request.config.vip.interface);
+    if (!ownership.success) {
+        if (!request.options.dry_run) {
+            result.final_state = DaemonLifecycleState::Faulted;
+            result.detail =
+                ownership.error.empty() ? "VIP ownership probe failed" : ownership.error;
+            return result;
+        }
 
-    const auto announce_result =
-        vip_manager.announceVip(request.config.vip.address, request.config.vip.interface);
-    if (!recordVipOperation(result, announce_result, require_dry_run)) {
-        return result;
-    }
-
-    const auto all_operations_dry_run =
-        std::all_of(result.vip_operations.begin(), result.vip_operations.end(),
-                    [](const VipOperationResult& operation) { return operation.dry_run; });
-    if (request.options.dry_run) {
-        result.detail = "dry-run lifecycle iteration completed";
-    } else if (all_operations_dry_run) {
-        result.detail = "mutation safety gate kept lifecycle VIP operations in dry-run mode";
+        result.local_vip_owner_known = false;
+        result.local_vip_owner = false;
     } else {
-        result.detail = "real VIP lifecycle iteration completed";
+        result.local_vip_owner_known = true;
+        result.local_vip_owner = ownership.local_owner;
+    }
+    result.local_status = localStatusFromOwnership(request.config, request.local_healthy,
+                                                  result.local_vip_owner);
+    result.failover_decision = decideFailoverAction(result.local_status, request.peer_statuses);
+
+    if (result.failover_decision.action == FailoverAction::EnterFault) {
+        result.final_state = DaemonLifecycleState::Faulted;
+        result.detail = result.failover_decision.reason.empty()
+                            ? "failover decision entered fault"
+                            : result.failover_decision.reason;
+        return result;
     }
 
+    if (wantsMaster(result.failover_decision.action) && !result.local_vip_owner) {
+        const auto add_result =
+            vip_manager.addVip(request.config.vip.address, request.config.vip.interface);
+        if (!recordVipOperation(result, add_result, require_dry_run)) {
+            return result;
+        }
+
+        const auto announce_result =
+            vip_manager.announceVip(request.config.vip.address, request.config.vip.interface);
+        if (!recordVipOperation(result, announce_result, require_dry_run)) {
+            return result;
+        }
+    } else if (wantsBackup(result.failover_decision.action) && result.local_vip_owner) {
+        const auto remove_result =
+            vip_manager.removeVip(request.config.vip.address, request.config.vip.interface);
+        if (!recordVipOperation(result, remove_result, require_dry_run)) {
+            return result;
+        }
+    }
+
+    result.detail = lifecycleDetailForOperations(request, result.vip_operations);
     result.final_state = DaemonLifecycleState::Stopped;
     result.stopped = true;
     return result;
 }
 
-DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request, VipManager& vip_manager) {
+DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request,
+                                      VipManager& vip_manager,
+                                      VipOwnershipProbe& ownership_probe) {
     auto result = DaemonLoopResult{.initial_state = request.initial_state,
                                    .final_state = request.initial_state,
                                    .stop_reason = DaemonLoopStopReason::MaxIterations,
@@ -207,8 +272,10 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request, VipManag
                                    .options = request.options.runtime_options,
                                    .initial_state = current_state,
                                    .shutdown_state = request.shutdown_state,
-                                   .config_prevalidated = request.config_prevalidated},
-            vip_manager);
+                                   .config_prevalidated = request.config_prevalidated,
+                                   .local_healthy = true,
+                                   .peer_statuses = {}},
+            vip_manager, ownership_probe);
 
         current_state = lifecycle_result.final_state;
         result.final_state = lifecycle_result.final_state;
@@ -244,7 +311,9 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request, VipManag
             result.heartbeat_receive_states.push_back(heartbeat_receive_state);
             if (lifecycle_result.final_state != DaemonLifecycleState::Faulted) {
                 result.failover_decisions.push_back(
-                    evaluateFailoverDecision(request.config, heartbeat_receive_state));
+                    evaluateFailoverDecision(request.config, lifecycle_result.local_status.healthy,
+                                             lifecycle_result.local_vip_owner,
+                                             heartbeat_receive_state));
             }
             ++result.iterations_ran;
         }

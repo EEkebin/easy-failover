@@ -73,6 +73,8 @@ add_library(
     src/platform/NetworkCommandRunner.cpp
     src/platform/linux/LinuxHealthCommandRunner.cpp
     src/platform/linux/LinuxHostname.cpp
+    src/platform/linux/LinuxNetworkCommandRunner.cpp
+    src/platform/linux/LinuxVipOwnershipProbe.cpp
     src/platform/linux/LinuxVipManager.cpp
     src/runtime/DaemonRuntime.cpp
     src/runtime/RuntimeLog.cpp

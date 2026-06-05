@@ -8,7 +8,10 @@
 #include "health/HealthCheck.hpp"
 #include "platform/NetworkCommandRunner.hpp"
 #include "platform/linux/LinuxHealthCommandRunner.hpp"
+#include "platform/linux/LinuxNetworkCommandRunner.hpp"
+#include "platform/linux/LinuxVipOwnershipProbe.hpp"
 #include "platform/linux/LinuxVipManager.hpp"
+#include "platform/VipOwnershipProbe.hpp"
 #include "runtime/DaemonRuntime.hpp"
 #include "runtime/RuntimeLog.hpp"
 #include "runtime/ShutdownSignal.hpp"
@@ -46,6 +49,8 @@ using easyfailover::HeartbeatSendResult;
 using easyfailover::HeartbeatTransport;
 using easyfailover::kHeartbeatTransportDisabledError;
 using easyfailover::LinuxHealthCommandRunner;
+using easyfailover::LinuxNetworkCommandRunner;
+using easyfailover::LinuxVipOwnershipProbe;
 using easyfailover::LinuxVipManager;
 using easyfailover::LinuxVipManagerOptions;
 using easyfailover::LocalApiEvent;
@@ -67,6 +72,8 @@ using easyfailover::ShutdownSignalState;
 using easyfailover::VipOperationType;
 using easyfailover::VipOperationResult;
 using easyfailover::VipManager;
+using easyfailover::VipOwnershipProbe;
+using easyfailover::VipOwnershipProbeResult;
 using easyfailover::buildLocalApiConfigResponse;
 using easyfailover::buildLocalApiConfigValidateResponse;
 using easyfailover::buildLocalApiEventsResponse;
@@ -233,6 +240,8 @@ class FakeVipManager final : public VipManager {
     [[nodiscard]] VipOperationResult removeVip(const std::string& address,
                                                const std::string& interface) override {
         remove_called = true;
+        remove_address = address;
+        remove_interface = interface;
         operations.push_back(VipOperationType::Remove);
         return VipOperationResult{.request = {.type = VipOperationType::Remove,
                                               .address = address,
@@ -265,6 +274,8 @@ class FakeVipManager final : public VipManager {
     bool announce_called = false;
     std::string add_address;
     std::string add_interface;
+    std::string remove_address;
+    std::string remove_interface;
     std::string announce_address;
     std::string announce_interface;
     bool operation_dry_run = true;
@@ -274,6 +285,42 @@ class FakeVipManager final : public VipManager {
     std::string announce_error;
     std::vector<VipOperationType> operations;
 };
+
+class FakeVipOwnershipProbe final : public VipOwnershipProbe {
+  public:
+    [[nodiscard]] VipOwnershipProbeResult probeLocalVip(const std::string& address,
+                                                        const std::string& interface) override {
+        was_called = true;
+        observed_address = address;
+        observed_interface = interface;
+        return VipOwnershipProbeResult{.request = {.address = address, .interface = interface},
+                                       .success = success,
+                                       .local_owner = local_owner,
+                                       .commands = {},
+                                       .error = error};
+    }
+
+    bool success = true;
+    bool local_owner = false;
+    std::string error;
+    bool was_called = false;
+    std::string observed_address;
+    std::string observed_interface;
+};
+
+[[nodiscard]] DaemonLifecycleResult runDaemonLifecycleOnce(
+    const DaemonLifecycleRequest& request,
+    VipManager& vip_manager) {
+    auto ownership_probe = FakeVipOwnershipProbe{};
+    return easyfailover::runDaemonLifecycleOnce(request, vip_manager, ownership_probe);
+}
+
+[[nodiscard]] easyfailover::DaemonLoopResult runDaemonRuntimeLoop(
+    const DaemonLoopRequest& request,
+    VipManager& vip_manager) {
+    auto ownership_probe = FakeVipOwnershipProbe{};
+    return easyfailover::runDaemonRuntimeLoop(request, vip_manager, ownership_probe);
+}
 
 Config validConfig() {
     Config config;
@@ -1571,6 +1618,37 @@ void testDryRunNetworkCommandRunnerForcesNonExecution(TestRunner& runner) {
                   "dry-run implementation should preserve requested dry-run flag");
 }
 
+void testLinuxNetworkCommandRunnerCapturesOutput(TestRunner& runner) {
+    LinuxNetworkCommandRunner runner_impl;
+
+    const auto result = runner_impl.run(NetworkCommandRequest{.executable = "printf",
+                                                              .arguments = {"vip-present"},
+                                                              .dry_run = false});
+
+    runner.expect(result.executed,
+                  "Linux network command runner should execute non-dry-run command");
+    runner.expect(!result.dry_run,
+                  "Linux network command runner should preserve non-dry-run result");
+    runner.expect(result.exit_code == 0,
+                  "Linux network command runner should report successful exit code");
+    runner.expect(result.output == "vip-present",
+                  "Linux network command runner should capture command output");
+}
+
+void testLinuxNetworkCommandRunnerHonorsDryRun(TestRunner& runner) {
+    LinuxNetworkCommandRunner runner_impl;
+
+    const auto result = runner_impl.run(NetworkCommandRequest{.executable = "false",
+                                                              .arguments = {},
+                                                              .dry_run = true});
+
+    runner.expect(!result.executed,
+                  "Linux network command runner should not execute dry-run command");
+    runner.expect(result.dry_run, "Linux network command runner should report dry-run result");
+    runner.expect(result.exit_code == 0,
+                  "Linux network command runner dry-run should report success");
+}
+
 void testLinuxVipManagerBuildsAddCommand(TestRunner& runner) {
     FakeNetworkCommandRunner command_runner;
     command_runner.result =
@@ -1664,22 +1742,33 @@ void testLinuxVipManagerDefaultRunnerSafetyGateBlocksMutation(TestRunner& runner
 }
 
 void testLinuxVipManagerDefaultRunnerAllowsExplicitMutationRequest(TestRunner& runner) {
+    FakeNetworkCommandRunner command_runner;
+    command_runner.result =
+        NetworkCommandResult{.request = NetworkCommandRequest{.executable = "ip",
+                                                              .arguments = {"addr", "del"},
+                                                              .dry_run = false},
+                             .exit_code = 0,
+                             .executed = true,
+                             .dry_run = false,
+                             .output = "",
+                             .error = ""};
     LinuxVipManager manager{
+        command_runner,
         LinuxVipManagerOptions{.allow_network_mutation = true, .dry_run = false}};
 
     const auto result = manager.removeVip("10.0.0.50/24", "eth0");
 
-    runner.expect(result.success, "explicit mutation request should succeed with dry-run runner");
+    runner.expect(result.success, "explicit mutation request should succeed");
     runner.expect(!result.dry_run,
                   "explicit opt-in plus runtime non-dry-run should request real VIP operation");
     runner.expect(result.commands.size() == 1,
                   "explicit mutation request should report command result");
     runner.expect(!result.commands.at(0).request.dry_run,
                   "explicit opt-in plus runtime non-dry-run should request non-dry-run command");
-    runner.expect(result.commands.at(0).dry_run,
-                  "default dry-run command runner should still report non-execution");
-    runner.expect(!result.commands.at(0).executed,
-                  "default dry-run command runner should not execute command");
+    runner.expect(!result.commands.at(0).dry_run,
+                  "explicit mutation command result should report non-dry-run");
+    runner.expect(result.commands.at(0).executed,
+                  "explicit mutation command result should report execution");
 }
 
 void testLinuxVipManagerRuntimeDryRunOverridesMutationOptIn(TestRunner& runner) {
@@ -1756,6 +1845,212 @@ void testLinuxVipManagerPropagatesCommandFailure(TestRunner& runner) {
     runner.expect(!result.success, "VIP operation should fail when command fails");
     runner.expect(result.error == "ip failed", "VIP operation should preserve command error");
     runner.expect(result.commands.size() == 1, "VIP operation should report command result");
+}
+
+void testLinuxVipOwnershipProbeDetectsConfiguredVip(TestRunner& runner) {
+    FakeNetworkCommandRunner command_runner;
+    command_runner.result =
+        NetworkCommandResult{.request = {},
+                             .exit_code = 0,
+                             .executed = true,
+                             .dry_run = false,
+                             .output = "2: eth0: <BROADCAST>\n    inet 10.0.0.50/24 brd "
+                                       "10.0.0.255 scope global eth0\n",
+                             .error = ""};
+    auto probe = LinuxVipOwnershipProbe{command_runner};
+
+    const auto result = probe.probeLocalVip("10.0.0.50/24", "eth0");
+
+    runner.expect(result.success, "Linux VIP ownership probe should succeed on zero exit");
+    runner.expect(result.local_owner, "Linux VIP ownership probe should detect configured VIP");
+    runner.expect(command_runner.was_called, "Linux VIP ownership probe should run ip command");
+    runner.expect(command_runner.observed_request.executable == "ip",
+                  "Linux VIP ownership probe should use ip executable");
+    runner.expect(command_runner.observed_request.arguments ==
+                      std::vector<std::string>{"addr", "show", "dev", "eth0"},
+                  "Linux VIP ownership probe should inspect the configured interface");
+    runner.expect(!command_runner.observed_request.dry_run,
+                  "Linux VIP ownership probe should request read-only command execution");
+}
+
+void testLinuxVipOwnershipProbeReportsAbsentVip(TestRunner& runner) {
+    FakeNetworkCommandRunner command_runner;
+    command_runner.result =
+        NetworkCommandResult{.request = {},
+                             .exit_code = 0,
+                             .executed = true,
+                             .dry_run = false,
+                             .output = "2: eth0: <BROADCAST>\n    inet 10.0.0.51/24 brd "
+                                       "10.0.0.255 scope global eth0\n",
+                             .error = ""};
+    auto probe = LinuxVipOwnershipProbe{command_runner};
+
+    const auto result = probe.probeLocalVip("10.0.0.50/24", "eth0");
+
+    runner.expect(result.success, "Linux VIP ownership probe should succeed when VIP is absent");
+    runner.expect(!result.local_owner, "Linux VIP ownership probe should report absent VIP");
+}
+
+void testDaemonLifecycleNoPeerPromotesAndAddsAbsentVip(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    FakeVipOwnershipProbe ownership_probe;
+    ownership_probe.local_owner = false;
+    const auto config = validConfig();
+
+    const auto result = easyfailover::runDaemonLifecycleOnce(
+        DaemonLifecycleRequest{.config = config,
+                               .options = DaemonRuntimeOptions{.dry_run = true},
+                               .initial_state = DaemonLifecycleState::Stopped,
+                               .local_healthy = true,
+                               .peer_statuses = {}},
+        vip_manager, ownership_probe);
+
+    runner.expect(result.local_vip_owner_known,
+                  "daemon lifecycle should report known local VIP ownership");
+    runner.expect(!result.local_vip_owner,
+                  "daemon lifecycle should report absent local VIP before promotion");
+    runner.expect(result.local_status.state == NodeState::Backup,
+                  "absent local VIP should map to backup state before decision");
+    runner.expect(result.failover_decision.action == FailoverAction::BecomeMaster,
+                  "healthy local node without live peers should become master");
+    runner.expect(vip_manager.operations ==
+                      std::vector<VipOperationType>{VipOperationType::Add,
+                                                    VipOperationType::Announce},
+                  "becoming master with absent VIP should add then announce");
+    runner.expect(result.vip_operations.size() == 2,
+                  "becoming master should record add and announce operations");
+}
+
+void testDaemonLifecycleHigherPriorityPeerKeepsBackupWithoutVipAdd(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    FakeVipOwnershipProbe ownership_probe;
+    ownership_probe.local_owner = false;
+    const auto config = validConfig();
+
+    const auto result = easyfailover::runDaemonLifecycleOnce(
+        DaemonLifecycleRequest{
+            .config = config,
+            .options = DaemonRuntimeOptions{.dry_run = true},
+            .initial_state = DaemonLifecycleState::Stopped,
+            .local_healthy = true,
+            .peer_statuses = {PeerStatus{.node_id = "node-b",
+                                         .priority = config.priority + 1,
+                                         .healthy = true,
+                                         .heartbeat_seen = true}}},
+        vip_manager, ownership_probe);
+
+    runner.expect(result.failover_decision.action == FailoverAction::StayBackup,
+                  "higher-priority healthy peer should keep local node backup");
+    runner.expect(!vip_manager.add_called,
+                  "backup node without VIP should not request VIP add");
+    runner.expect(!vip_manager.announce_called,
+                  "backup node without VIP should not request VIP announce");
+    runner.expect(result.vip_operations.empty(),
+                  "backup node already absent should avoid redundant VIP operations");
+}
+
+void testDaemonLifecycleOwnedVipDemotesAndRemoves(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    FakeVipOwnershipProbe ownership_probe;
+    ownership_probe.local_owner = true;
+    const auto config = validConfig();
+
+    const auto result = easyfailover::runDaemonLifecycleOnce(
+        DaemonLifecycleRequest{
+            .config = config,
+            .options = DaemonRuntimeOptions{.dry_run = true},
+            .initial_state = DaemonLifecycleState::Stopped,
+            .local_healthy = true,
+            .peer_statuses = {PeerStatus{.node_id = "node-b",
+                                         .priority = config.priority + 1,
+                                         .healthy = true,
+                                         .heartbeat_seen = true}}},
+        vip_manager, ownership_probe);
+
+    runner.expect(result.local_status.state == NodeState::Master,
+                  "owned local VIP should map to master state before decision");
+    runner.expect(result.failover_decision.action == FailoverAction::BecomeBackup,
+                  "higher-priority peer should demote local master");
+    runner.expect(vip_manager.remove_called,
+                  "demoted local master should request VIP removal");
+    runner.expect(vip_manager.remove_address == config.vip.address,
+                  "VIP removal should use configured address");
+    runner.expect(vip_manager.remove_interface == config.vip.interface,
+                  "VIP removal should use configured interface");
+    runner.expect(result.vip_operations.size() == 1,
+                  "demotion should record one VIP removal operation");
+}
+
+void testDaemonLifecycleOwnedVipStaysMasterWithoutReadd(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    FakeVipOwnershipProbe ownership_probe;
+    ownership_probe.local_owner = true;
+    const auto config = validConfig();
+
+    const auto result = easyfailover::runDaemonLifecycleOnce(
+        DaemonLifecycleRequest{.config = config,
+                               .options = DaemonRuntimeOptions{.dry_run = true},
+                               .initial_state = DaemonLifecycleState::Stopped,
+                               .local_healthy = true,
+                               .peer_statuses = {}},
+        vip_manager, ownership_probe);
+
+    runner.expect(result.failover_decision.action == FailoverAction::StayMaster,
+                  "owned VIP with no higher-priority peer should stay master");
+    runner.expect(!vip_manager.add_called,
+                  "local master already owning VIP should not re-add VIP");
+    runner.expect(!vip_manager.announce_called,
+                  "local master already owning VIP should not re-announce VIP");
+    runner.expect(result.vip_operations.empty(),
+                  "local master already owning VIP should avoid redundant VIP operations");
+}
+
+void testDaemonLifecycleProbeFailureFaultsBeforeVipMutation(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    FakeVipOwnershipProbe ownership_probe;
+    ownership_probe.success = false;
+    ownership_probe.error = "probe failed";
+
+    const auto result = easyfailover::runDaemonLifecycleOnce(
+        DaemonLifecycleRequest{.config = validConfig(),
+                               .options = DaemonRuntimeOptions{.dry_run = false},
+                               .initial_state = DaemonLifecycleState::Stopped,
+                               .local_healthy = true,
+                               .peer_statuses = {}},
+        vip_manager, ownership_probe);
+
+    runner.expect(result.final_state == DaemonLifecycleState::Faulted,
+                  "VIP ownership probe failure should fault lifecycle");
+    runner.expect(result.detail == "probe failed",
+                  "VIP ownership probe failure should preserve error detail");
+    runner.expect(!vip_manager.add_called,
+                  "VIP ownership probe failure should not mutate VIP state");
+}
+
+void testDaemonLifecycleDryRunProbeFailureAssumesVipAbsent(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    FakeVipOwnershipProbe ownership_probe;
+    ownership_probe.success = false;
+    ownership_probe.error = "probe failed";
+
+    const auto result = easyfailover::runDaemonLifecycleOnce(
+        DaemonLifecycleRequest{.config = validConfig(),
+                               .options = DaemonRuntimeOptions{.dry_run = true},
+                               .initial_state = DaemonLifecycleState::Stopped,
+                               .local_healthy = true,
+                               .peer_statuses = {}},
+        vip_manager, ownership_probe);
+
+    runner.expect(result.final_state == DaemonLifecycleState::Stopped,
+                  "dry-run probe failure should not fault lifecycle");
+    runner.expect(!result.local_vip_owner_known,
+                  "dry-run probe failure should report unknown ownership");
+    runner.expect(!result.local_vip_owner,
+                  "dry-run probe failure should assume VIP is absent");
+    runner.expect(vip_manager.operations ==
+                      std::vector<VipOperationType>{VipOperationType::Add,
+                                                    VipOperationType::Announce},
+                  "dry-run probe failure should still model promotion with dry-run operations");
 }
 
 void testDaemonLifecycleStartsRunsDryRunAndStops(TestRunner& runner) {
@@ -3114,6 +3409,12 @@ int main() {
     runner.run("dry-run network command runner forces non-execution", [&runner] {
         testDryRunNetworkCommandRunnerForcesNonExecution(runner);
     });
+    runner.run("Linux network command runner captures output", [&runner] {
+        testLinuxNetworkCommandRunnerCapturesOutput(runner);
+    });
+    runner.run("Linux network command runner honors dry-run", [&runner] {
+        testLinuxNetworkCommandRunnerHonorsDryRun(runner);
+    });
     runner.run("Linux VIP manager builds add command", [&runner] {
         testLinuxVipManagerBuildsAddCommand(runner);
     });
@@ -3140,6 +3441,30 @@ int main() {
     });
     runner.run("Linux VIP manager propagates command failure", [&runner] {
         testLinuxVipManagerPropagatesCommandFailure(runner);
+    });
+    runner.run("Linux VIP ownership probe detects configured VIP", [&runner] {
+        testLinuxVipOwnershipProbeDetectsConfiguredVip(runner);
+    });
+    runner.run("Linux VIP ownership probe reports absent VIP", [&runner] {
+        testLinuxVipOwnershipProbeReportsAbsentVip(runner);
+    });
+    runner.run("daemon lifecycle no peer promotes and adds absent VIP", [&runner] {
+        testDaemonLifecycleNoPeerPromotesAndAddsAbsentVip(runner);
+    });
+    runner.run("daemon lifecycle higher priority peer keeps backup without VIP add", [&runner] {
+        testDaemonLifecycleHigherPriorityPeerKeepsBackupWithoutVipAdd(runner);
+    });
+    runner.run("daemon lifecycle owned VIP demotes and removes", [&runner] {
+        testDaemonLifecycleOwnedVipDemotesAndRemoves(runner);
+    });
+    runner.run("daemon lifecycle owned VIP stays master without re-add", [&runner] {
+        testDaemonLifecycleOwnedVipStaysMasterWithoutReadd(runner);
+    });
+    runner.run("daemon lifecycle probe failure faults before VIP mutation", [&runner] {
+        testDaemonLifecycleProbeFailureFaultsBeforeVipMutation(runner);
+    });
+    runner.run("daemon lifecycle dry-run probe failure assumes VIP absent", [&runner] {
+        testDaemonLifecycleDryRunProbeFailureAssumesVipAbsent(runner);
     });
     runner.run("daemon lifecycle starts runs dry-run and stops", [&runner] {
         testDaemonLifecycleStartsRunsDryRunAndStops(runner);
