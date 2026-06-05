@@ -6,8 +6,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=root
-ExecStart=@EASY_FAILOVER_SYSTEMD_BINDIR@/easy-failover --config @EASY_FAILOVER_SYSTEMD_SYSCONFDIR@/easy-failover/config.toml
-Restart=always
+ExecStart=@EASY_FAILOVER_SYSTEMD_BINDIR@/easy-failover --config @EASY_FAILOVER_SYSTEMD_SYSCONFDIR@/easy-failover/config.toml --run-forever
+Restart=on-failure
 RestartSec=2s
 
 # Baseline hardening keeps host networking available for VIP and heartbeat operations.

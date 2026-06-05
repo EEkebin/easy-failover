@@ -9,6 +9,7 @@
 #include "runtime/ShutdownSignal.hpp"
 
 #include <cstdlib>
+#include <cstddef>
 #include <exception>
 #include <iostream>
 #include <string>
@@ -41,6 +42,8 @@ int main(int argc, char** argv) {
     bool validate_config = false;
     bool dry_run = false;
     bool show_version = false;
+    bool run_forever = false;
+    std::size_t max_iterations = 1;
 
     CLI::App app{"easy-failover virtual IP failover agent"};
     argv = app.ensure_utf8(argv);
@@ -50,6 +53,10 @@ int main(int argc, char** argv) {
         ->check(CLI::ExistingFile);
     app.add_flag("--validate-config", validate_config, "Validate config and exit");
     app.add_flag("--dry-run", dry_run, "Log intended actions without changing system state");
+    app.add_flag("--run-forever", run_forever, "Run daemon loop until SIGINT or SIGTERM");
+    app.add_option("--max-iterations", max_iterations,
+                  "Bound daemon loop iterations for smoke tests and development")
+        ->capture_default_str();
     app.add_flag("--version", show_version, "Print version and exit");
 
     try {
@@ -82,6 +89,11 @@ int main(int argc, char** argv) {
             return EXIT_FAILURE;
         }
 
+        if (!dry_run && config.mutation_safety.allow_network_mutation) {
+            spdlog::error("real VIP mutation requires an enabled heartbeat transport");
+            return EXIT_FAILURE;
+        }
+
         const auto api_startup = easyfailover::evaluateLocalApiStartup(config.api);
         if (api_startup.state == easyfailover::LocalApiStartupState::Rejected) {
             spdlog::error("local API startup rejected bind={} detail=\"{}\"", api_startup.bind,
@@ -111,7 +123,11 @@ int main(int argc, char** argv) {
                 .config = config,
                 .options = easyfailover::DaemonLoopOptions{
                     .runtime_options = easyfailover::DaemonRuntimeOptions{.dry_run = dry_run},
-                    .max_iterations = 1},
+                    .max_iterations = max_iterations,
+                    .run_until_shutdown = run_forever,
+                    .inter_iteration_delay_ms = config.heartbeat.interval_ms,
+                    .max_recorded_observations =
+                        run_forever ? static_cast<std::size_t>(100) : static_cast<std::size_t>(0)},
                 .initial_state = easyfailover::DaemonLifecycleState::Stopped,
                 .shutdown_state = &shutdown_state,
                 .config_prevalidated = true},

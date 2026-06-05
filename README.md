@@ -189,6 +189,16 @@ Run in dry-run mode:
 ./build/easy-failover --config configs/easy-failover.toml --dry-run
 ```
 
+Run continuously until SIGINT or SIGTERM:
+
+```sh
+./build/easy-failover --config configs/easy-failover.toml --run-forever --dry-run
+```
+
+The installed systemd unit uses `--run-forever`. Without that flag, the CLI runs one bounded
+iteration by default for smoke tests and development checks. Use `--max-iterations N` to run a
+bounded multi-iteration check.
+
 ## Runtime Logging
 
 The normal runtime path emits stable logfmt-style runtime events. Current event names are

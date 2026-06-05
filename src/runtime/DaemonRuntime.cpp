@@ -33,6 +33,25 @@ namespace {
     return true;
 }
 
+template <typename T>
+void pushObservation(std::vector<T>& observations,
+                     T observation,
+                     const std::size_t max_recorded_observations) {
+    observations.push_back(std::move(observation));
+    if (max_recorded_observations > 0 && observations.size() > max_recorded_observations) {
+        observations.erase(observations.begin());
+    }
+}
+
+template <typename T>
+void appendObservations(std::vector<T>& observations,
+                        const std::vector<T>& new_observations,
+                        const std::size_t max_recorded_observations) {
+    for (const auto& observation : new_observations) {
+        pushObservation(observations, observation, max_recorded_observations);
+    }
+}
+
 [[nodiscard]] HealthScheduleObservation evaluateHealthSchedule(
     const Config& config,
     const std::size_t iteration_index,
@@ -315,7 +334,11 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request,
                                         .priority = request.config.priority,
                                         .healthy = true,
                                         .state = NodeState::Backup};
-    for (std::size_t index = 0; index < request.options.max_iterations; ++index) {
+    for (std::size_t index = 0;
+         request.options.run_until_shutdown || index < request.options.max_iterations; ++index) {
+        if (request.shutdown_state != nullptr) {
+            pollShutdownSignals(*request.shutdown_state);
+        }
         if (request.shutdown_state != nullptr && request.shutdown_state->shutdownRequested()) {
             result.final_state = DaemonLifecycleState::Stopped;
             result.stop_reason = DaemonLoopStopReason::ShutdownRequested;
@@ -344,9 +367,8 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request,
             const auto heartbeat_result = runHeartbeatLoopOnce(
                 local_status, request.config.peers, request.config.heartbeat.timeout_ms,
                 heartbeat_transport);
-            result.heartbeat_sends.insert(result.heartbeat_sends.end(),
-                                          heartbeat_result.sends.begin(),
-                                          heartbeat_result.sends.end());
+            appendObservations(result.heartbeat_sends, heartbeat_result.sends,
+                               request.options.max_recorded_observations);
             heartbeat_receive_state = heartbeatReceiveStateFromLoopResult(
                 result.iterations_ran, elapsed_ms, heartbeat_result);
             if (heartbeat_result.receive.peer_status.has_value() &&
@@ -373,12 +395,10 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request,
         current_state = lifecycle_result.final_state;
         result.final_state = lifecycle_result.final_state;
         result.detail = lifecycle_result.detail;
-        result.validation_errors.insert(result.validation_errors.end(),
-                                        lifecycle_result.validation_errors.begin(),
-                                        lifecycle_result.validation_errors.end());
-        result.vip_operations.insert(result.vip_operations.end(),
-                                     lifecycle_result.vip_operations.begin(),
-                                     lifecycle_result.vip_operations.end());
+        appendObservations(result.validation_errors, lifecycle_result.validation_errors,
+                           request.options.max_recorded_observations);
+        appendObservations(result.vip_operations, lifecycle_result.vip_operations,
+                           request.options.max_recorded_observations);
 
         if (lifecycle_result.iteration_ran) {
             local_status = lifecycle_result.local_status;
@@ -390,16 +410,21 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request,
                 health_check_was_due = true;
                 last_due_elapsed_ms = elapsed_ms;
             }
-            result.health_schedules.push_back(health_schedule);
+            pushObservation(result.health_schedules, health_schedule,
+                            request.options.max_recorded_observations);
 
-            result.heartbeat_send_schedules.push_back(heartbeat_schedule);
+            pushObservation(result.heartbeat_send_schedules, heartbeat_schedule,
+                            request.options.max_recorded_observations);
 
-            result.heartbeat_receive_states.push_back(heartbeat_receive_state);
+            pushObservation(result.heartbeat_receive_states, heartbeat_receive_state,
+                            request.options.max_recorded_observations);
             if (lifecycle_result.final_state != DaemonLifecycleState::Faulted) {
-                result.failover_decisions.push_back(
+                pushObservation(
+                    result.failover_decisions,
                     evaluateFailoverDecision(request.config, lifecycle_result.local_status.healthy,
                                              lifecycle_result.local_vip_owner,
-                                             heartbeat_receive_state, peer_statuses));
+                                             heartbeat_receive_state, peer_statuses),
+                    request.options.max_recorded_observations);
             }
             ++result.iterations_ran;
         }
@@ -409,7 +434,7 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request,
             return result;
         }
 
-        if (index + 1 == request.options.max_iterations) {
+        if (!request.options.run_until_shutdown && index + 1 == request.options.max_iterations) {
             result.stop_reason = DaemonLoopStopReason::MaxIterations;
             result.detail = "max iterations completed";
             return result;
