@@ -2,6 +2,7 @@
 
 #include "platform/NetworkCommandRunner.hpp"
 #include "platform/VipManager.hpp"
+#include "platform/linux/LinuxNetworkCommandRunner.hpp"
 
 namespace easyfailover {
 
@@ -33,7 +34,7 @@ class LinuxVipManager final : public VipManager {
                                                   const std::string& address,
                                                   const std::string& interface);
 
-    DryRunNetworkCommandRunner default_command_runner_;
+    LinuxNetworkCommandRunner default_command_runner_;
     NetworkCommandRunner* command_runner_;
     LinuxVipManagerOptions options_;
 };

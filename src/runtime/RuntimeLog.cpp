@@ -65,6 +65,12 @@ std::string formatRuntimeLifecycleEvent(const DaemonLifecycleResult& result,
            << " dry_run=" << boolValue(context.dry_run)
            << " validation_errors=" << result.validation_errors.size()
            << " vip_operations=" << result.vip_operations.size()
+           << " local_vip_owner_known=" << boolValue(result.local_vip_owner_known)
+           << " local_vip_owner=" << boolValue(result.local_vip_owner)
+           << " local_node_state=" << toString(result.local_status.state)
+           << " failover_action=" << toString(result.failover_decision.action)
+           << " selected_master="
+           << quotedValue(result.failover_decision.selected_master.value_or(""))
            << " detail=" << quotedValue(result.detail);
     return output.str();
 }

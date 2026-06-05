@@ -2,7 +2,9 @@
 
 #include "config/Config.hpp"
 #include "core/FailoverDecision.hpp"
+#include "health/HealthCheck.hpp"
 #include "platform/VipManager.hpp"
+#include "platform/VipOwnershipProbe.hpp"
 #include "runtime/ShutdownSignal.hpp"
 
 #include <cstddef>
@@ -56,6 +58,8 @@ struct DaemonLifecycleRequest {
     DaemonLifecycleState initial_state = DaemonLifecycleState::Stopped;
     const ShutdownSignalState* shutdown_state = nullptr;
     bool config_prevalidated = false;
+    bool local_healthy = true;
+    std::vector<PeerStatus> peer_statuses;
 };
 
 struct DaemonLifecycleResult {
@@ -66,6 +70,10 @@ struct DaemonLifecycleResult {
     bool stopped = false;
     std::vector<std::string> validation_errors;
     std::vector<VipOperationResult> vip_operations;
+    bool local_vip_owner_known = false;
+    bool local_vip_owner = false;
+    LocalNodeStatus local_status;
+    FailoverDecision failover_decision;
     std::string detail;
 };
 
@@ -138,9 +146,11 @@ struct DaemonLoopResult {
 
 [[nodiscard]] DaemonLifecycleResult runDaemonLifecycleOnce(
     const DaemonLifecycleRequest& request,
-    VipManager& vip_manager);
+    VipManager& vip_manager,
+    VipOwnershipProbe& ownership_probe);
 
 [[nodiscard]] DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request,
-                                                   VipManager& vip_manager);
+                                                   VipManager& vip_manager,
+                                                   VipOwnershipProbe& ownership_probe);
 
 } // namespace easyfailover
