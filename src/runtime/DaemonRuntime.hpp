@@ -49,15 +49,17 @@ enum class DaemonLoopStopReason {
 struct DaemonLoopOptions {
     DaemonRuntimeOptions runtime_options;
     std::size_t max_iterations = 1;
+    bool run_until_shutdown = false;
     std::int64_t inter_iteration_delay_ms = 0;
     std::int64_t logical_iteration_elapsed_ms = 0;
+    std::size_t max_recorded_observations = 0;
 };
 
 struct DaemonLifecycleRequest {
     const Config& config;
     DaemonRuntimeOptions options;
     DaemonLifecycleState initial_state = DaemonLifecycleState::Stopped;
-    const ShutdownSignalState* shutdown_state = nullptr;
+    ShutdownSignalState* shutdown_state = nullptr;
     bool config_prevalidated = false;
     bool local_healthy = true;
     std::vector<PeerStatus> peer_statuses;
@@ -118,7 +120,7 @@ struct DaemonLoopRequest {
     const Config& config;
     DaemonLoopOptions options;
     DaemonLifecycleState initial_state = DaemonLifecycleState::Stopped;
-    const ShutdownSignalState* shutdown_state = nullptr;
+    ShutdownSignalState* shutdown_state = nullptr;
     bool config_prevalidated = false;
 };
 

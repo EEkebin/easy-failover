@@ -67,8 +67,8 @@ Default behavior is intentionally non-mutating:
   and `mutation_safety.allow_network_mutation` is `true`;
 - runtime lifecycle and VIP operation observations are logged as stable `key=value` events for
   auditability;
-- SIGINT/SIGTERM handling records a shutdown request for the runtime to observe, but there is no
-  long-running daemon loop yet;
+- SIGINT/SIGTERM handling records a shutdown request for the long-running runtime loop to observe;
 - `--dry-run` does not change system state;
-- heartbeat networking, runtime health state, quorum, fencing, and the real daemon loop are not
-  implemented yet.
+- service startup rejects real VIP mutation while the CLI path still uses the disabled heartbeat
+  transport;
+- real VIP mutation still needs careful lab validation before production use.

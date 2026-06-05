@@ -3166,6 +3166,28 @@ void testDaemonRuntimeLoopStopsBeforeFirstIterationOnShutdown(TestRunner& runner
                   "daemon runtime loop should not call VIP manager after shutdown");
 }
 
+void testDaemonRuntimeLoopRunForeverStopsBeforeFirstIterationOnShutdown(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    auto shutdown_state = ShutdownSignalState{};
+    shutdown_state.requestShutdown(ShutdownSignal::Terminate);
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = validConfig(),
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .run_until_shutdown = true},
+                          .shutdown_state = &shutdown_state},
+        vip_manager);
+
+    runner.expect(result.iterations_ran == 0,
+                  "run-forever runtime loop should stop before first iteration on shutdown");
+    runner.expect(result.stop_reason == DaemonLoopStopReason::ShutdownRequested,
+                  "run-forever runtime loop should report shutdown stop reason");
+    runner.expect(result.detail == "shutdown requested by terminate signal",
+                  "run-forever runtime loop should preserve shutdown detail");
+    runner.expect(!vip_manager.add_called,
+                  "run-forever shutdown should not call VIP manager before first iteration");
+}
+
 void testDaemonRuntimeLoopStopsOnShutdownWithZeroMaxIterations(TestRunner& runner) {
     FakeVipManager vip_manager;
     auto shutdown_state = ShutdownSignalState{};
@@ -3188,6 +3210,35 @@ void testDaemonRuntimeLoopStopsOnShutdownWithZeroMaxIterations(TestRunner& runne
                   "zero-iteration runtime loop should not run VIP operations");
     runner.expect(!vip_manager.add_called,
                   "zero-iteration runtime loop should not call VIP manager");
+}
+
+void testDaemonRuntimeLoopCapsRecordedObservations(TestRunner& runner) {
+    FakeVipManager vip_manager;
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = validConfig(),
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 3,
+                                                       .logical_iteration_elapsed_ms = 1,
+                                                       .max_recorded_observations = 1}},
+        vip_manager);
+
+    runner.expect(result.iterations_ran == 3,
+                  "capped runtime loop should still run all bounded iterations");
+    runner.expect(result.vip_operations.size() == 1,
+                  "capped runtime loop should retain only the latest VIP operation");
+    runner.expect(result.health_schedules.size() == 1,
+                  "capped runtime loop should retain only the latest health observation");
+    runner.expect(result.heartbeat_send_schedules.size() == 1,
+                  "capped runtime loop should retain only the latest heartbeat schedule");
+    runner.expect(result.heartbeat_sends.size() == 1,
+                  "capped runtime loop should retain only the latest heartbeat send");
+    runner.expect(result.heartbeat_receive_states.size() == 1,
+                  "capped runtime loop should retain only the latest heartbeat receive state");
+    runner.expect(result.failover_decisions.size() == 1,
+                  "capped runtime loop should retain only the latest failover decision");
+    runner.expect(result.health_schedules.at(0).iteration_index == 2,
+                  "capped runtime loop should keep the newest observation");
 }
 
 void testDaemonRuntimeLoopStopsOnLifecycleFault(TestRunner& runner) {
@@ -4041,8 +4092,15 @@ int main() {
     runner.run("daemon runtime loop stops before first iteration on shutdown", [&runner] {
         testDaemonRuntimeLoopStopsBeforeFirstIterationOnShutdown(runner);
     });
+    runner.run("daemon runtime loop run-forever stops before first iteration on shutdown",
+               [&runner] {
+                   testDaemonRuntimeLoopRunForeverStopsBeforeFirstIterationOnShutdown(runner);
+               });
     runner.run("daemon runtime loop stops on shutdown with zero max iterations", [&runner] {
         testDaemonRuntimeLoopStopsOnShutdownWithZeroMaxIterations(runner);
+    });
+    runner.run("daemon runtime loop caps recorded observations", [&runner] {
+        testDaemonRuntimeLoopCapsRecordedObservations(runner);
     });
     runner.run("daemon runtime loop stops on lifecycle fault", [&runner] {
         testDaemonRuntimeLoopStopsOnLifecycleFault(runner);
