@@ -1,5 +1,6 @@
 #include "api/LocalApi.hpp"
 #include "config/Config.hpp"
+#include "health/HealthCheck.hpp"
 #include "heartbeat/HeartbeatTransport.hpp"
 #include "platform/linux/LinuxVipOwnershipProbe.hpp"
 #include "platform/linux/LinuxVipManager.hpp"
@@ -137,6 +138,60 @@ int main(int argc, char** argv) {
         spdlog::info("health command='{}' interval_ms={} timeout_ms={}", config.health.command,
                      config.health.interval_ms, config.health.timeout_ms);
         spdlog::info("configured peers={}", config.peers.size());
+
+        if (api_startup.state == easyfailover::LocalApiStartupState::Ready) {
+            auto lifecycle_snapshot = easyfailover::DaemonLifecycleResult{
+                .initial_state = loop_result.initial_state,
+                .final_state = loop_result.final_state,
+                .started = loop_result.iterations_ran > 0,
+                .iteration_ran = loop_result.iterations_ran > 0,
+                .stopped = loop_result.final_state == easyfailover::DaemonLifecycleState::Stopped,
+                .validation_errors = loop_result.validation_errors,
+                .vip_operations = loop_result.vip_operations,
+                .local_status = easyfailover::LocalNodeStatus{.node_id = config.node_id,
+                                                              .priority = config.priority,
+                                                              .healthy = true,
+                                                              .state = easyfailover::NodeState::Backup},
+                .failover_decision = easyfailover::FailoverDecision{},
+                .detail = loop_result.detail};
+            if (!loop_result.failover_decisions.empty()) {
+                const auto& latest_decision = loop_result.failover_decisions.back();
+                lifecycle_snapshot.local_status = latest_decision.local_status;
+                lifecycle_snapshot.failover_decision = latest_decision.decision;
+                lifecycle_snapshot.local_vip_owner =
+                    latest_decision.local_status.state == easyfailover::NodeState::Master;
+                lifecycle_snapshot.local_vip_owner_known = true;
+            }
+
+            const auto peers_observed =
+                loop_result.failover_decisions.empty()
+                    ? 0
+                    : static_cast<int>(loop_result.failover_decisions.back().peer_statuses.size());
+            const auto health = easyfailover::HealthCheckResult{
+                .status = config.health.command.empty() ? easyfailover::HealthStatus::Healthy
+                                                        : easyfailover::HealthStatus::Unhealthy,
+                .detail = config.health.command.empty() ? "no health command configured"
+                                                        : "health check not evaluated"};
+            const auto local_node_state =
+                loop_result.failover_decisions.empty()
+                    ? easyfailover::NodeState::Backup
+                    : loop_result.failover_decisions.back().local_status.state;
+            const auto snapshot = easyfailover::LocalApiHttpSnapshot{
+                .status = easyfailover::buildLocalApiStatusResponse(
+                    config, lifecycle_snapshot, health, local_node_state, dry_run, peers_observed),
+                .config = easyfailover::buildLocalApiConfigResponse(config),
+                .events = easyfailover::buildLocalApiEventsResponse()};
+
+            spdlog::info("local API listening bind={} detail=\"{}\"", api_startup.bind,
+                         api_startup.detail);
+            const auto serve_result =
+                easyfailover::serveLocalApiHttp(api_startup.bind, snapshot, &shutdown_state);
+            if (!serve_result.error.empty()) {
+                spdlog::error("local API listener failed bind={} error=\"{}\"",
+                              api_startup.bind, serve_result.error);
+                return EXIT_FAILURE;
+            }
+        }
 
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {

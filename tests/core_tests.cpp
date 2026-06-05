@@ -55,6 +55,8 @@ using easyfailover::LinuxVipManager;
 using easyfailover::LinuxVipManagerOptions;
 using easyfailover::LocalApiEvent;
 using easyfailover::LocalApiEventField;
+using easyfailover::LocalApiHttpRequest;
+using easyfailover::LocalApiHttpSnapshot;
 using easyfailover::LocalNodeStatus;
 using easyfailover::LocalApiStartupState;
 using easyfailover::LocalApiConfigValidateOutcome;
@@ -78,6 +80,7 @@ using easyfailover::VipOwnershipProbeResult;
 using easyfailover::buildLocalApiConfigResponse;
 using easyfailover::buildLocalApiConfigValidateResponse;
 using easyfailover::buildLocalApiEventsResponse;
+using easyfailover::buildLocalApiHttpResponse;
 using easyfailover::buildLocalApiLifecycleEvent;
 using easyfailover::buildLocalApiStatusResponse;
 using easyfailover::buildLocalApiVipOperationEvent;
@@ -96,6 +99,12 @@ using easyfailover::runDaemonLifecycleOnce;
 using easyfailover::runDaemonRuntimeLoop;
 using easyfailover::runHeartbeatLoopOnce;
 using easyfailover::serializeHeartbeatMessage;
+using easyfailover::serializeLocalApiConfigResponse;
+using easyfailover::serializeLocalApiConfigValidateResponse;
+using easyfailover::serializeLocalApiEventsResponse;
+using easyfailover::serializeLocalApiStatusResponse;
+using easyfailover::serveLocalApiHttp;
+using easyfailover::serveLocalApiHttpOnce;
 using easyfailover::loadConfigFromFile;
 using easyfailover::loadConfigFromTomlString;
 
@@ -137,6 +146,10 @@ class TestRunner {
 
 bool contains(const std::vector<std::string>& values, const std::string_view expected) {
     return std::find(values.begin(), values.end(), expected) != values.end();
+}
+
+bool containsText(const std::string& value, const std::string_view expected) {
+    return value.find(expected) != std::string::npos;
 }
 
 const LocalApiEventField* findEventField(const LocalApiEvent& event, const std::string_view name) {
@@ -493,8 +506,8 @@ void testLocalApiStartupReadyForReadOnlyEnabledConfig(TestRunner& runner) {
                   "read-only enabled API config should be ready for future listener");
     runner.expect(result.bind == config.api.bind,
                   "read-only API startup should preserve configured bind");
-    runner.expect(result.detail == "local API skeleton ready; listener not implemented",
-                  "read-only API startup should report stable skeleton detail");
+    runner.expect(result.detail == "local API read-only listener ready",
+                  "read-only API startup should report stable listener detail");
 }
 
 void testLocalApiStartupRejectsWriteMode(TestRunner& runner) {
@@ -610,6 +623,21 @@ void testLocalApiStatusResponseKeepsNoCommandHealthDetail(TestRunner& runner) {
 
     runner.expect(response.health.detail == health.detail,
                   "status response should preserve no-command health detail");
+}
+
+void testLocalApiStatusResponseKeepsUnevaluatedHealthDetail(TestRunner& runner) {
+    auto config = validConfig();
+    const auto lifecycle = DaemonLifecycleResult{};
+    const auto health = easyfailover::HealthCheckResult{.status = HealthStatus::Unhealthy,
+                                                        .detail = "health check not evaluated"};
+
+    const auto response = buildLocalApiStatusResponse(config, lifecycle, health, NodeState::Backup,
+                                                      true);
+
+    runner.expect(response.health.status == "unhealthy",
+                  "status response should conservatively report unevaluated health as unhealthy");
+    runner.expect(response.health.detail == "health check not evaluated",
+                  "status response should preserve unevaluated health detail");
 }
 
 void testLocalApiConfigResponseMapsEffectiveConfig(TestRunner& runner) {
@@ -914,6 +942,183 @@ void testLocalApiVipOperationEventMapsRuntimeLogFields(TestRunner& runner) {
                   "VIP commands field should be integer value");
     runner.expect(findEventField(event, "error") == nullptr,
                   "VIP structured fields should not expose free-form error detail");
+}
+
+LocalApiHttpSnapshot sampleLocalApiHttpSnapshot() {
+    auto config = validConfig();
+    const auto lifecycle = DaemonLifecycleResult{
+        .initial_state = DaemonLifecycleState::Stopped,
+        .final_state = DaemonLifecycleState::Stopped,
+        .started = true,
+        .iteration_ran = true,
+        .stopped = true,
+        .validation_errors = {},
+        .vip_operations = {},
+        .local_vip_owner_known = true,
+        .local_vip_owner = true,
+        .local_status = LocalNodeStatus{.node_id = "node-a",
+                                        .priority = 100,
+                                        .healthy = true,
+                                        .state = NodeState::Master},
+        .failover_decision = easyfailover::FailoverDecision{.action = FailoverAction::StayMaster,
+                                                            .selected_master = "node-a",
+                                                            .reason = "local node remains master"},
+        .detail = "max iterations completed"};
+    const auto health = easyfailover::HealthCheckResult{.status = HealthStatus::Healthy,
+                                                        .detail = "ok"};
+    const auto vip_event = buildLocalApiVipOperationEvent(
+        7,
+        VipOperationResult{.request = {.type = VipOperationType::Announce,
+                                       .address = "10.0.0.50/24",
+                                       .interface = "eth0",
+                                       .dry_run = true},
+                           .success = true,
+                           .dry_run = true,
+                           .commands = {},
+                           .error = ""},
+        0);
+
+    return LocalApiHttpSnapshot{
+        .status = buildLocalApiStatusResponse(config, lifecycle, health, NodeState::Master,
+                                              true, 1),
+        .config = buildLocalApiConfigResponse(config),
+        .events = buildLocalApiEventsResponse({vip_event})};
+}
+
+void testLocalApiStatusResponseSerializesJson(TestRunner& runner) {
+    const auto body = serializeLocalApiStatusResponse(sampleLocalApiHttpSnapshot().status);
+
+    runner.expect(containsText(body, "\"node\":{\"id\":\"node-a\""),
+                  "status JSON should include node object");
+    runner.expect(containsText(body, "\"local_owner\":true"),
+                  "status JSON should include local VIP ownership");
+    runner.expect(containsText(body, "\"peers_observed\":1"),
+                  "status JSON should include observed peers");
+}
+
+void testLocalApiConfigResponseSerializesJson(TestRunner& runner) {
+    const auto body = serializeLocalApiConfigResponse(sampleLocalApiHttpSnapshot().config);
+
+    runner.expect(containsText(body, "\"health\":{\"command_redacted\":true"),
+                  "config JSON should redact health command");
+    runner.expect(containsText(body, "\"peers\":[{\"id\":\"node-b\""),
+                  "config JSON should include configured peers");
+}
+
+void testLocalApiValidateResponseSerializesJson(TestRunner& runner) {
+    const auto body = serializeLocalApiConfigValidateResponse(
+        buildLocalApiConfigValidateResponse(
+            LocalApiConfigValidateRequest{.format = "toml", .config = "bad = [\n"}));
+
+    runner.expect(containsText(body, "\"outcome\":\"request_error\""),
+                  "validate JSON should include request error outcome");
+    runner.expect(containsText(body, "\"error_code\":\"invalid_toml\""),
+                  "validate JSON should include stable error code");
+}
+
+void testLocalApiEventsResponseSerializesJson(TestRunner& runner) {
+    const auto body = serializeLocalApiEventsResponse(sampleLocalApiHttpSnapshot().events);
+
+    runner.expect(containsText(body, "\"events\":[{\"sequence\":7"),
+                  "events JSON should include sequence");
+    runner.expect(containsText(body, "\"event\":\"vip_operation\""),
+                  "events JSON should include event name");
+}
+
+void testLocalApiHttpRoutesStatusConfigAndEvents(TestRunner& runner) {
+    const auto snapshot = sampleLocalApiHttpSnapshot();
+
+    const auto status = buildLocalApiHttpResponse(
+        LocalApiHttpRequest{.method = "GET", .path = "/api/v1/status", .body = ""},
+        snapshot);
+    const auto config = buildLocalApiHttpResponse(
+        LocalApiHttpRequest{.method = "GET", .path = "/api/v1/config", .body = ""},
+        snapshot);
+    const auto events = buildLocalApiHttpResponse(
+        LocalApiHttpRequest{.method = "GET", .path = "/api/v1/events?limit=10", .body = ""},
+        snapshot);
+
+    runner.expect(status.status_code == 200, "status route should return OK");
+    runner.expect(containsText(status.body, "\"state\":\"master\""),
+                  "status route should return status JSON");
+    runner.expect(config.status_code == 200, "config route should return OK");
+    runner.expect(containsText(config.body, "\"mutation_safety\""),
+                  "config route should return config JSON");
+    runner.expect(events.status_code == 200, "events route should return OK");
+    runner.expect(containsText(events.body, "\"vip_operation\""),
+                  "events route should return events JSON");
+}
+
+void testLocalApiHttpRoutesConfigValidate(TestRunner& runner) {
+    const auto response = buildLocalApiHttpResponse(
+        LocalApiHttpRequest{.method = "POST",
+                            .path = "/api/v1/config/validate",
+                            .body = "{\"format\":\"toml\",\"config\":\"node_id = \\\"node-a\\\"\\n"
+                                    "priority = 100\\n"
+                                    "[vip]\\n"
+                                    "address = \\\"10.0.0.50/24\\\"\\n"
+                                    "interface = \\\"eth0\\\"\\n"
+                                    "[[peers]]\\n"
+                                    "id = \\\"node-b\\\"\\n"
+                                    "address = \\\"10.0.0.12:7432\\\"\\n\"}"},
+        sampleLocalApiHttpSnapshot());
+
+    runner.expect(response.status_code == 200,
+                  "valid config validate route should return OK");
+    runner.expect(containsText(response.body, "\"valid\":true"),
+                  "valid config validate route should report valid");
+}
+
+void testLocalApiHttpRoutesRejectBadValidateBody(TestRunner& runner) {
+    const auto response = buildLocalApiHttpResponse(
+        LocalApiHttpRequest{.method = "POST",
+                            .path = "/api/v1/config/validate",
+                            .body = "{\"format\":\"toml\"}"},
+        sampleLocalApiHttpSnapshot());
+
+    runner.expect(response.status_code == 400,
+                  "bad validate request should return bad request");
+    runner.expect(containsText(response.body, "\"code\":\"bad_request\""),
+                  "bad validate request should return stable error envelope");
+}
+
+void testLocalApiHttpRoutesRejectUnknownPathAndMethod(TestRunner& runner) {
+    const auto unknown = buildLocalApiHttpResponse(
+        LocalApiHttpRequest{.method = "GET", .path = "/api/v1/missing", .body = ""},
+        sampleLocalApiHttpSnapshot());
+    const auto method = buildLocalApiHttpResponse(
+        LocalApiHttpRequest{.method = "POST", .path = "/api/v1/status", .body = ""},
+        sampleLocalApiHttpSnapshot());
+
+    runner.expect(unknown.status_code == 404, "unknown route should return not found");
+    runner.expect(containsText(unknown.body, "\"code\":\"not_found\""),
+                  "unknown route should return stable not-found code");
+    runner.expect(method.status_code == 405, "unsupported method should return 405");
+    runner.expect(containsText(method.body, "\"code\":\"method_not_allowed\""),
+                  "unsupported method should return stable method code");
+}
+
+void testLocalApiListenerRejectsInvalidBind(TestRunner& runner) {
+    const auto result = serveLocalApiHttpOnce("not-a-bind", sampleLocalApiHttpSnapshot());
+
+    runner.expect(!result.started, "invalid bind should not start listener");
+    runner.expect(!result.served_request, "invalid bind should not serve request");
+    runner.expect(result.error == "local API bind must be host:port",
+                  "invalid bind should return stable error");
+}
+
+void testLocalApiListenerExitsWhenShutdownRequested(TestRunner& runner) {
+    auto shutdown_state = ShutdownSignalState{};
+    shutdown_state.requestShutdown(ShutdownSignal::Terminate);
+
+    const auto result = serveLocalApiHttp("127.0.0.1:28744", sampleLocalApiHttpSnapshot(),
+                                         &shutdown_state);
+
+    runner.expect(result.started, "shutdown-requested listener should open and close cleanly");
+    runner.expect(!result.served_request,
+                  "shutdown-requested listener should not serve a request");
+    runner.expect(result.error.empty(),
+                  "shutdown-requested listener should return without error");
 }
 
 void testInvalidHeartbeatConfigFixture(TestRunner& runner) {
@@ -3478,6 +3683,9 @@ int main() {
     runner.run("local API status response keeps no-command health detail", [&runner] {
         testLocalApiStatusResponseKeepsNoCommandHealthDetail(runner);
     });
+    runner.run("local API status response keeps unevaluated health detail", [&runner] {
+        testLocalApiStatusResponseKeepsUnevaluatedHealthDetail(runner);
+    });
     runner.run("local API config response maps effective config", [&runner] {
         testLocalApiConfigResponseMapsEffectiveConfig(runner);
     });
@@ -3519,6 +3727,36 @@ int main() {
     });
     runner.run("local API VIP operation event maps runtime log fields", [&runner] {
         testLocalApiVipOperationEventMapsRuntimeLogFields(runner);
+    });
+    runner.run("local API status response serializes JSON", [&runner] {
+        testLocalApiStatusResponseSerializesJson(runner);
+    });
+    runner.run("local API config response serializes JSON", [&runner] {
+        testLocalApiConfigResponseSerializesJson(runner);
+    });
+    runner.run("local API validate response serializes JSON", [&runner] {
+        testLocalApiValidateResponseSerializesJson(runner);
+    });
+    runner.run("local API events response serializes JSON", [&runner] {
+        testLocalApiEventsResponseSerializesJson(runner);
+    });
+    runner.run("local API HTTP routes status config and events", [&runner] {
+        testLocalApiHttpRoutesStatusConfigAndEvents(runner);
+    });
+    runner.run("local API HTTP routes config validate", [&runner] {
+        testLocalApiHttpRoutesConfigValidate(runner);
+    });
+    runner.run("local API HTTP routes reject bad validate body", [&runner] {
+        testLocalApiHttpRoutesRejectBadValidateBody(runner);
+    });
+    runner.run("local API HTTP routes reject unknown path and method", [&runner] {
+        testLocalApiHttpRoutesRejectUnknownPathAndMethod(runner);
+    });
+    runner.run("local API listener rejects invalid bind", [&runner] {
+        testLocalApiListenerRejectsInvalidBind(runner);
+    });
+    runner.run("local API listener exits when shutdown requested", [&runner] {
+        testLocalApiListenerExitsWhenShutdownRequested(runner);
     });
     runner.run("invalid heartbeat config fixture reports validation errors", [&runner] {
         testInvalidHeartbeatConfigFixture(runner);

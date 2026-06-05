@@ -1,9 +1,8 @@
 # Local API Design
 
-easy-failover will eventually expose a local HTTP API for status inspection, configuration
-visibility, validation, and recent runtime events. The current implementation evaluates API startup
-configuration but does not open a listener or serve endpoints yet. This document defines the first
-API shape before endpoint behavior is added.
+easy-failover exposes a local HTTP API for status inspection, configuration visibility, validation,
+and recent runtime events. The current implementation starts a read-only listener when explicitly
+enabled and serves a snapshot of daemon state after the runtime loop completes.
 
 ## Scope
 
@@ -21,7 +20,7 @@ execution, daemon control, config writes, or dashboard write actions in this fir
 
 ## Configuration
 
-The existing `[api]` config section controls whether a future listener starts:
+The existing `[api]` config section controls whether the listener starts:
 
 ```toml
 [api]
@@ -34,9 +33,9 @@ read_only = true
 - `bind`: listener address used only when `enabled = true`.
 - `read_only`: must stay `true` for this first API shape.
 
-If `api.enabled = true` and `api.read_only = false`, the first API implementation should refuse to
-start the API skeleton until write behavior and authentication are designed separately. This is an
-API startup rule, not a general `Config::validate()` rule.
+If `api.enabled = true` and `api.read_only = false`, API startup refuses to start until write
+behavior and authentication are designed separately. This is an API startup rule, not a general
+`Config::validate()` rule.
 
 ## Response Rules
 
@@ -73,8 +72,7 @@ or omit sensitive fields by default, including `health.command`.
 
 ### `GET /api/v1/status`
 
-Returns the local agent's current view of runtime state. The response model exists in code, but no
-HTTP listener or route serves it yet.
+Returns the local agent's current view of runtime state.
 
 Draft response:
 
@@ -113,16 +111,17 @@ Draft response:
 }
 ```
 
-`local_owner` should remain `false` until real VIP ownership state exists. It must not be inferred
-from election helpers alone.
+`local_owner` should only reflect observed local runtime state. It must not be inferred from
+election helpers alone.
 
-When a health command is configured, `health.detail` should use a redaction marker instead of
-returning command output or runner error text.
+When a health command is configured but has not been evaluated by the daemon loop yet, the API
+should report a conservative unhealthy status with `health.detail = "health check not evaluated"`.
+When actual command results are wired into the daemon loop, `health.detail` should use a redaction
+marker instead of returning command output or runner error text.
 
 ### `GET /api/v1/config`
 
-Returns the effective runtime configuration after defaults are applied. The response model exists in
-code, but no HTTP listener or route serves it yet.
+Returns the effective runtime configuration after defaults are applied.
 
 Draft response:
 
@@ -171,9 +170,8 @@ than returned verbatim.
 
 ### `POST /api/v1/config/validate`
 
-Validates a submitted candidate TOML config without applying it. This is the only planned `POST`
-in the first API shape, and it is still read-only because it does not mutate runtime state. The
-request/response model exists in code, but no HTTP listener or route serves it yet.
+Validates a submitted candidate TOML config without applying it. This is the only `POST` in the
+first API shape, and it is still read-only because it does not mutate runtime state.
 
 Draft request:
 
@@ -210,9 +208,8 @@ code guidance:
 
 ### `GET /api/v1/events`
 
-Returns recent structured runtime events from an in-memory ring buffer once such a buffer exists.
-The response model exists in code, but no HTTP listener or route serves it yet. Until an event ring
-buffer exists, response construction can return an empty list.
+Returns recent structured runtime events. Until an event ring buffer exists, response construction
+can return an empty list.
 
 Draft response:
 
