@@ -81,7 +81,29 @@ Linux build host needs:
 - Git;
 - `iproute2` and `arping` for hosts that will test real VIP movement.
 
-For a production-style source install under `/usr`, with configuration under `/etc`, use:
+For the simplest source install, run the installer script from the repository root:
+
+```sh
+./scripts/install.sh
+```
+
+By default, the script builds Release mode, installs under `/usr`, keeps configuration under
+`/etc/easy-failover`, creates `config.toml` only if it does not already exist, validates the active
+config, and reloads systemd if available. It does not enable or start the service automatically.
+
+For a local prefix, pass both the prefix and config root:
+
+```sh
+./scripts/install.sh --prefix /usr/local --sysconfdir /usr/local/etc
+```
+
+Review the planned commands without changing the host:
+
+```sh
+./scripts/install.sh --dry-run
+```
+
+For a manual production-style source install under `/usr`, with configuration under `/etc`, use:
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_SYSCONFDIR=/etc
