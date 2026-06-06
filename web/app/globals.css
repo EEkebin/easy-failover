@@ -387,6 +387,165 @@ footer {
   margin-top: 24px;
 }
 
+/* ---- Config editor panel (#98) ---- */
+
+.configPanel {
+  grid-column: 1 / -1;
+}
+
+.configForm {
+  display: grid;
+  gap: 18px;
+}
+
+.configSection {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.configSection > h3 {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.configGrid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.field > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.field input[type="text"],
+.field input[type="number"] {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  padding: 8px 10px;
+  width: 100%;
+}
+
+.field input:disabled {
+  background: var(--panel-subtle);
+  color: var(--muted);
+}
+
+.field.checkbox {
+  align-items: center;
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+}
+
+.field.checkbox > span {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.peerEditRow {
+  align-items: end;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1fr 1fr auto;
+}
+
+.configHint {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.configHint.warn {
+  color: var(--warn);
+}
+
+.configActions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.btn {
+  background: var(--neutral);
+  border: 1px solid var(--neutral);
+  border-radius: 6px;
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  min-height: 38px;
+  padding: 8px 16px;
+}
+
+.btn.secondary {
+  background: var(--panel);
+  border-color: var(--line);
+  color: var(--text);
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.configErrors {
+  background: var(--bad-bg);
+  border: 1px solid #f8c4bd;
+  border-radius: 8px;
+  color: var(--bad);
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  margin: 0;
+  padding: 12px;
+}
+
+.configErrors li {
+  list-style: disc;
+  margin-left: 18px;
+}
+
+.configSuccess {
+  background: var(--good-bg);
+  border: 1px solid #b8e5d8;
+  border-radius: 8px;
+  color: var(--good);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 12px;
+}
+
+.configNotice {
+  background: var(--neutral-bg);
+  border: 1px solid #cad8e2;
+  border-radius: 8px;
+  color: var(--neutral);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 12px;
+}
+
 @media (max-width: 900px) {
   main {
     padding: 18px;

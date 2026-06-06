@@ -293,3 +293,69 @@ export function dashboardDataFromView(view: NodeView): DashboardData | null {
     events: view.events ?? []
   };
 }
+
+// ---------------------------------------------------------------------------
+// Config editor client API (#98).
+//
+// The browser loads the selected node's effective (redacted) config via the
+// dashboard's own GET /api/nodes/[id]/config route, edits a form, serializes it
+// back to TOML on the client, and POSTs the candidate string to the same route.
+// The route validates and (when the node is writable) applies it, attaching the
+// write token SERVER-SIDE. The token never reaches the browser.
+// ---------------------------------------------------------------------------
+
+/**
+ * Response of GET /api/nodes/[id]/config. `writable` reflects whether the server
+ * has a write token for this node (so the UI can enable/disable Apply). The
+ * token itself is never present here. `config` is absent when unreachable.
+ */
+export type NodeConfigResponse = {
+  reachable: boolean;
+  writable: boolean;
+  config?: ConfigResponse;
+  error?: string;
+};
+
+/**
+ * Response of POST /api/nodes/[id]/config. On invalid config, `applied` is false
+ * and `errors` lists the daemon's validation errors. On a successful apply,
+ * `applied` is true and `backup_path` points at the saved backup. `error` is a
+ * single human-readable string for transport/auth/non-writable failures. The
+ * token never appears here.
+ */
+export type NodeConfigApplyResult = {
+  applied: boolean;
+  backup_path?: string;
+  errors?: unknown[];
+  error?: string;
+};
+
+/** Fetch the selected node's effective config + writability. */
+export async function fetchNodeConfig(id: string): Promise<NodeConfigResponse> {
+  return getJson<NodeConfigResponse>(`/api/nodes/${encodeURIComponent(id)}/config`);
+}
+
+/**
+ * Submit a candidate config (TOML string) for validation + apply. Returns the
+ * route's result. A non-OK HTTP status that still carries a JSON body (e.g. a
+ * 409 for a non-writable node) is surfaced as an applied=false result.
+ */
+export async function applyNodeConfig(
+  id: string,
+  configToml: string
+): Promise<NodeConfigApplyResult> {
+  const response = await fetch(`/api/nodes/${encodeURIComponent(id)}/config`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    cache: "no-store",
+    body: JSON.stringify({ config: configToml })
+  });
+  const result = (await response.json().catch(() => ({}))) as NodeConfigApplyResult;
+  if (typeof result.applied !== "boolean") {
+    return {
+      applied: false,
+      error: result.error ?? `apply request failed: ${response.status}`
+    };
+  }
+  return result;
+}
