@@ -33,6 +33,10 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
+# ProtectSystem=strict makes the filesystem read-only. `next start` normally
+# serves the prebuilt output without writing, but if your build writes a runtime
+# cache, grant just that path, e.g.:
+#   ReadWritePaths=/opt/easy-failover-dashboard/.next/cache
 
 [Install]
 WantedBy=multi-user.target
