@@ -218,15 +218,22 @@ export const sampleDashboardData: DashboardData = {
   ]
 };
 
-function apiBase() {
-  return process.env.NEXT_PUBLIC_EASY_FAILOVER_API_BASE ?? defaultApiBase;
-}
+// ---------------------------------------------------------------------------
+// Multi-node client API.
+//
+// The browser no longer talks to node daemons directly. All fetches go through
+// the dashboard's OWN server-side proxy routes (/api/nodes and /api/nodes/[id]),
+// which probe each node, flag reachability, and keep write tokens server-side.
+// ---------------------------------------------------------------------------
 
-async function getJson<T>(base: string, path: string): Promise<T> {
-  const response = await fetch(`${base}${path}`, {
-    headers: {
-      Accept: "application/json"
-    }
+import type { NodeSummary, NodeView } from "./nodes/types";
+
+export type { NodeSummary, NodeView } from "./nodes/types";
+
+async function getJson<T>(path: string): Promise<T> {
+  const response = await fetch(path, {
+    headers: { Accept: "application/json" },
+    cache: "no-store"
   });
   if (!response.ok) {
     throw new Error(`request failed for ${path}: ${response.status}`);
@@ -234,7 +241,31 @@ async function getJson<T>(base: string, path: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-function peersFromConfig(config: ConfigResponse, observed: number): PeerStatus[] {
+/**
+ * Fetch the fleet list from the dashboard's own proxy. Each entry carries a
+ * reachable flag; unreachable nodes are included (not dropped) so the UI can
+ * show them. Throws only if the dashboard's own API is unavailable.
+ */
+export async function fetchNodeSummaries(): Promise<NodeSummary[]> {
+  const data = await getJson<{ nodes: NodeSummary[] }>("/api/nodes");
+  return data.nodes;
+}
+
+/**
+ * Fetch one node's detail view (status/config/events + reachability) from the
+ * dashboard's own proxy. The returned view may have `reachable: false` for an
+ * unreachable node; that is a successful response, not an error.
+ */
+export async function fetchNodeView(id: string): Promise<NodeView> {
+  return getJson<NodeView>(`/api/nodes/${encodeURIComponent(id)}`);
+}
+
+/**
+ * Derive the peer list rendered by the dashboard from a node's config + the
+ * number of peers its heartbeat currently observes. Mirrors the previous
+ * single-node behavior so the existing PeerRow markup is reused unchanged.
+ */
+export function peersFromConfig(config: ConfigResponse, observed: number): PeerStatus[] {
   return config.peers.map((peer, index) => ({
     id: peer.id,
     address: peer.address,
@@ -244,20 +275,21 @@ function peersFromConfig(config: ConfigResponse, observed: number): PeerStatus[]
   }));
 }
 
-export async function fetchDashboardData(): Promise<DashboardData> {
-  const base = apiBase().replace(/\/$/, "");
-  const [status, config, events] = await Promise.all([
-    getJson<StatusResponse>(base, "/api/v1/status"),
-    getJson<ConfigResponse>(base, "/api/v1/config"),
-    getJson<EventsResponse>(base, "/api/v1/events")
-  ]);
-
+/**
+ * Adapt a reachable NodeView into the DashboardData shape the existing panels
+ * consume. Returns null when the view lacks the status/config needed to render
+ * (e.g. an unreachable node), letting the caller show an "unreachable" state.
+ */
+export function dashboardDataFromView(view: NodeView): DashboardData | null {
+  if (!view.reachable || !view.status || !view.config) {
+    return null;
+  }
   return {
     sample: false,
-    api_base: base,
-    status,
-    config,
-    peers: peersFromConfig(config, status.heartbeat.peers_observed),
-    events: events.events
+    api_base: "/api/nodes",
+    status: view.status,
+    config: view.config,
+    peers: peersFromConfig(view.config, view.status.heartbeat.peers_observed),
+    events: view.events ?? []
   };
 }
