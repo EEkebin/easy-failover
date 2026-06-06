@@ -10,12 +10,15 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace easyfailover {
+
+struct DaemonLoopResult;
 
 enum class DaemonLifecycleState {
     Stopped,
@@ -161,5 +164,12 @@ struct DaemonLoopResult {
                                                    VipManager& vip_manager,
                                                    VipOwnershipProbe& ownership_probe,
                                                    HeartbeatTransport& heartbeat_transport);
+
+[[nodiscard]] DaemonLoopResult runDaemonRuntimeLoop(
+    const DaemonLoopRequest& request,
+    VipManager& vip_manager,
+    VipOwnershipProbe& ownership_probe,
+    HeartbeatTransport& heartbeat_transport,
+    const std::function<void(const DaemonLoopResult&)>& result_observer);
 
 } // namespace easyfailover

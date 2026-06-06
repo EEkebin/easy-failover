@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <string_view>
 
 namespace easyfailover {
@@ -25,8 +26,8 @@ class ShutdownSignalState {
     [[nodiscard]] std::string_view reason() const;
 
   private:
-    bool shutdown_requested_ = false;
-    ShutdownSignal signal_ = ShutdownSignal::None;
+    std::atomic<bool> shutdown_requested_ = false;
+    std::atomic<ShutdownSignal> signal_ = ShutdownSignal::None;
 };
 
 [[nodiscard]] constexpr std::string_view toString(const ShutdownSignal signal) {

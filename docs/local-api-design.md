@@ -2,7 +2,7 @@
 
 easy-failover exposes a local HTTP API for status inspection, configuration visibility, validation,
 and recent runtime events. The current implementation starts a read-only listener when explicitly
-enabled and serves a snapshot of daemon state after the runtime loop completes.
+enabled and serves the latest daemon snapshot while the runtime loop is active.
 
 ## Scope
 
@@ -36,6 +36,10 @@ read_only = true
 If `api.enabled = true` and `api.read_only = false`, API startup refuses to start until write
 behavior and authentication are designed separately. This is an API startup rule, not a general
 `Config::validate()` rule.
+
+When the daemon is started with `--run-forever`, the API listener runs concurrently with the daemon
+loop. Responses use an initial startup snapshot until the first runtime iteration publishes current
+state, then update from the latest observed loop result.
 
 ## Response Rules
 

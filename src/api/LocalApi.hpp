@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -183,6 +184,9 @@ struct LocalApiHttpServeResult {
     std::string error;
 };
 
+using LocalApiHttpSnapshotProvider = std::function<LocalApiHttpSnapshot()>;
+using LocalApiHttpStartupObserver = std::function<void(const LocalApiHttpServeResult&)>;
+
 [[nodiscard]] constexpr std::string_view toString(const LocalApiStartupState state) {
     switch (state) {
     case LocalApiStartupState::Disabled:
@@ -257,5 +261,16 @@ struct LocalApiHttpServeResult {
     std::string_view bind,
     const LocalApiHttpSnapshot& snapshot,
     ShutdownSignalState* shutdown_state);
+
+[[nodiscard]] LocalApiHttpServeResult serveLocalApiHttp(
+    std::string_view bind,
+    const LocalApiHttpSnapshotProvider& snapshot_provider,
+    ShutdownSignalState* shutdown_state);
+
+[[nodiscard]] LocalApiHttpServeResult serveLocalApiHttp(
+    std::string_view bind,
+    const LocalApiHttpSnapshotProvider& snapshot_provider,
+    ShutdownSignalState* shutdown_state,
+    const LocalApiHttpStartupObserver& startup_observer);
 
 } // namespace easyfailover

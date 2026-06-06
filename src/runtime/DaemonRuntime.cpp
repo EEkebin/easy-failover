@@ -52,6 +52,13 @@ void appendObservations(std::vector<T>& observations,
     }
 }
 
+void publishLoopResult(const std::function<void(const DaemonLoopResult&)>& observer,
+                       const DaemonLoopResult& result) {
+    if (observer) {
+        observer(result);
+    }
+}
+
 [[nodiscard]] HealthScheduleObservation evaluateHealthSchedule(
     const Config& config,
     const std::size_t iteration_index,
@@ -300,10 +307,12 @@ DaemonLifecycleResult runDaemonLifecycleOnce(const DaemonLifecycleRequest& reque
     return result;
 }
 
-DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request,
-                                      VipManager& vip_manager,
-                                      VipOwnershipProbe& ownership_probe,
-                                      HeartbeatTransport& heartbeat_transport) {
+DaemonLoopResult runDaemonRuntimeLoop(
+    const DaemonLoopRequest& request,
+    VipManager& vip_manager,
+    VipOwnershipProbe& ownership_probe,
+    HeartbeatTransport& heartbeat_transport,
+    const std::function<void(const DaemonLoopResult&)>& result_observer) {
     auto result = DaemonLoopResult{.initial_state = request.initial_state,
                                    .final_state = request.initial_state,
                                    .stop_reason = DaemonLoopStopReason::MaxIterations,
@@ -462,8 +471,10 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request,
 
         if (lifecycle_result.final_state == DaemonLifecycleState::Faulted) {
             result.stop_reason = DaemonLoopStopReason::LifecycleFaulted;
+            publishLoopResult(result_observer, result);
             return result;
         }
+        publishLoopResult(result_observer, result);
         if (realNetworkMutationRequested(request) && heartbeat_cycle_warmed_up) {
             real_mutation_warmup_complete = true;
         }
@@ -484,6 +495,13 @@ DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request,
     }
 
     return result;
+}
+
+DaemonLoopResult runDaemonRuntimeLoop(const DaemonLoopRequest& request,
+                                      VipManager& vip_manager,
+                                      VipOwnershipProbe& ownership_probe,
+                                      HeartbeatTransport& heartbeat_transport) {
+    return runDaemonRuntimeLoop(request, vip_manager, ownership_probe, heartbeat_transport, {});
 }
 
 } // namespace easyfailover

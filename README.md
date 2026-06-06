@@ -297,6 +297,8 @@ npm install
 npm run dev
 ```
 
-The dashboard reads the local HTTP API when the daemon is running with `api.enabled = true` and
-falls back to sample data otherwise. It does not expose VIP mutation, daemon controls, config
-writes, or other privileged actions.
+The dashboard reads the local HTTP API when the daemon is running with `api.enabled = true`.
+The API listener runs alongside the long-running daemon and falls back to a startup snapshot until
+the first runtime iteration publishes current state. The dashboard falls back to sample data when
+the API is unavailable. It does not expose VIP mutation, daemon controls, config writes, or other
+privileged actions.
