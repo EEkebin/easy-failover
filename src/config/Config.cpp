@@ -101,6 +101,8 @@ Config configFromTable(const toml::table& root) {
         config.api.enabled = optionalBool(*api, "enabled", config.api.enabled);
         config.api.bind = optionalString(*api, "bind", config.api.bind);
         config.api.read_only = optionalBool(*api, "read_only", config.api.read_only);
+        config.api.auth_token_file =
+            optionalString(*api, "auth_token_file", config.api.auth_token_file);
     }
 
     if (const auto* mutation_safety = optionalTable(root, "mutation_safety");
