@@ -345,8 +345,9 @@ int main(int argc, char** argv) {
         }
         spdlog::info("heartbeat bind={} interval_ms={} timeout_ms={}", config.heartbeat.bind,
                      config.heartbeat.interval_ms, config.heartbeat.timeout_ms);
-        spdlog::info("health command='{}' interval_ms={} timeout_ms={}", config.health.command,
-                     config.health.interval_ms, config.health.timeout_ms);
+        spdlog::info("health command_set={} interval_ms={} timeout_ms={}",
+                     !config.health.command.empty(), config.health.interval_ms,
+                     config.health.timeout_ms);
         spdlog::info("configured peers={}", config.peers.size());
 
         if (api_thread.joinable()) {

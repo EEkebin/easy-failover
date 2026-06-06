@@ -37,6 +37,8 @@ namespace {
 
 constexpr auto kAcceptPollTimeoutMs = 250;
 constexpr auto kReadPollTimeoutMs = 1000;
+constexpr auto kMaxApplyBodyBytes = std::size_t{1U << 20U};
+constexpr auto kMaxRequestBytes = kMaxApplyBodyBytes + 8192U;
 
 [[nodiscard]] std::string healthDetailForStatusResponse(const Config& config,
                                                         const HealthCheckResult& health) {
@@ -150,7 +152,7 @@ constexpr auto kReadPollTimeoutMs = 1000;
     case 500:
         return "Internal Server Error";
     default:
-        return "OK";
+        return "Internal Server Error";
     }
 }
 
@@ -249,6 +251,42 @@ constexpr auto kReadPollTimeoutMs = 1000;
         case 't':
             output.push_back('\t');
             break;
+        case 'u': {
+            if (index + 4 >= body.size()) {
+                return {};
+            }
+            auto code_point = std::uint32_t{0};
+            for (auto hex_i = std::size_t{0}; hex_i < 4; ++hex_i) {
+                const auto hex_ch = body.at(++index);
+                std::uint32_t nibble = 0;
+                if (hex_ch >= '0' && hex_ch <= '9') {
+                    nibble = static_cast<std::uint32_t>(hex_ch - '0');
+                } else if (hex_ch >= 'a' && hex_ch <= 'f') {
+                    nibble = static_cast<std::uint32_t>(hex_ch - 'a') + 10U;
+                } else if (hex_ch >= 'A' && hex_ch <= 'F') {
+                    nibble = static_cast<std::uint32_t>(hex_ch - 'A') + 10U;
+                } else {
+                    return {};
+                }
+                code_point = (code_point << 4U) | nibble;
+            }
+            // Reject lone surrogates (U+D800–U+DFFF): they are not valid Unicode
+            // scalar values and cannot be encoded as well-formed UTF-8.
+            if (code_point >= 0xD800U && code_point <= 0xDFFFU) {
+                return {};
+            }
+            if (code_point < 0x80U) {
+                output.push_back(static_cast<char>(code_point));
+            } else if (code_point < 0x800U) {
+                output.push_back(static_cast<char>(0xC0U | (code_point >> 6U)));
+                output.push_back(static_cast<char>(0x80U | (code_point & 0x3FU)));
+            } else {
+                output.push_back(static_cast<char>(0xE0U | (code_point >> 12U)));
+                output.push_back(static_cast<char>(0x80U | ((code_point >> 6U) & 0x3FU)));
+                output.push_back(static_cast<char>(0x80U | (code_point & 0x3FU)));
+            }
+            break;
+        }
         default:
             return {};
         }
@@ -372,7 +410,7 @@ constexpr auto kReadPollTimeoutMs = 1000;
 [[nodiscard]] std::string readRequestBytes(const int client_fd) {
     auto data = std::string{};
     auto buffer = std::array<char, 4096>{};
-    while (data.size() < 65536) {
+    while (data.size() < kMaxRequestBytes) {
         auto poll_fd = pollfd{.fd = client_fd, .events = POLLIN, .revents = 0};
         const auto poll_result = ::poll(&poll_fd, 1, kReadPollTimeoutMs);
         if (poll_result <= 0 || (poll_fd.revents & POLLIN) == 0) {
@@ -747,7 +785,7 @@ namespace {
 
 LocalApiConfigApplyResult buildLocalApiConfigApplyResult(const LocalApiHttpRequest& request,
                                                          const LocalApiWriteContext& write_context) {
-    constexpr auto kMaxBodyBytes = std::size_t{1U << 20U};
+    constexpr auto kMaxBodyBytes = kMaxApplyBodyBytes;
 
     // Authentication first: never inspect the body before the token is verified.
     if (request.authorization.empty()) {
@@ -1080,6 +1118,11 @@ LocalApiHttpResponse buildLocalApiHttpResponse(const LocalApiHttpRequest& reques
         if (request.method != "POST") {
             return jsonResponse(405, errorEnvelope("method_not_allowed",
                                                    "endpoint only supports POST"));
+        }
+
+        if (request.body.size() > kMaxApplyBodyBytes) {
+            return jsonResponse(413, errorEnvelope("payload_too_large",
+                                                   "request body exceeds maximum allowed size"));
         }
 
         const auto format = parseJsonStringValue(request.body, "format");
