@@ -62,6 +62,17 @@ configure_file(
     "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-dinit.cmake"
     @ONLY)
 
+set(
+    EASY_FAILOVER_S6_DIR
+    "${CMAKE_INSTALL_SYSCONFDIR}/s6"
+    CACHE STRING
+          "Install directory for the s6 service directory")
+
+configure_file(
+    cmake/install-s6.cmake.in
+    "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-s6.cmake"
+    @ONLY)
+
 FetchContent_Declare(
     spdlog
     GIT_REPOSITORY https://github.com/gabime/spdlog.git
@@ -155,6 +166,7 @@ install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-systemd-unit.cmake")
 install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-openrc.cmake")
 install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-runit.cmake")
 install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-dinit.cmake")
+install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-s6.cmake")
 
 install(FILES README.md LICENSE DESTINATION "${CMAKE_INSTALL_DOCDIR}")
 install(

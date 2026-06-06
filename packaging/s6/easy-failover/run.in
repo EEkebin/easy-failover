@@ -1,0 +1,10 @@
+#!/bin/sh
+# s6 run script for the easy-failover virtual IP failover agent.
+#
+# s6-supervise runs this in the foreground, so the agent uses --run-forever and
+# must not daemonize. Redirect stderr to stdout so the companion log/ service
+# (wired up automatically by s6-supervise) captures both streams.
+exec 2>&1
+exec @EASY_FAILOVER_S6_BINDIR@/easy-failover \
+	--config @EASY_FAILOVER_S6_SYSCONFDIR@/easy-failover/config.toml \
+	--run-forever

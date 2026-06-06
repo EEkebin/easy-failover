@@ -1,0 +1,8 @@
+#!/bin/sh
+# s6-log logger for easy-failover. s6-supervise connects this service's stdin to
+# the main service's stdout, so the agent's logfmt runtime events are written to
+# /var/log/easy-failover with rotation (10 archived files, ~1 MB each). Create
+# the directory before starting the service:
+#
+#   install -d -m 0755 /var/log/easy-failover
+exec s6-log -b n10 s1000000 /var/log/easy-failover
