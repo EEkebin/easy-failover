@@ -40,6 +40,17 @@ configure_file(
     "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-openrc.cmake"
     @ONLY)
 
+set(
+    EASY_FAILOVER_RUNIT_DIR
+    "${CMAKE_INSTALL_SYSCONFDIR}/sv"
+    CACHE STRING
+          "Install directory for the runit service directory")
+
+configure_file(
+    cmake/install-runit.cmake.in
+    "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-runit.cmake"
+    @ONLY)
+
 FetchContent_Declare(
     spdlog
     GIT_REPOSITORY https://github.com/gabime/spdlog.git
@@ -131,6 +142,7 @@ install(
 
 install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-systemd-unit.cmake")
 install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-openrc.cmake")
+install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-runit.cmake")
 
 install(FILES README.md LICENSE DESTINATION "${CMAKE_INSTALL_DOCDIR}")
 install(
