@@ -19,6 +19,7 @@ import "server-only";
 
 import { readFileSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { randomBytes } from "node:crypto";
 
 import type { NodeEntry } from "./types";
 
@@ -196,7 +197,7 @@ export function appendNode(entry: NodeEntry): boolean {
   const next = [...existing, coerced];
   try {
     mkdirSync(dirname(path), { recursive: true });
-    const tmp = `${path}.${process.pid}.tmp`;
+    const tmp = `${path}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
     writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, "utf8");
     renameSync(tmp, path); // atomic on POSIX: concurrent onboarding completions can't corrupt
     return true;

@@ -673,7 +673,7 @@ function emptyWizardForm(): WizardForm {
     healthIntervalMs: "",
     healthTimeoutMs: "",
     electionRequireQuorum: false,
-    electionPreempt: false,
+    electionPreempt: true,
     apiEnabled: true,
     apiBind: "",
     apiReadOnly: true

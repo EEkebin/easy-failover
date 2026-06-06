@@ -270,6 +270,11 @@ constexpr auto kMaxRequestBytes = kMaxApplyBodyBytes + 8192U;
                 }
                 code_point = (code_point << 4U) | nibble;
             }
+            // Reject lone surrogates (U+D800–U+DFFF): they are not valid Unicode
+            // scalar values and cannot be encoded as well-formed UTF-8.
+            if (code_point >= 0xD800U && code_point <= 0xDFFFU) {
+                return {};
+            }
             if (code_point < 0x80U) {
                 output.push_back(static_cast<char>(code_point));
             } else if (code_point < 0x800U) {
@@ -1113,6 +1118,11 @@ LocalApiHttpResponse buildLocalApiHttpResponse(const LocalApiHttpRequest& reques
         if (request.method != "POST") {
             return jsonResponse(405, errorEnvelope("method_not_allowed",
                                                    "endpoint only supports POST"));
+        }
+
+        if (request.body.size() > kMaxApplyBodyBytes) {
+            return jsonResponse(413, errorEnvelope("payload_too_large",
+                                                   "request body exceeds maximum allowed size"));
         }
 
         const auto format = parseJsonStringValue(request.body, "format");
