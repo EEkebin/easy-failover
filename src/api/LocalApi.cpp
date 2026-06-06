@@ -10,16 +10,22 @@
 #include <cstdint>
 #include <exception>
 #include <array>
+#include <filesystem>
+#include <fstream>
 #include <sstream>
 #include <memory>
 #include <optional>
+#include <random>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
 #include <arpa/inet.h>
+#include <cctype>
 #include <cerrno>
+#include <cstdio>
 #include <cstring>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
@@ -111,6 +117,16 @@ constexpr auto kReadPollTimeoutMs = 1000;
     return output.str();
 }
 
+[[nodiscard]] std::string authErrorEnvelope(const std::string_view code,
+                                            const std::string_view message) {
+    // Auth failures intentionally omit the details array so the response never leaks why a token
+    // was rejected beyond the missing/invalid distinction.
+    auto output = std::ostringstream{};
+    output << "{\"error\":{\"code\":" << jsonString(code)
+           << ",\"message\":" << jsonString(message) << "}}";
+    return output.str();
+}
+
 [[nodiscard]] LocalApiHttpResponse jsonResponse(const int status_code, std::string body) {
     return LocalApiHttpResponse{.status_code = status_code,
                                 .content_type = "application/json",
@@ -123,6 +139,10 @@ constexpr auto kReadPollTimeoutMs = 1000;
         return "OK";
     case 400:
         return "Bad Request";
+    case 401:
+        return "Unauthorized";
+    case 403:
+        return "Forbidden";
     case 404:
         return "Not Found";
     case 405:
@@ -258,9 +278,37 @@ constexpr auto kReadPollTimeoutMs = 1000;
         return std::nullopt;
     }
 
-    const auto body_start = raw.find("\r\n\r\n");
-    if (body_start != std::string::npos) {
-        request.body = raw.substr(body_start + 4);
+    const auto headers_end = raw.find("\r\n\r\n");
+    const auto headers_limit = headers_end == std::string::npos ? raw.size() : headers_end;
+    constexpr auto kAuthHeader = std::string_view{"authorization:"};
+    auto line_start = request_line_end + 2;
+    while (line_start < headers_limit) {
+        auto line_end = raw.find("\r\n", line_start);
+        if (line_end == std::string::npos || line_end > headers_limit) {
+            line_end = headers_limit;
+        }
+        const auto line = std::string_view{raw}.substr(line_start, line_end - line_start);
+        auto lowered = std::string{};
+        lowered.reserve(kAuthHeader.size());
+        for (std::size_t index = 0; index < line.size() && index < kAuthHeader.size(); ++index) {
+            lowered.push_back(static_cast<char>(
+                std::tolower(static_cast<unsigned char>(line.at(index)))));
+        }
+        if (lowered.rfind(kAuthHeader, 0) == 0) {
+            const auto value = line.substr(kAuthHeader.size());
+            const auto value_start = value.find_first_not_of(" \t");
+            if (value_start != std::string_view::npos) {
+                request.authorization = std::string{value.substr(value_start)};
+            }
+        }
+        if (line_end == headers_limit) {
+            break;
+        }
+        line_start = line_end + 2;
+    }
+
+    if (headers_end != std::string::npos) {
+        request.body = raw.substr(headers_end + 4);
     }
 
     return request;
@@ -366,7 +414,150 @@ void closeFd(const int fd) {
     }
 }
 
+// Atomically replaces the file at target_path with new_contents. Writes a uniquely-named temp file
+// in the same directory, fsyncs it, then rename()s it over the target so a reader never observes a
+// partially-written config. Before replacing, copies the previous config (if any) to backup_path.
+// Returns false (with no partial target write) on any I/O failure.
+[[nodiscard]] bool atomicWriteConfigWithBackup(const std::string& target_path,
+                                               const std::string& new_contents,
+                                               const std::string& backup_path) {
+    namespace fs = std::filesystem;
+    auto error = std::error_code{};
+    const auto target = fs::path{target_path};
+    auto directory = target.parent_path();
+    if (directory.empty()) {
+        directory = fs::path{"."};
+    }
+
+    // Back up the previous config first, so the backup always reflects the config being replaced.
+    if (fs::exists(target, error) && !error) {
+        fs::copy_file(target, fs::path{backup_path}, fs::copy_options::overwrite_existing, error);
+        if (error) {
+            return false;
+        }
+    }
+
+    auto random_device = std::random_device{};
+    const auto temp_path =
+        (directory / (target.filename().string() + ".tmp." +
+                      std::to_string(random_device()) + std::to_string(::getpid())))
+            .string();
+
+    const auto temp_fd = ::open(temp_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (temp_fd < 0) {
+        return false;
+    }
+
+    auto cleanup_temp = true;
+    const auto remove_temp = [&] {
+        if (cleanup_temp) {
+            ::unlink(temp_path.c_str());
+        }
+    };
+
+    auto written = std::size_t{0};
+    while (written < new_contents.size()) {
+        const auto chunk =
+            ::write(temp_fd, new_contents.data() + written, new_contents.size() - written);
+        if (chunk < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            closeFd(temp_fd);
+            remove_temp();
+            return false;
+        }
+        written += static_cast<std::size_t>(chunk);
+    }
+
+    if (::fsync(temp_fd) != 0) {
+        closeFd(temp_fd);
+        remove_temp();
+        return false;
+    }
+    closeFd(temp_fd);
+
+    if (::rename(temp_path.c_str(), target_path.c_str()) != 0) {
+        remove_temp();
+        return false;
+    }
+    cleanup_temp = false;
+
+    // Best-effort durability of the rename via the containing directory.
+    const auto dir_fd = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY);
+    if (dir_fd >= 0) {
+        static_cast<void>(::fsync(dir_fd));
+        closeFd(dir_fd);
+    }
+
+    return true;
+}
+
 } // namespace
+
+bool constantTimeTokenEquals(const std::string_view presented, const std::string_view expected) {
+    // Compare over the fixed length of the expected token. We always iterate the full expected
+    // length and never break early, so the running time does not depend on the position of the
+    // first mismatch. A length difference is folded into the accumulator so unequal-length inputs
+    // also fail without revealing how many bytes matched.
+    auto difference = static_cast<unsigned int>(presented.size() ^ expected.size());
+    for (std::size_t index = 0; index < expected.size(); ++index) {
+        const auto presented_byte =
+            index < presented.size() ? static_cast<unsigned char>(presented[index]) : 0U;
+        const auto expected_byte = static_cast<unsigned char>(expected[index]);
+        difference |= static_cast<unsigned int>(presented_byte ^ expected_byte);
+    }
+    return difference == 0U;
+}
+
+std::optional<std::string> loadApiAuthToken(const std::string& path) {
+    auto stream = std::ifstream{path, std::ios::binary};
+    if (!stream.is_open()) {
+        return std::nullopt;
+    }
+
+    auto buffer = std::ostringstream{};
+    buffer << stream.rdbuf();
+    if (stream.bad()) {
+        return std::nullopt;
+    }
+
+    auto token = buffer.str();
+    while (!token.empty() && (token.back() == '\n' || token.back() == '\r' ||
+                              token.back() == ' ' || token.back() == '\t')) {
+        token.pop_back();
+    }
+    return token;
+}
+
+std::optional<std::string> parseBearerToken(const std::string_view authorization_header) {
+    constexpr auto kScheme = std::string_view{"Bearer "};
+    if (authorization_header.size() <= kScheme.size()) {
+        return std::nullopt;
+    }
+    // Scheme name is case-insensitive per RFC 7235.
+    for (std::size_t index = 0; index < kScheme.size() - 1; ++index) {
+        if (std::tolower(static_cast<unsigned char>(authorization_header[index])) !=
+            std::tolower(static_cast<unsigned char>(kScheme[index]))) {
+            return std::nullopt;
+        }
+    }
+    if (authorization_header[kScheme.size() - 1] != ' ') {
+        return std::nullopt;
+    }
+
+    auto token = std::string{authorization_header.substr(kScheme.size())};
+    const auto first = token.find_first_not_of(" \t");
+    if (first == std::string::npos) {
+        return std::nullopt;
+    }
+    const auto last = token.find_last_not_of(" \t");
+    token = token.substr(first, last - first + 1);
+    if (token.empty()) {
+        return std::nullopt;
+    }
+    return token;
+}
 
 LocalApiStartupResult evaluateLocalApiStartup(const ApiConfig& config) {
     if (!config.enabled) {
@@ -375,16 +566,37 @@ LocalApiStartupResult evaluateLocalApiStartup(const ApiConfig& config) {
                                      .detail = "local API disabled"};
     }
 
-    if (!config.read_only) {
+    if (config.read_only) {
+        return LocalApiStartupResult{.state = LocalApiStartupState::Ready,
+                                     .bind = config.bind,
+                                     .detail = "local API read-only listener ready"};
+    }
+
+    // Write mode: fail closed unless a readable, non-empty token file is configured.
+    if (config.auth_token_file.empty()) {
         return LocalApiStartupResult{
             .state = LocalApiStartupState::Rejected,
             .bind = config.bind,
-            .detail = "local API write mode requires authentication and write-behavior design"};
+            .detail = "write mode requires a readable api.auth_token_file"};
+    }
+
+    const auto token = loadApiAuthToken(config.auth_token_file);
+    if (!token.has_value()) {
+        return LocalApiStartupResult{
+            .state = LocalApiStartupState::Rejected,
+            .bind = config.bind,
+            .detail = "write mode requires a readable api.auth_token_file"};
+    }
+    if (token->empty()) {
+        return LocalApiStartupResult{
+            .state = LocalApiStartupState::Rejected,
+            .bind = config.bind,
+            .detail = "write mode requires a non-empty api.auth_token_file"};
     }
 
     return LocalApiStartupResult{.state = LocalApiStartupState::Ready,
                                  .bind = config.bind,
-                                 .detail = "local API read-only listener ready"};
+                                 .detail = "local API write listener ready"};
 }
 
 LocalApiStatusResponse buildLocalApiStatusResponse(const Config& config,
@@ -439,7 +651,8 @@ LocalApiConfigResponse buildLocalApiConfigResponse(const Config& config) {
                                            .preempt = config.election.preempt},
         .api = LocalApiConfigApi{.enabled = config.api.enabled,
                                  .bind = config.api.bind,
-                                 .read_only = config.api.read_only},
+                                 .read_only = config.api.read_only,
+                                 .auth_token_configured = !config.api.auth_token_file.empty()},
         .mutation_safety =
             LocalApiConfigMutationSafety{
                 .allow_network_mutation = config.mutation_safety.allow_network_mutation},
@@ -492,6 +705,193 @@ LocalApiConfigValidateResponse buildLocalApiConfigValidateResponse(
                                               .error_code = "validation_failed",
                                               .error_message = error.what()};
     }
+}
+
+namespace {
+
+[[nodiscard]] LocalApiConfigApplyResult authFailureApplyResult(
+    const LocalApiConfigApplyOutcome outcome,
+    const int status_code,
+    const std::string_view audit_reason,
+    const std::string_view audit_detail) {
+    return LocalApiConfigApplyResult{.outcome = outcome,
+                                     .status_code = status_code,
+                                     .applied = false,
+                                     .errors = {},
+                                     .applied_path = {},
+                                     .backup_path = {},
+                                     .error_code = {},
+                                     .error_message = {},
+                                     .audit_outcome = "rejected",
+                                     .audit_reason = std::string{audit_reason},
+                                     .audit_detail = std::string{audit_detail}};
+}
+
+[[nodiscard]] LocalApiConfigApplyResult requestErrorApplyResult(const std::string_view error_code,
+                                                                const std::string_view error_message,
+                                                                const std::string_view audit_detail) {
+    return LocalApiConfigApplyResult{.outcome = LocalApiConfigApplyOutcome::RequestError,
+                                     .status_code = 400,
+                                     .applied = false,
+                                     .errors = {},
+                                     .applied_path = {},
+                                     .backup_path = {},
+                                     .error_code = std::string{error_code},
+                                     .error_message = std::string{error_message},
+                                     .audit_outcome = "rejected",
+                                     .audit_reason = "bad_request",
+                                     .audit_detail = std::string{audit_detail}};
+}
+
+} // namespace
+
+LocalApiConfigApplyResult buildLocalApiConfigApplyResult(const LocalApiHttpRequest& request,
+                                                         const LocalApiWriteContext& write_context) {
+    constexpr auto kMaxBodyBytes = std::size_t{1U << 20U};
+
+    // Authentication first: never inspect the body before the token is verified.
+    if (request.authorization.empty()) {
+        return authFailureApplyResult(LocalApiConfigApplyOutcome::Unauthorized, 401, "unauthorized",
+                                      "missing bearer token");
+    }
+    const auto presented = parseBearerToken(request.authorization);
+    if (!presented.has_value()) {
+        return authFailureApplyResult(LocalApiConfigApplyOutcome::Unauthorized, 401, "unauthorized",
+                                      "malformed authorization header");
+    }
+    if (write_context.auth_token.empty() ||
+        !constantTimeTokenEquals(*presented, write_context.auth_token)) {
+        return authFailureApplyResult(LocalApiConfigApplyOutcome::Forbidden, 403, "forbidden",
+                                      "invalid credentials");
+    }
+
+    if (request.body.size() > kMaxBodyBytes) {
+        return requestErrorApplyResult("payload_too_large", "request body exceeds size limit",
+                                       "request body exceeds size limit");
+    }
+
+    const auto format = parseJsonStringValue(request.body, "format");
+    const auto config_text = parseJsonStringValue(request.body, "config");
+    if (format.empty() || config_text.empty()) {
+        return requestErrorApplyResult("bad_request",
+                                       "request body must include format and config strings",
+                                       "missing format or config");
+    }
+
+    const auto validation = buildLocalApiConfigValidateResponse(
+        LocalApiConfigValidateRequest{.format = format, .config = config_text});
+    if (validation.outcome == LocalApiConfigValidateOutcome::RequestError) {
+        return requestErrorApplyResult(validation.error_code, validation.error_message,
+                                       "config request error");
+    }
+
+    if (!validation.valid) {
+        // Validation failures are not request errors: report applied=false with errors, 200.
+        return LocalApiConfigApplyResult{.outcome = LocalApiConfigApplyOutcome::ValidationFailed,
+                                         .status_code = 200,
+                                         .applied = false,
+                                         .errors = validation.errors,
+                                         .applied_path = {},
+                                         .backup_path = {},
+                                         .error_code = {},
+                                         .error_message = {},
+                                         .audit_outcome = "rejected",
+                                         .audit_reason = "validation_failed",
+                                         .audit_detail = "submitted config failed validation"};
+    }
+
+    if (write_context.config_path.empty()) {
+        return LocalApiConfigApplyResult{.outcome = LocalApiConfigApplyOutcome::InternalError,
+                                         .status_code = 500,
+                                         .applied = false,
+                                         .errors = {},
+                                         .applied_path = {},
+                                         .backup_path = {},
+                                         .error_code = "internal_error",
+                                         .error_message = "no config path configured for apply",
+                                         .audit_outcome = "error",
+                                         .audit_reason = "internal_error",
+                                         .audit_detail = "no config path configured"};
+    }
+
+    const auto backup_path = write_context.config_path + ".bak";
+    if (!atomicWriteConfigWithBackup(write_context.config_path, config_text, backup_path)) {
+        return LocalApiConfigApplyResult{.outcome = LocalApiConfigApplyOutcome::InternalError,
+                                         .status_code = 500,
+                                         .applied = false,
+                                         .errors = {},
+                                         .applied_path = {},
+                                         .backup_path = {},
+                                         .error_code = "internal_error",
+                                         .error_message = "failed to persist config",
+                                         .audit_outcome = "error",
+                                         .audit_reason = "internal_error",
+                                         .audit_detail = "failed to persist config"};
+    }
+
+    return LocalApiConfigApplyResult{.outcome = LocalApiConfigApplyOutcome::Applied,
+                                     .status_code = 200,
+                                     .applied = true,
+                                     .errors = {},
+                                     .applied_path = write_context.config_path,
+                                     .backup_path = backup_path,
+                                     .error_code = {},
+                                     .error_message = {},
+                                     .audit_outcome = "applied",
+                                     .audit_reason = "ok",
+                                     .audit_detail = "config persisted; takes effect on restart"};
+}
+
+std::string serializeLocalApiConfigApplyResult(const LocalApiConfigApplyResult& result) {
+    auto output = std::ostringstream{};
+    output << "{\"applied\":" << jsonBool(result.applied)
+           << ",\"errors\":" << stringVectorJson(result.errors)
+           << ",\"applied_path\":" << jsonString(result.applied_path)
+           << ",\"backup_path\":" << jsonString(result.backup_path)
+           << ",\"effective\":" << jsonString("daemon restart or reload required")
+           << ",\"detail\":" << jsonString(result.applied
+                                               ? "config persisted and previous config backed up"
+                                               : "config not applied")
+           << "}";
+    return output.str();
+}
+
+std::string formatLocalApiWriteAttemptEvent(const LocalApiHttpRequest& request,
+                                            const LocalApiConfigApplyResult& result) {
+    auto output = std::ostringstream{};
+    output << "event=api_write_attempt"
+           << " actor=" << jsonString("bearer-token")
+           << " outcome=" << result.audit_outcome
+           << " reason=" << result.audit_reason
+           << " target=" << jsonString("config_apply")
+           << " method=" << request.method
+           << " path=" << jsonString(trimQueryString(request.path))
+           << " status=" << result.status_code
+           << " dry_run=false"
+           << " detail=" << jsonString(result.audit_detail);
+    return output.str();
+}
+
+LocalApiEvent buildLocalApiWriteAttemptEvent(const std::uint64_t sequence,
+                                             const LocalApiHttpRequest& request,
+                                             const LocalApiConfigApplyResult& result) {
+    return LocalApiEvent{
+        .sequence = sequence,
+        .event = "api_write_attempt",
+        .level = result.applied ? "info" : "warn",
+        .message = formatLocalApiWriteAttemptEvent(request, result),
+        .fields =
+            {
+                stringField("actor", "bearer-token"),
+                stringField("outcome", result.audit_outcome),
+                stringField("reason", result.audit_reason),
+                stringField("target", "config_apply"),
+                stringField("method", request.method),
+                stringField("path", trimQueryString(request.path)),
+                intField("status", static_cast<std::int64_t>(result.status_code)),
+                boolField("dry_run", false),
+                stringField("detail", result.audit_detail),
+            }};
 }
 
 LocalApiEventsResponse buildLocalApiEventsResponse() {
@@ -597,6 +997,7 @@ std::string serializeLocalApiConfigResponse(const LocalApiConfigResponse& respon
            << "},\"api\":{\"enabled\":" << jsonBool(response.api.enabled)
            << ",\"bind\":" << jsonString(response.api.bind)
            << ",\"read_only\":" << jsonBool(response.api.read_only)
+           << ",\"auth_token_configured\":" << jsonBool(response.api.auth_token_configured)
            << "},\"mutation_safety\":{\"allow_network_mutation\":"
            << jsonBool(response.mutation_safety.allow_network_mutation)
            << "},\"peers\":[";
@@ -699,11 +1100,58 @@ LocalApiHttpResponse buildLocalApiHttpResponse(const LocalApiHttpRequest& reques
     return jsonResponse(404, errorEnvelope("not_found", "endpoint not found"));
 }
 
-LocalApiHttpServeResult serveLocalApiHttpWithMode(const std::string_view bind,
-                                                  const LocalApiHttpSnapshotProvider& snapshot_provider,
-                                                  const bool serve_once,
-                                                  ShutdownSignalState* shutdown_state,
-                                                  const LocalApiHttpStartupObserver& startup_observer) {
+LocalApiHttpResponse buildLocalApiHttpResponse(
+    const LocalApiHttpRequest& request,
+    const LocalApiHttpSnapshot& snapshot,
+    const LocalApiWriteContext& write_context,
+    const std::function<void(const LocalApiHttpRequest&, const LocalApiConfigApplyResult&)>&
+        emit_audit) {
+    const auto path = trimQueryString(request.path);
+
+    if (path == "/api/v1/config/apply") {
+        if (!write_context.write_enabled) {
+            // In read-only mode the apply endpoint is not exposed at all.
+            return jsonResponse(404, errorEnvelope("not_found", "endpoint not found"));
+        }
+        if (request.method != "POST") {
+            return jsonResponse(405, errorEnvelope("method_not_allowed",
+                                                   "endpoint only supports POST"));
+        }
+
+        const auto result = buildLocalApiConfigApplyResult(request, write_context);
+        if (emit_audit) {
+            emit_audit(request, result);
+        }
+
+        switch (result.outcome) {
+        case LocalApiConfigApplyOutcome::Unauthorized:
+            return jsonResponse(401, authErrorEnvelope("unauthorized",
+                                                       "authentication required for write operations"));
+        case LocalApiConfigApplyOutcome::Forbidden:
+            return jsonResponse(403, authErrorEnvelope("forbidden", "invalid credentials"));
+        case LocalApiConfigApplyOutcome::RequestError:
+            return jsonResponse(400, errorEnvelope(result.error_code, result.error_message));
+        case LocalApiConfigApplyOutcome::InternalError:
+            return jsonResponse(500, errorEnvelope(result.error_code, result.error_message));
+        case LocalApiConfigApplyOutcome::ValidationFailed:
+        case LocalApiConfigApplyOutcome::Applied:
+            return jsonResponse(200, serializeLocalApiConfigApplyResult(result));
+        }
+        return jsonResponse(500, errorEnvelope("internal_error", "unexpected apply outcome"));
+    }
+
+    return buildLocalApiHttpResponse(request, snapshot);
+}
+
+LocalApiHttpServeResult serveLocalApiHttpWithMode(
+    const std::string_view bind,
+    const LocalApiHttpSnapshotProvider& snapshot_provider,
+    const bool serve_once,
+    ShutdownSignalState* shutdown_state,
+    const LocalApiHttpStartupObserver& startup_observer,
+    const LocalApiWriteContext& write_context,
+    const std::function<void(const LocalApiHttpRequest&, const LocalApiConfigApplyResult&)>&
+        emit_audit) {
     auto startup_reported = false;
     const auto startupResult = [&](LocalApiHttpServeResult result) {
         if (!startup_reported && startup_observer) {
@@ -806,7 +1254,7 @@ LocalApiHttpServeResult serveLocalApiHttpWithMode(const std::string_view bind,
         const auto snapshot = snapshot_provider();
         const auto response =
             parsed_request.has_value()
-                ? buildLocalApiHttpResponse(*parsed_request, snapshot)
+                ? buildLocalApiHttpResponse(*parsed_request, snapshot, write_context, emit_audit)
                 : jsonResponse(400,
                                errorEnvelope("bad_request", "request must be valid HTTP"));
         const auto bytes = httpResponseBytes(response);
@@ -822,26 +1270,28 @@ LocalApiHttpServeResult serveLocalApiHttpWithMode(const std::string_view bind,
 
 LocalApiHttpServeResult serveLocalApiHttpOnce(const std::string_view bind,
                                               const LocalApiHttpSnapshot& snapshot) {
-    return serveLocalApiHttpWithMode(bind, [&snapshot] { return snapshot; }, true, nullptr, {});
+    return serveLocalApiHttpWithMode(bind, [&snapshot] { return snapshot; }, true, nullptr, {}, {},
+                                     {});
 }
 
 LocalApiHttpServeResult serveLocalApiHttp(const std::string_view bind,
                                           const LocalApiHttpSnapshot& snapshot) {
-    return serveLocalApiHttpWithMode(bind, [&snapshot] { return snapshot; }, false, nullptr, {});
+    return serveLocalApiHttpWithMode(bind, [&snapshot] { return snapshot; }, false, nullptr, {}, {},
+                                     {});
 }
 
 LocalApiHttpServeResult serveLocalApiHttp(const std::string_view bind,
                                           const LocalApiHttpSnapshot& snapshot,
                                           ShutdownSignalState* shutdown_state) {
     return serveLocalApiHttpWithMode(bind, [&snapshot] { return snapshot; }, false, shutdown_state,
-                                     {});
+                                     {}, {}, {});
 }
 
 LocalApiHttpServeResult serveLocalApiHttp(
     const std::string_view bind,
     const LocalApiHttpSnapshotProvider& snapshot_provider,
     ShutdownSignalState* shutdown_state) {
-    return serveLocalApiHttpWithMode(bind, snapshot_provider, false, shutdown_state, {});
+    return serveLocalApiHttpWithMode(bind, snapshot_provider, false, shutdown_state, {}, {}, {});
 }
 
 LocalApiHttpServeResult serveLocalApiHttp(
@@ -850,7 +1300,19 @@ LocalApiHttpServeResult serveLocalApiHttp(
     ShutdownSignalState* shutdown_state,
     const LocalApiHttpStartupObserver& startup_observer) {
     return serveLocalApiHttpWithMode(bind, snapshot_provider, false, shutdown_state,
-                                     startup_observer);
+                                     startup_observer, {}, {});
+}
+
+LocalApiHttpServeResult serveLocalApiHttp(
+    const std::string_view bind,
+    const LocalApiHttpSnapshotProvider& snapshot_provider,
+    ShutdownSignalState* shutdown_state,
+    const LocalApiHttpStartupObserver& startup_observer,
+    const LocalApiWriteContext& write_context,
+    const std::function<void(const LocalApiHttpRequest&, const LocalApiConfigApplyResult&)>&
+        emit_audit) {
+    return serveLocalApiHttpWithMode(bind, snapshot_provider, false, shutdown_state,
+                                     startup_observer, write_context, emit_audit);
 }
 
 } // namespace easyfailover

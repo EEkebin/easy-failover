@@ -19,6 +19,8 @@
 
 #include <algorithm>
 #include <exception>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iostream>
 #include <optional>
@@ -556,12 +558,11 @@ void testLocalApiStartupRejectsWriteMode(TestRunner& runner) {
     const auto result = evaluateLocalApiStartup(config.api);
 
     runner.expect(result.state == LocalApiStartupState::Rejected,
-                  "enabled write-mode API config should be rejected by startup logic");
+                  "enabled write-mode API config without a token file should be rejected");
     runner.expect(result.bind == config.api.bind,
                   "rejected API startup should preserve configured bind");
-    runner.expect(result.detail ==
-                      "local API write mode requires authentication and write-behavior design",
-                  "rejected API startup should report stable safety detail");
+    runner.expect(result.detail == "write mode requires a readable api.auth_token_file",
+                  "rejected API startup should report stable token-required detail");
 }
 
 void testLocalApiConfigValidateOutcomeToString(TestRunner& runner) {
@@ -4008,6 +4009,218 @@ void testDecisionSelectsLocalNodeWhenLocalWinsTieBreak(TestRunner& runner) {
 
 } // namespace
 
+int writeApiTestCounter() {
+    static int counter = 0;
+    return ++counter;
+}
+
+std::string makeWriteApiTempDir() {
+    auto dir = std::filesystem::temp_directory_path() /
+               ("ef-write-api-test-" + std::to_string(writeApiTestCounter()));
+    auto error = std::error_code{};
+    std::filesystem::remove_all(dir, error);
+    std::filesystem::create_directories(dir, error);
+    return dir.string();
+}
+
+std::string readWholeFile(const std::string& path) {
+    auto stream = std::ifstream{path};
+    auto content = std::string{};
+    auto line = std::string{};
+    while (std::getline(stream, line)) {
+        content += line;
+        content += "\n";
+    }
+    return content;
+}
+
+const std::string kValidApplyBody =
+    R"({"format":"toml","config":"node_id = \"node-a\"\npriority = 100\n\n[vip]\naddress = \"10.0.0.50/24\"\ninterface = \"eth0\"\n\n[[peers]]\nid = \"node-b\"\naddress = \"10.0.0.12:7432\"\n"})";
+const std::string kInvalidApplyBody =
+    R"({"format":"toml","config":"node_id = \"node-a\"\npriority = 100\n\n[vip]\naddress = \"10.0.0.50/24\"\ninterface = \"eth0\"\n"})";
+
+void testConstantTimeTokenEquals(TestRunner& runner) {
+    runner.expect(easyfailover::constantTimeTokenEquals("s3cret-token", "s3cret-token"),
+                  "equal tokens compare equal");
+    runner.expect(!easyfailover::constantTimeTokenEquals("s3cret-token", "s3cret-tokeX"),
+                  "different same-length tokens compare unequal");
+    runner.expect(!easyfailover::constantTimeTokenEquals("s3cret", "s3cret-longer"),
+                  "different-length tokens compare unequal");
+    runner.expect(!easyfailover::constantTimeTokenEquals("", "s3cret"),
+                  "empty presented token compares unequal to a real token");
+}
+
+void testParseBearerToken(TestRunner& runner) {
+    runner.expect(easyfailover::parseBearerToken("Bearer abc123") ==
+                      std::optional<std::string>{"abc123"},
+                  "bearer scheme yields the token");
+    runner.expect(easyfailover::parseBearerToken("bearer abc123") ==
+                      std::optional<std::string>{"abc123"},
+                  "bearer scheme name is case-insensitive");
+    runner.expect(!easyfailover::parseBearerToken("Basic abc123").has_value(),
+                  "non-bearer scheme is rejected");
+    runner.expect(!easyfailover::parseBearerToken("Bearer    ").has_value(),
+                  "empty bearer token is rejected");
+    runner.expect(!easyfailover::parseBearerToken("abc123").has_value(),
+                  "missing scheme is rejected");
+}
+
+void testLoadApiAuthToken(TestRunner& runner) {
+    const auto dir = makeWriteApiTempDir();
+    const auto path = (std::filesystem::path{dir} / "token").string();
+    {
+        auto out = std::ofstream{path};
+        out << "s3cret-token\n";
+    }
+    const auto loaded = easyfailover::loadApiAuthToken(path);
+    runner.expect(loaded.has_value() && *loaded == "s3cret-token",
+                  "token file is read and trailing newline trimmed");
+    runner.expect(
+        !easyfailover::loadApiAuthToken((std::filesystem::path{dir} / "missing").string())
+             .has_value(),
+        "missing token file returns nullopt");
+    auto error = std::error_code{};
+    std::filesystem::remove_all(dir, error);
+}
+
+void testLocalApiStartupWriteModeReadyWithToken(TestRunner& runner) {
+    const auto dir = makeWriteApiTempDir();
+    const auto path = (std::filesystem::path{dir} / "token").string();
+    {
+        auto out = std::ofstream{path};
+        out << "s3cret";
+    }
+    auto config = validConfig();
+    config.api.enabled = true;
+    config.api.read_only = false;
+    config.api.auth_token_file = path;
+
+    const auto result = evaluateLocalApiStartup(config.api);
+    runner.expect(result.state == LocalApiStartupState::Ready,
+                  "write mode with a readable non-empty token file is ready");
+    runner.expect(result.detail == "local API write listener ready",
+                  "write-mode ready reports stable detail");
+    auto error = std::error_code{};
+    std::filesystem::remove_all(dir, error);
+}
+
+void testLocalApiStartupRejectsEmptyTokenFile(TestRunner& runner) {
+    const auto dir = makeWriteApiTempDir();
+    const auto path = (std::filesystem::path{dir} / "token").string();
+    {
+        auto out = std::ofstream{path};
+        out << "\n";
+    }
+    auto config = validConfig();
+    config.api.enabled = true;
+    config.api.read_only = false;
+    config.api.auth_token_file = path;
+
+    const auto result = evaluateLocalApiStartup(config.api);
+    runner.expect(result.state == LocalApiStartupState::Rejected,
+                  "write mode with a whitespace-only token file is rejected");
+    runner.expect(result.detail == "write mode requires a non-empty api.auth_token_file",
+                  "empty token file reports stable detail");
+    auto error = std::error_code{};
+    std::filesystem::remove_all(dir, error);
+}
+
+void testLocalApiConfigApplyRejectsUnauthenticated(TestRunner& runner) {
+    const auto dir = makeWriteApiTempDir();
+    const auto cfg = (std::filesystem::path{dir} / "config.toml").string();
+    const auto context = easyfailover::LocalApiWriteContext{
+        .write_enabled = true, .config_path = cfg, .auth_token = "s3cret"};
+
+    const auto missing = easyfailover::buildLocalApiConfigApplyResult(
+        LocalApiHttpRequest{.method = "POST",
+                            .path = "/api/v1/config/apply",
+                            .body = kValidApplyBody,
+                            .authorization = ""},
+        context);
+    runner.expect(missing.outcome == easyfailover::LocalApiConfigApplyOutcome::Unauthorized &&
+                      missing.status_code == 401,
+                  "missing bearer token yields 401 unauthorized");
+    runner.expect(!std::filesystem::exists(cfg), "unauthenticated apply must not write config");
+
+    const auto wrong = easyfailover::buildLocalApiConfigApplyResult(
+        LocalApiHttpRequest{.method = "POST",
+                            .path = "/api/v1/config/apply",
+                            .body = kValidApplyBody,
+                            .authorization = "Bearer wrong-token"},
+        context);
+    runner.expect(wrong.outcome == easyfailover::LocalApiConfigApplyOutcome::Forbidden &&
+                      wrong.status_code == 403,
+                  "wrong bearer token yields 403 forbidden");
+    runner.expect(!std::filesystem::exists(cfg), "forbidden apply must not write config");
+    auto error = std::error_code{};
+    std::filesystem::remove_all(dir, error);
+}
+
+void testLocalApiConfigApplyWritesValidConfigWithBackup(TestRunner& runner) {
+    const auto dir = makeWriteApiTempDir();
+    const auto cfg = (std::filesystem::path{dir} / "config.toml").string();
+    {
+        auto out = std::ofstream{cfg};
+        out << "old config\n";
+    }
+    const auto context = easyfailover::LocalApiWriteContext{
+        .write_enabled = true, .config_path = cfg, .auth_token = "s3cret"};
+
+    const auto result = easyfailover::buildLocalApiConfigApplyResult(
+        LocalApiHttpRequest{.method = "POST",
+                            .path = "/api/v1/config/apply",
+                            .body = kValidApplyBody,
+                            .authorization = "Bearer s3cret"},
+        context);
+    runner.expect(result.outcome == easyfailover::LocalApiConfigApplyOutcome::Applied &&
+                      result.applied && result.status_code == 200,
+                  "valid authenticated apply succeeds");
+    runner.expect(std::filesystem::exists(cfg), "apply writes the config file");
+    runner.expect(readWholeFile(cfg).find("node-b") != std::string::npos,
+                  "written config contains the submitted content");
+    const auto backup = cfg + ".bak";
+    runner.expect(std::filesystem::exists(backup), "apply backs up the previous config");
+    runner.expect(readWholeFile(backup).find("old config") != std::string::npos,
+                  "backup retains the previous config content");
+    auto error = std::error_code{};
+    std::filesystem::remove_all(dir, error);
+}
+
+void testLocalApiConfigApplyRejectsInvalidConfig(TestRunner& runner) {
+    const auto dir = makeWriteApiTempDir();
+    const auto cfg = (std::filesystem::path{dir} / "config.toml").string();
+    const auto context = easyfailover::LocalApiWriteContext{
+        .write_enabled = true, .config_path = cfg, .auth_token = "s3cret"};
+
+    const auto result = easyfailover::buildLocalApiConfigApplyResult(
+        LocalApiHttpRequest{.method = "POST",
+                            .path = "/api/v1/config/apply",
+                            .body = kInvalidApplyBody,
+                            .authorization = "Bearer s3cret"},
+        context);
+    runner.expect(result.outcome == easyfailover::LocalApiConfigApplyOutcome::ValidationFailed &&
+                      !result.applied && result.status_code == 200,
+                  "authenticated apply of invalid config reports validation failure, not success");
+    runner.expect(!result.errors.empty(), "invalid config apply returns validation errors");
+    runner.expect(!std::filesystem::exists(cfg),
+                  "invalid config apply must not write the config file");
+    auto error = std::error_code{};
+    std::filesystem::remove_all(dir, error);
+}
+
+void testLocalApiConfigResponseExposesTokenConfiguredFlag(TestRunner& runner) {
+    auto config = validConfig();
+    config.api.auth_token_file = "/etc/easy-failover/api-token";
+    const auto response = easyfailover::buildLocalApiConfigResponse(config);
+    runner.expect(response.api.auth_token_configured,
+                  "config response flags that a token file is configured");
+    const auto serialized = easyfailover::serializeLocalApiConfigResponse(response);
+    runner.expect(serialized.find("auth_token_configured") != std::string::npos,
+                  "serialized config exposes the auth_token_configured flag");
+    runner.expect(serialized.find("/etc/easy-failover/api-token") == std::string::npos,
+                  "serialized config must not expose the token file path or its contents");
+}
+
 int main() {
     TestRunner runner;
 
@@ -4035,6 +4248,27 @@ int main() {
     });
     runner.run("local API startup rejects write mode", [&runner] {
         testLocalApiStartupRejectsWriteMode(runner);
+    });
+    runner.run("constant-time token compare", [&runner] { testConstantTimeTokenEquals(runner); });
+    runner.run("parse bearer token", [&runner] { testParseBearerToken(runner); });
+    runner.run("load api auth token", [&runner] { testLoadApiAuthToken(runner); });
+    runner.run("write mode ready with token file", [&runner] {
+        testLocalApiStartupWriteModeReadyWithToken(runner);
+    });
+    runner.run("write mode rejects empty token file", [&runner] {
+        testLocalApiStartupRejectsEmptyTokenFile(runner);
+    });
+    runner.run("config apply rejects unauthenticated", [&runner] {
+        testLocalApiConfigApplyRejectsUnauthenticated(runner);
+    });
+    runner.run("config apply writes valid config with backup", [&runner] {
+        testLocalApiConfigApplyWritesValidConfigWithBackup(runner);
+    });
+    runner.run("config apply rejects invalid config", [&runner] {
+        testLocalApiConfigApplyRejectsInvalidConfig(runner);
+    });
+    runner.run("config response exposes token-configured flag only", [&runner] {
+        testLocalApiConfigResponseExposesTokenConfiguredFlag(runner);
     });
     runner.run("local API config validate outcome toString", [&runner] {
         testLocalApiConfigValidateOutcomeToString(runner);

@@ -107,16 +107,27 @@ See [`failover-safety.md`](failover-safety.md) for the current safety notes.
 enabled = false
 bind = "127.0.0.1:8743"
 read_only = true
+auth_token_file = ""
 ```
 
 - `enabled`: optional boolean. Defaults to `false`.
 - `bind`: optional non-empty string. Defaults to `127.0.0.1:8743` and is required when
   `enabled = true`.
-- `read_only`: optional boolean. Defaults to `true`. When the API is enabled, `false` is rejected
-  by API startup logic until write behavior and authentication are designed.
+- `read_only`: optional boolean. Defaults to `true`. Write mode (`read_only = false`) is opt-in and
+  fails closed: API startup is rejected unless `auth_token_file` points at a readable, non-empty
+  token file.
+- `auth_token_file`: optional path to a file holding the bearer token that authenticates write
+  requests. Only required when `read_only = false`. The file should be readable only by the daemon
+  user (for example mode `0600`). The token is loaded into memory at startup and is never returned
+  by the API or written to logs; `GET /api/v1/config` exposes only whether a token file is
+  configured, never its contents.
 
-The local API opens a read-only loopback HTTP listener only when `enabled = true`. Its endpoint
-shape is documented in [`local-api-design.md`](local-api-design.md).
+The local API opens a loopback HTTP listener only when `enabled = true`. In read-only mode it serves
+the read endpoints unauthenticated. In write mode it additionally serves the authenticated
+`POST /api/v1/config/apply` endpoint, which validates a submitted config and atomically replaces the
+active config (keeping a `config.toml.bak` backup); the change takes effect on the next daemon
+restart. The full endpoint shape is documented in [`local-api-design.md`](local-api-design.md) and
+the auth model in [`write-api-design.md`](write-api-design.md).
 
 ## Mutation Safety
 

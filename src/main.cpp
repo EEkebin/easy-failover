@@ -207,6 +207,27 @@ int main(int argc, char** argv) {
                           api_startup.detail);
             return EXIT_FAILURE;
         }
+
+        // Build the write context once at startup. In write mode the token is loaded from the
+        // configured file (already validated as readable/non-empty by startup gating) and kept in
+        // daemon memory only; it is never logged or serialized into any response.
+        auto api_write_context = easyfailover::LocalApiWriteContext{};
+        if (api_startup.state == easyfailover::LocalApiStartupState::Ready && !config.api.read_only) {
+            const auto loaded_token = easyfailover::loadApiAuthToken(config.api.auth_token_file);
+            if (!loaded_token.has_value() || loaded_token->empty()) {
+                spdlog::error("local API write mode could not load auth token file");
+                return EXIT_FAILURE;
+            }
+            api_write_context.write_enabled = true;
+            api_write_context.config_path = config_path;
+            api_write_context.auth_token = *loaded_token;
+        }
+        const auto api_emit_audit =
+            [](const easyfailover::LocalApiHttpRequest& request,
+               const easyfailover::LocalApiConfigApplyResult& result) {
+                spdlog::info("{}",
+                             easyfailover::formatLocalApiWriteAttemptEvent(request, result));
+            };
         if (api_startup.state == easyfailover::LocalApiStartupState::Ready) {
             spdlog::info("local API startup state={} bind={} detail=\"{}\"",
                          easyfailover::toString(api_startup.state), api_startup.bind,
@@ -259,7 +280,9 @@ int main(int argc, char** argv) {
                             api_thread_startup.result = startup_result;
                             api_thread_startup.reported = true;
                             api_startup_condition.notify_one();
-                        });
+                        },
+                        api_write_context,
+                        api_emit_audit);
                     {
                         auto lock = std::lock_guard<std::mutex>{api_serve_result_mutex};
                         api_serve_result = serve_result;

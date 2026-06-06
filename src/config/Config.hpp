@@ -33,6 +33,7 @@ struct ApiConfig {
     bool enabled = false;
     std::string bind = "127.0.0.1:8743";
     bool read_only = true;
+    std::string auth_token_file;
 };
 
 struct MutationSafetyConfig {
