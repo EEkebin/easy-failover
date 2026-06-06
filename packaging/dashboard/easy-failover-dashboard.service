@@ -1,0 +1,38 @@
+[Unit]
+Description=easy-failover optional read-only dashboard
+Documentation=https://github.com/EEkebin/easy-failover/blob/main/docs/dashboard-service.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Run as a dedicated, unprivileged user. Create it once with, e.g.:
+#   useradd --system --no-create-home --shell /usr/sbin/nologin easy-failover-dashboard
+User=easy-failover-dashboard
+Group=easy-failover-dashboard
+
+# Replace /opt/easy-failover-dashboard with the directory that holds the built
+# dashboard (the contents of web/ after `npm ci && npm run build`).
+# See docs/dashboard-service.md for the install layout.
+WorkingDirectory=/opt/easy-failover-dashboard
+
+# NEXT_PUBLIC_EASY_FAILOVER_API_BASE is a build-time public variable in Next.js
+# and must be set before `npm run build`. It is repeated here only for clarity;
+# changing it at runtime has no effect on an already-built dashboard.
+# Adjust the env file path or inline the values as needed.
+Environment=NODE_ENV=production
+EnvironmentFile=-/etc/easy-failover/dashboard.env
+ExecStart=/usr/bin/npm run start
+
+Restart=on-failure
+RestartSec=2s
+
+# The dashboard is read-only and unprivileged, so keep the unit minimal but
+# apply reasonable hardening.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
