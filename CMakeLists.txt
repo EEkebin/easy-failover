@@ -51,6 +51,17 @@ configure_file(
     "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-runit.cmake"
     @ONLY)
 
+set(
+    EASY_FAILOVER_DINIT_DIR
+    "${CMAKE_INSTALL_SYSCONFDIR}/dinit.d"
+    CACHE STRING
+          "Install directory for the dinit service description")
+
+configure_file(
+    cmake/install-dinit.cmake.in
+    "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-dinit.cmake"
+    @ONLY)
+
 FetchContent_Declare(
     spdlog
     GIT_REPOSITORY https://github.com/gabime/spdlog.git
@@ -143,6 +154,7 @@ install(
 install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-systemd-unit.cmake")
 install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-openrc.cmake")
 install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-runit.cmake")
+install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-dinit.cmake")
 
 install(FILES README.md LICENSE DESTINATION "${CMAKE_INSTALL_DOCDIR}")
 install(

@@ -1,0 +1,13 @@
+# dinit service description for the easy-failover virtual IP failover agent.
+#
+# easy-failover runs in the foreground with --run-forever; dinit supervises the
+# process and restarts it if it exits.
+type = process
+command = @EASY_FAILOVER_DINIT_BINDIR@/easy-failover --config @EASY_FAILOVER_DINIT_SYSCONFDIR@/easy-failover/config.toml --run-forever
+restart = true
+smooth-recovery = true
+logfile = /var/log/easy-failover.log
+
+# Uncomment and adjust to your system's networking service so the agent starts
+# only after the network is up (the exact service name varies by distribution):
+#depends-on = network
