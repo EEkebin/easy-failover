@@ -16,7 +16,8 @@
 // below is the single clear extension point where that check must be wired in.
 
 import { onboard, type ProgressSink } from "../../../lib/onboarding/onboard";
-import type { OnboardRequest, StepProgress } from "../../../lib/onboarding/types";
+import type { NodeStateSummary, OnboardRequest, StepProgress } from "../../../lib/onboarding/types";
+import { appendNode } from "../../../lib/nodes/registry";
 
 // ssh2 is a Node-only dependency; pin this route to the Node.js runtime so it is
 // never bundled for the edge/browser and so native-ish deps resolve correctly.
@@ -72,6 +73,46 @@ function validateRequest(body: unknown): { ok: true; request: OnboardRequest } |
   return { ok: true, request: req as OnboardRequest };
 }
 
+/** Default node API port when the config doesn't pin one in `[api].bind`. */
+const DEFAULT_API_PORT = 8743;
+
+/**
+ * Derive the dashboard-facing `apiBase` for a freshly onboarded node from its
+ * host and the port in the request's `[api].bind` (e.g. "0.0.0.0:9000" -> 9000,
+ * ":9000" -> 9000), falling back to the default port. We use the connection
+ * host (the address the operator reached) rather than the bind host, because a
+ * bind like 0.0.0.0 or 127.0.0.1 is not a reachable address from the dashboard.
+ */
+function deriveApiBase(req: OnboardRequest): string {
+  const host = req.connection.host.trim();
+  let port = DEFAULT_API_PORT;
+  const bind = req.config.api?.bind;
+  if (typeof bind === "string") {
+    const colon = bind.lastIndexOf(":");
+    if (colon >= 0) {
+      const parsed = Number.parseInt(bind.slice(colon + 1).trim(), 10);
+      if (Number.isInteger(parsed) && parsed > 0 && parsed <= 65535) {
+        port = parsed;
+      }
+    }
+  }
+  return `http://${host}:${port}`;
+}
+
+/**
+ * On a successful run, add the onboarded node to the file roster so it appears
+ * in the fleet inventory (#95). No `tokenEnv` is set: a freshly onboarded node
+ * is read-only in the dashboard until an operator wires a write token. This is
+ * best-effort and never throws (appendNode is no-op-safe and swallows errors).
+ */
+function registerOnboardedNode(req: OnboardRequest, summary: NodeStateSummary): void {
+  if (!summary.succeeded) {
+    return;
+  }
+  const id = req.config.nodeId?.trim() || req.connection.host.trim();
+  appendNode({ id, apiBase: deriveApiBase(req) });
+}
+
 export async function POST(request: Request): Promise<Response> {
   const denied = authorizeWriteRequest(request);
   if (denied) {
@@ -101,6 +142,10 @@ export async function POST(request: Request): Promise<Response> {
       };
       try {
         const result = await onboard(validated.request, sink);
+        // Add the node to the roster BEFORE the final result line so a client
+        // that re-fetches /api/nodes on the result event sees it. Best-effort
+        // and never throws; secrets are never persisted (only id + apiBase).
+        registerOnboardedNode(validated.request, result.summary);
         write({ type: "result", summary: result.summary });
       } catch (err) {
         // Defensive: the orchestrator handles its own errors, but never leak a
