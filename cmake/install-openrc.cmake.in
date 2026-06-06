@@ -1,0 +1,43 @@
+set(EASY_FAILOVER_INSTALL_BINDIR "@CMAKE_INSTALL_BINDIR@")
+set(EASY_FAILOVER_INSTALL_SYSCONFDIR "@CMAKE_INSTALL_SYSCONFDIR@")
+set(EASY_FAILOVER_OPENRC_DIR "@EASY_FAILOVER_OPENRC_DIR@")
+set(EASY_FAILOVER_OPENRC_TEMPLATE
+    "@CMAKE_CURRENT_SOURCE_DIR@/packaging/openrc/easy-failover.initd.in")
+
+function(easy_failover_full_install_path output directory)
+    if(IS_ABSOLUTE "${directory}")
+        set("${output}" "${directory}" PARENT_SCOPE)
+    else()
+        set("${output}" "${CMAKE_INSTALL_PREFIX}/${directory}" PARENT_SCOPE)
+    endif()
+endfunction()
+
+easy_failover_full_install_path(EASY_FAILOVER_OPENRC_BINDIR "${EASY_FAILOVER_INSTALL_BINDIR}")
+easy_failover_full_install_path(
+    EASY_FAILOVER_OPENRC_SYSCONFDIR
+    "${EASY_FAILOVER_INSTALL_SYSCONFDIR}")
+easy_failover_full_install_path(
+    EASY_FAILOVER_OPENRC_FULL_DIR
+    "${EASY_FAILOVER_OPENRC_DIR}")
+
+file(READ "${EASY_FAILOVER_OPENRC_TEMPLATE}" EASY_FAILOVER_OPENRC_CONTENT)
+string(CONFIGURE "${EASY_FAILOVER_OPENRC_CONTENT}" EASY_FAILOVER_OPENRC_CONTENT @ONLY)
+
+set(EASY_FAILOVER_OPENRC_INSTALL_DIR "$ENV{DESTDIR}${EASY_FAILOVER_OPENRC_FULL_DIR}")
+file(MAKE_DIRECTORY "${EASY_FAILOVER_OPENRC_INSTALL_DIR}")
+file(
+    WRITE
+    "${EASY_FAILOVER_OPENRC_INSTALL_DIR}/easy-failover"
+    "${EASY_FAILOVER_OPENRC_CONTENT}")
+# OpenRC init scripts must be executable.
+file(
+    CHMOD
+    "${EASY_FAILOVER_OPENRC_INSTALL_DIR}/easy-failover"
+    PERMISSIONS
+    OWNER_READ
+    OWNER_WRITE
+    OWNER_EXECUTE
+    GROUP_READ
+    GROUP_EXECUTE
+    WORLD_READ
+    WORLD_EXECUTE)

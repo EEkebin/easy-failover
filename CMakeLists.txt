@@ -29,6 +29,17 @@ configure_file(
     "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-systemd-unit.cmake"
     @ONLY)
 
+set(
+    EASY_FAILOVER_OPENRC_DIR
+    "${CMAKE_INSTALL_SYSCONFDIR}/init.d"
+    CACHE STRING
+          "Install directory for the OpenRC init script")
+
+configure_file(
+    cmake/install-openrc.cmake.in
+    "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-openrc.cmake"
+    @ONLY)
+
 FetchContent_Declare(
     spdlog
     GIT_REPOSITORY https://github.com/gabime/spdlog.git
@@ -119,6 +130,7 @@ install(
     RENAME config.example.toml)
 
 install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-systemd-unit.cmake")
+install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-openrc.cmake")
 
 install(FILES README.md LICENSE DESTINATION "${CMAKE_INSTALL_DOCDIR}")
 install(
