@@ -1,0 +1,53 @@
+set(EASY_FAILOVER_INSTALL_BINDIR "@CMAKE_INSTALL_BINDIR@")
+set(EASY_FAILOVER_INSTALL_SYSCONFDIR "@CMAKE_INSTALL_SYSCONFDIR@")
+set(EASY_FAILOVER_RUNIT_DIR "@EASY_FAILOVER_RUNIT_DIR@")
+set(EASY_FAILOVER_RUNIT_RUN_TEMPLATE
+    "@CMAKE_CURRENT_SOURCE_DIR@/packaging/runit/easy-failover/run.in")
+set(EASY_FAILOVER_RUNIT_LOG_TEMPLATE
+    "@CMAKE_CURRENT_SOURCE_DIR@/packaging/runit/easy-failover/log/run.in")
+
+function(easy_failover_full_install_path output directory)
+    if(IS_ABSOLUTE "${directory}")
+        set("${output}" "${directory}" PARENT_SCOPE)
+    else()
+        set("${output}" "${CMAKE_INSTALL_PREFIX}/${directory}" PARENT_SCOPE)
+    endif()
+endfunction()
+
+function(easy_failover_install_runit_script template destination)
+    file(READ "${template}" _content)
+    string(CONFIGURE "${_content}" _content @ONLY)
+    get_filename_component(_dir "${destination}" DIRECTORY)
+    file(MAKE_DIRECTORY "${_dir}")
+    file(WRITE "${destination}" "${_content}")
+    # runit run scripts must be executable.
+    file(
+        CHMOD
+        "${destination}"
+        PERMISSIONS
+        OWNER_READ
+        OWNER_WRITE
+        OWNER_EXECUTE
+        GROUP_READ
+        GROUP_EXECUTE
+        WORLD_READ
+        WORLD_EXECUTE)
+endfunction()
+
+easy_failover_full_install_path(EASY_FAILOVER_RUNIT_BINDIR "${EASY_FAILOVER_INSTALL_BINDIR}")
+easy_failover_full_install_path(
+    EASY_FAILOVER_RUNIT_SYSCONFDIR
+    "${EASY_FAILOVER_INSTALL_SYSCONFDIR}")
+easy_failover_full_install_path(
+    EASY_FAILOVER_RUNIT_FULL_DIR
+    "${EASY_FAILOVER_RUNIT_DIR}")
+
+set(EASY_FAILOVER_RUNIT_SERVICE_DIR
+    "$ENV{DESTDIR}${EASY_FAILOVER_RUNIT_FULL_DIR}/easy-failover")
+
+easy_failover_install_runit_script(
+    "${EASY_FAILOVER_RUNIT_RUN_TEMPLATE}"
+    "${EASY_FAILOVER_RUNIT_SERVICE_DIR}/run")
+easy_failover_install_runit_script(
+    "${EASY_FAILOVER_RUNIT_LOG_TEMPLATE}"
+    "${EASY_FAILOVER_RUNIT_SERVICE_DIR}/log/run")
