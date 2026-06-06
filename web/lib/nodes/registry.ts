@@ -17,7 +17,7 @@
 
 import "server-only";
 
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
 import type { NodeEntry } from "./types";
@@ -196,7 +196,9 @@ export function appendNode(entry: NodeEntry): boolean {
   const next = [...existing, coerced];
   try {
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+    const tmp = `${path}.${process.pid}.tmp`;
+    writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+    renameSync(tmp, path); // atomic on POSIX: concurrent onboarding completions can't corrupt
     return true;
   } catch {
     return false; // never throw to caller

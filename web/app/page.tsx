@@ -789,12 +789,10 @@ function buildRequest(form: WizardForm): OnboardRequest {
     config.health = health;
   }
 
-  if (form.electionRequireQuorum || form.electionPreempt) {
-    config.election = {
-      requireQuorum: form.electionRequireQuorum,
-      preempt: form.electionPreempt
-    };
-  }
+  config.election = {
+    requireQuorum: form.electionRequireQuorum,
+    preempt: form.electionPreempt
+  };
 
   if (form.apiEnabled || optStr(form.apiBind) || form.apiReadOnly) {
     config.api = {
