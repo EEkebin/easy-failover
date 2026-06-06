@@ -359,3 +359,123 @@ export async function applyNodeConfig(
   }
   return result;
 }
+
+// ---------------------------------------------------------------------------
+// SSH onboarding client API (#101).
+//
+// The wizard assembles an OnboardRequest in the browser (carrying ephemeral
+// secrets the operator typed), POSTs it ONCE to the dashboard's own server-only
+// /api/onboard route, and consumes the NDJSON stream the route emits. Only the
+// request types are imported here (plain data); the orchestrator and ssh2 stay
+// server-side. Secrets are sent once and never displayed back. Every string in
+// the streamed events/summary is already redacted by the server.
+// ---------------------------------------------------------------------------
+
+export type {
+  OnboardRequest,
+  StepProgress,
+  StepId,
+  StepStatus,
+  NodeStateSummary,
+  SshAuth,
+  SudoMethod,
+  InstallSource,
+  HostKeyPolicy,
+  ConfigInput,
+  PeerInput,
+  InstallKnobs
+} from "./onboarding/types";
+
+import type { OnboardRequest, StepProgress, NodeStateSummary } from "./onboarding/types";
+
+/**
+ * One decoded line from the /api/onboard NDJSON stream. `progress` carries a
+ * per-step event; `result` the final summary; `error` a redacted failure
+ * string. These mirror the records the route writes.
+ */
+export type OnboardStreamEvent =
+  | { type: "progress"; event: StepProgress }
+  | { type: "result"; summary: NodeStateSummary }
+  | { type: "error"; error: string };
+
+/**
+ * POST an OnboardRequest to /api/onboard and yield each decoded NDJSON record
+ * as it arrives. The route streams redacted progress events, then a final
+ * `result` (or `error`). A non-OK response (e.g. 403 when onboarding is
+ * disabled, or 400 on a bad request) is surfaced as a single `error` event so
+ * callers have one uniform path. Never throws for an aborted/closed stream.
+ */
+export async function* streamOnboard(
+  request: OnboardRequest,
+  signal?: AbortSignal
+): AsyncGenerator<OnboardStreamEvent, void, unknown> {
+  let response: Response;
+  try {
+    response = await fetch("/api/onboard", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" },
+      cache: "no-store",
+      body: JSON.stringify(request),
+      signal
+    });
+  } catch (err) {
+    yield {
+      type: "error",
+      error: err instanceof Error ? `request failed: ${err.message}` : "request failed"
+    };
+    return;
+  }
+
+  if (!response.ok || !response.body) {
+    // The route returns a JSON error object for the deny gate / validation.
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    yield {
+      type: "error",
+      error: body?.error ?? `onboarding request failed: ${response.status}`
+    };
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  const emit = (line: string): OnboardStreamEvent | null => {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) {
+      return null;
+    }
+    try {
+      return JSON.parse(trimmed) as OnboardStreamEvent;
+    } catch {
+      // Skip a partial/garbled line rather than aborting the whole stream.
+      return null;
+    }
+  };
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      let newline = buffer.indexOf("\n");
+      while (newline >= 0) {
+        const parsed = emit(buffer.slice(0, newline));
+        buffer = buffer.slice(newline + 1);
+        if (parsed) {
+          yield parsed;
+        }
+        newline = buffer.indexOf("\n");
+      }
+    }
+    // Flush any trailing line that wasn't newline-terminated.
+    const tail = emit(buffer + decoder.decode());
+    if (tail) {
+      yield tail;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
