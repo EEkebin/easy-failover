@@ -25,20 +25,27 @@ export function shellQuote(value: string): string {
 
 /**
  * Wrap a command so it runs with root privileges per the chosen sudo method.
- * - `already-root`: run as-is.
+ * - `already-root`: run as-is (the login shell is already root).
  * - `passwordless`: prefix `sudo`.
  * - `password`: prefix `sudo -S -p ''` and require the password on stdin.
+ *
+ * For the two sudo cases the body is wrapped in `sh -c '<body>'` so the ENTIRE
+ * body — including `&&`/`;`/pipe chains — runs as root. Without this,
+ * `sudo cmd1 && cmd2` would run only `cmd1` as root and `cmd2` as the login
+ * user. (`already-root` needs no wrap: the login shell runs the whole chain as
+ * root.) When the password is fed on stdin, `sudo -S` consumes the first line
+ * and the wrapped `sh -c` still sees the remaining stdin (e.g. config content).
  */
 export function privileged(command: string, sudo: SudoMethod): PlannedCommand {
   switch (sudo.kind) {
     case "already-root":
       return { command, needsSudoPassword: false };
     case "passwordless":
-      return { command: `sudo ${command}`, needsSudoPassword: false };
+      return { command: `sudo sh -c ${shellQuote(command)}`, needsSudoPassword: false };
     case "password":
       // `-S` reads the password from stdin; `-p ''` suppresses the prompt so it
       // does not pollute stderr. The password itself is supplied out-of-band.
-      return { command: `sudo -S -p '' ${command}`, needsSudoPassword: true };
+      return { command: `sudo -S -p '' sh -c ${shellQuote(command)}`, needsSudoPassword: true };
   }
 }
 

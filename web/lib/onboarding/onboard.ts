@@ -296,7 +296,9 @@ export async function onboard(
         req.source.kind === "release-tarball"
           ? releaseInstallCommand(req.source, prefix, sysconfdir)
           : sourceInstallCommand(req.source, prefix, sysconfdir);
-      const planned = privileged(`sh -c ${shellQuoteForSh(body)}`, req.connection.sudo);
+      // privileged() wraps the body in `sh -c` for sudo methods, so the whole
+      // multi-command install body runs as root.
+      const planned = privileged(body, req.connection.sudo);
       const result = await execStep(
         "fetch-build-install",
         planned,
@@ -437,9 +439,4 @@ export const onboardSteps = STEP_ORDER;
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-/** Single-quote a command body for `sh -c '<body>'`. */
-function shellQuoteForSh(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
