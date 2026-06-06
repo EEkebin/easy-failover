@@ -1,0 +1,25 @@
+#!/sbin/openrc-run
+# OpenRC service script for the easy-failover virtual IP failover agent.
+
+name="easy-failover"
+description="easy-failover virtual IP failover agent"
+
+command="@EASY_FAILOVER_OPENRC_BINDIR@/easy-failover"
+command_args="--config @EASY_FAILOVER_OPENRC_SYSCONFDIR@/easy-failover/config.toml --run-forever"
+
+# easy-failover runs in the foreground with --run-forever, so let OpenRC's own
+# supervisor manage and restart it instead of daemonizing.
+supervisor="supervise-daemon"
+pidfile="/run/easy-failover.pid"
+respawn_delay=2
+respawn_max=0
+
+# Route the agent's logfmt runtime events to syslog under the daemon facility.
+output_logger="logger -t easy-failover -p daemon.info"
+error_logger="logger -t easy-failover -p daemon.err"
+
+depend() {
+	need net
+	after net
+	use logger
+}
