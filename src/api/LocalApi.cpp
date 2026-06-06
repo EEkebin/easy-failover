@@ -700,21 +700,31 @@ LocalApiHttpResponse buildLocalApiHttpResponse(const LocalApiHttpRequest& reques
 }
 
 LocalApiHttpServeResult serveLocalApiHttpWithMode(const std::string_view bind,
-                                                  const LocalApiHttpSnapshot& snapshot,
+                                                  const LocalApiHttpSnapshotProvider& snapshot_provider,
                                                   const bool serve_once,
-                                                  ShutdownSignalState* shutdown_state) {
+                                                  ShutdownSignalState* shutdown_state,
+                                                  const LocalApiHttpStartupObserver& startup_observer) {
+    auto startup_reported = false;
+    const auto startupResult = [&](LocalApiHttpServeResult result) {
+        if (!startup_reported && startup_observer) {
+            startup_observer(result);
+            startup_reported = true;
+        }
+        return result;
+    };
+
     const auto parsed_bind = parseBind(bind);
     if (!parsed_bind.has_value()) {
-        return LocalApiHttpServeResult{.started = false,
-                                       .served_request = false,
-                                       .error = "local API bind must be host:port"};
+        return startupResult(LocalApiHttpServeResult{.started = false,
+                                                     .served_request = false,
+                                                     .error = "local API bind must be host:port"});
     }
 
     const auto server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) {
-        return LocalApiHttpServeResult{.started = false,
-                                       .served_request = false,
-                                       .error = std::strerror(errno)};
+        return startupResult(LocalApiHttpServeResult{.started = false,
+                                                     .served_request = false,
+                                                     .error = std::strerror(errno)});
     }
 
     const auto close_server = std::unique_ptr<int, void (*)(int*)>{
@@ -731,22 +741,24 @@ LocalApiHttpServeResult serveLocalApiHttpWithMode(const std::string_view bind,
     address.sin_family = AF_INET;
     address.sin_port = htons(static_cast<std::uint16_t>(parsed_bind->second));
     if (::inet_pton(AF_INET, parsed_bind->first.c_str(), &address.sin_addr) != 1) {
-        return LocalApiHttpServeResult{.started = false,
-                                       .served_request = false,
-                                       .error = "local API bind host must be an IPv4 address"};
+        return startupResult(
+            LocalApiHttpServeResult{.started = false,
+                                    .served_request = false,
+                                    .error = "local API bind host must be an IPv4 address"});
     }
 
     if (::bind(server_fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
-        return LocalApiHttpServeResult{.started = false,
-                                       .served_request = false,
-                                       .error = std::strerror(errno)};
+        return startupResult(LocalApiHttpServeResult{.started = false,
+                                                     .served_request = false,
+                                                     .error = std::strerror(errno)});
     }
 
     if (::listen(server_fd, 8) != 0) {
-        return LocalApiHttpServeResult{.started = false,
-                                       .served_request = false,
-                                       .error = std::strerror(errno)};
+        return startupResult(LocalApiHttpServeResult{.started = false,
+                                                     .served_request = false,
+                                                     .error = std::strerror(errno)});
     }
+    startupResult(LocalApiHttpServeResult{.started = true, .served_request = false, .error = ""});
 
     auto served_request = false;
     while (true) {
@@ -791,6 +803,7 @@ LocalApiHttpServeResult serveLocalApiHttpWithMode(const std::string_view bind,
 
         const auto raw_request = readRequestBytes(client_fd);
         const auto parsed_request = parseHttpRequest(raw_request);
+        const auto snapshot = snapshot_provider();
         const auto response =
             parsed_request.has_value()
                 ? buildLocalApiHttpResponse(*parsed_request, snapshot)
@@ -809,18 +822,35 @@ LocalApiHttpServeResult serveLocalApiHttpWithMode(const std::string_view bind,
 
 LocalApiHttpServeResult serveLocalApiHttpOnce(const std::string_view bind,
                                               const LocalApiHttpSnapshot& snapshot) {
-    return serveLocalApiHttpWithMode(bind, snapshot, true, nullptr);
+    return serveLocalApiHttpWithMode(bind, [&snapshot] { return snapshot; }, true, nullptr, {});
 }
 
 LocalApiHttpServeResult serveLocalApiHttp(const std::string_view bind,
                                           const LocalApiHttpSnapshot& snapshot) {
-    return serveLocalApiHttpWithMode(bind, snapshot, false, nullptr);
+    return serveLocalApiHttpWithMode(bind, [&snapshot] { return snapshot; }, false, nullptr, {});
 }
 
 LocalApiHttpServeResult serveLocalApiHttp(const std::string_view bind,
                                           const LocalApiHttpSnapshot& snapshot,
                                           ShutdownSignalState* shutdown_state) {
-    return serveLocalApiHttpWithMode(bind, snapshot, false, shutdown_state);
+    return serveLocalApiHttpWithMode(bind, [&snapshot] { return snapshot; }, false, shutdown_state,
+                                     {});
+}
+
+LocalApiHttpServeResult serveLocalApiHttp(
+    const std::string_view bind,
+    const LocalApiHttpSnapshotProvider& snapshot_provider,
+    ShutdownSignalState* shutdown_state) {
+    return serveLocalApiHttpWithMode(bind, snapshot_provider, false, shutdown_state, {});
+}
+
+LocalApiHttpServeResult serveLocalApiHttp(
+    const std::string_view bind,
+    const LocalApiHttpSnapshotProvider& snapshot_provider,
+    ShutdownSignalState* shutdown_state,
+    const LocalApiHttpStartupObserver& startup_observer) {
+    return serveLocalApiHttpWithMode(bind, snapshot_provider, false, shutdown_state,
+                                     startup_observer);
 }
 
 } // namespace easyfailover

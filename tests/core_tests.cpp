@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <exception>
+#include <functional>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -381,6 +382,16 @@ class FakeVipOwnershipProbe final : public VipOwnershipProbe {
     auto heartbeat_transport = DisabledHeartbeatTransport{};
     return easyfailover::runDaemonRuntimeLoop(request, vip_manager, ownership_probe,
                                              heartbeat_transport);
+}
+
+[[nodiscard]] easyfailover::DaemonLoopResult runDaemonRuntimeLoop(
+    const DaemonLoopRequest& request,
+    VipManager& vip_manager,
+    const std::function<void(const easyfailover::DaemonLoopResult&)>& result_observer) {
+    auto ownership_probe = FakeVipOwnershipProbe{};
+    auto heartbeat_transport = DisabledHeartbeatTransport{};
+    return easyfailover::runDaemonRuntimeLoop(request, vip_manager, ownership_probe,
+                                             heartbeat_transport, result_observer);
 }
 
 [[nodiscard]] easyfailover::DaemonLoopResult runDaemonRuntimeLoopWithHeartbeat(
@@ -1132,6 +1143,49 @@ void testLocalApiListenerRejectsInvalidBind(TestRunner& runner) {
     runner.expect(!result.served_request, "invalid bind should not serve request");
     runner.expect(result.error == "local API bind must be host:port",
                   "invalid bind should return stable error");
+}
+
+void testLocalApiListenerReportsStartupFailure(TestRunner& runner) {
+    auto shutdown_state = ShutdownSignalState{};
+    auto startup_reported = false;
+    auto startup_result = easyfailover::LocalApiHttpServeResult{};
+
+    const auto result = serveLocalApiHttp(
+        "not-a-bind",
+        [] { return sampleLocalApiHttpSnapshot(); },
+        &shutdown_state,
+        [&](const easyfailover::LocalApiHttpServeResult& reported_result) {
+            startup_reported = true;
+            startup_result = reported_result;
+        });
+
+    runner.expect(startup_reported, "invalid bind should report listener startup failure");
+    runner.expect(!startup_result.started, "startup failure report should not mark started");
+    runner.expect(startup_result.error == "local API bind must be host:port",
+                  "startup failure report should preserve bind error");
+    runner.expect(!result.started, "invalid bind result should not mark started");
+}
+
+void testLocalApiListenerReportsStartupSuccess(TestRunner& runner) {
+    auto shutdown_state = ShutdownSignalState{};
+    shutdown_state.requestShutdown(ShutdownSignal::Terminate);
+    auto startup_reported = false;
+    auto startup_result = easyfailover::LocalApiHttpServeResult{};
+
+    const auto result = serveLocalApiHttp(
+        "127.0.0.1:28745",
+        [] { return sampleLocalApiHttpSnapshot(); },
+        &shutdown_state,
+        [&](const easyfailover::LocalApiHttpServeResult& reported_result) {
+            startup_reported = true;
+            startup_result = reported_result;
+        });
+
+    runner.expect(startup_reported, "valid bind should report listener startup success");
+    runner.expect(startup_result.started, "startup success report should mark started");
+    runner.expect(startup_result.error.empty(), "startup success report should not include error");
+    runner.expect(result.started, "valid bind result should mark listener started");
+    runner.expect(result.error.empty(), "valid bind result should not include error");
 }
 
 void testLocalApiListenerExitsWhenShutdownRequested(TestRunner& runner) {
@@ -3355,6 +3409,36 @@ void testDaemonRuntimeLoopFailoverDecisionTracksElapsed(TestRunner& runner) {
                   "third failover decision should report logical elapsed time");
 }
 
+void testDaemonRuntimeLoopPublishesObservedResults(TestRunner& runner) {
+    FakeVipManager vip_manager;
+    auto observed_results = std::vector<easyfailover::DaemonLoopResult>{};
+
+    const auto result = runDaemonRuntimeLoop(
+        DaemonLoopRequest{.config = validConfig(),
+                          .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                                       .max_iterations = 3,
+                                                       .logical_iteration_elapsed_ms = 250}},
+        vip_manager,
+        [&](const easyfailover::DaemonLoopResult& observed_result) {
+            observed_results.push_back(observed_result);
+        });
+
+    runner.expect(observed_results.size() == 3,
+                  "daemon runtime loop should publish one observed result per completed iteration");
+    if (observed_results.size() != 3) {
+        return;
+    }
+
+    runner.expect(observed_results.at(0).iterations_ran == 1,
+                  "first observed result should include first completed iteration");
+    runner.expect(observed_results.at(1).iterations_ran == 2,
+                  "second observed result should include second completed iteration");
+    runner.expect(observed_results.at(2).iterations_ran == result.iterations_ran,
+                  "final observed result should match returned iteration count");
+    runner.expect(observed_results.at(2).failover_decisions.size() == result.failover_decisions.size(),
+                  "final observed result should match returned failover observations");
+}
+
 void testDaemonRuntimeLoopDoesNotRecordFailoverDecisionForInvalidConfig(TestRunner& runner) {
     FakeVipManager vip_manager;
     auto config = validConfig();
@@ -4036,6 +4120,12 @@ int main() {
     runner.run("local API listener rejects invalid bind", [&runner] {
         testLocalApiListenerRejectsInvalidBind(runner);
     });
+    runner.run("local API listener reports startup failure", [&runner] {
+        testLocalApiListenerReportsStartupFailure(runner);
+    });
+    runner.run("local API listener reports startup success", [&runner] {
+        testLocalApiListenerReportsStartupSuccess(runner);
+    });
     runner.run("local API listener exits when shutdown requested", [&runner] {
         testLocalApiListenerExitsWhenShutdownRequested(runner);
     });
@@ -4335,6 +4425,9 @@ int main() {
     });
     runner.run("daemon runtime loop failover decision tracks elapsed", [&runner] {
         testDaemonRuntimeLoopFailoverDecisionTracksElapsed(runner);
+    });
+    runner.run("daemon runtime loop publishes observed results", [&runner] {
+        testDaemonRuntimeLoopPublishesObservedResults(runner);
     });
     runner.run("daemon runtime loop does not record failover decision for invalid config",
                [&runner] {

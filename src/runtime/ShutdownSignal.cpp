@@ -43,24 +43,24 @@ void handleShutdownSignal(const int signal) {
 } // namespace
 
 void ShutdownSignalState::requestShutdown(const ShutdownSignal signal) {
-    shutdown_requested_ = true;
-    signal_ = signal;
+    signal_.store(signal);
+    shutdown_requested_.store(true);
 }
 
 bool ShutdownSignalState::shutdownRequested() const {
-    return shutdown_requested_;
+    return shutdown_requested_.load();
 }
 
 ShutdownSignal ShutdownSignalState::signal() const {
-    return signal_;
+    return signal_.load();
 }
 
 std::string_view ShutdownSignalState::reason() const {
-    if (!shutdown_requested_) {
+    if (!shutdown_requested_.load()) {
         return "shutdown not requested";
     }
 
-    switch (signal_) {
+    switch (signal_.load()) {
     case ShutdownSignal::Interrupt:
         return "shutdown requested by interrupt signal";
     case ShutdownSignal::Terminate:

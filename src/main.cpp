@@ -11,9 +11,16 @@
 
 #include <cstdlib>
 #include <cstddef>
+#include <cstdint>
+#include <condition_variable>
 #include <exception>
 #include <iostream>
+#include <mutex>
+#include <optional>
 #include <string>
+#include <thread>
+#include <utility>
+#include <vector>
 
 #include <CLI/CLI.hpp>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -35,6 +42,110 @@ void logValidationErrors(const std::vector<std::string>& errors) {
         spdlog::error("config validation: {}", error);
     }
 }
+
+easyfailover::LocalApiHttpSnapshot buildHttpSnapshotFromLoopResult(
+    const easyfailover::Config& config,
+    const easyfailover::DaemonLoopResult& loop_result,
+    const bool dry_run) {
+    auto lifecycle_snapshot = easyfailover::DaemonLifecycleResult{
+        .initial_state = loop_result.initial_state,
+        .final_state = loop_result.final_state,
+        .started = loop_result.iterations_ran > 0,
+        .iteration_ran = loop_result.iterations_ran > 0,
+        .stopped = loop_result.final_state == easyfailover::DaemonLifecycleState::Stopped,
+        .validation_errors = loop_result.validation_errors,
+        .vip_operations = loop_result.vip_operations,
+        .local_status = easyfailover::LocalNodeStatus{.node_id = config.node_id,
+                                                      .priority = config.priority,
+                                                      .healthy = true,
+                                                      .state = easyfailover::NodeState::Backup},
+        .failover_decision = easyfailover::FailoverDecision{},
+        .detail = loop_result.detail};
+    if (!loop_result.failover_decisions.empty()) {
+        const auto& latest_decision = loop_result.failover_decisions.back();
+        lifecycle_snapshot.local_status = latest_decision.local_status;
+        lifecycle_snapshot.failover_decision = latest_decision.decision;
+        lifecycle_snapshot.local_vip_owner =
+            latest_decision.local_status.state == easyfailover::NodeState::Master;
+        lifecycle_snapshot.local_vip_owner_known = true;
+    }
+
+    const auto peers_observed =
+        loop_result.failover_decisions.empty()
+            ? 0
+            : static_cast<int>(loop_result.failover_decisions.back().peer_statuses.size());
+    const auto health = easyfailover::HealthCheckResult{
+        .status = config.health.command.empty() ? easyfailover::HealthStatus::Healthy
+                                                : easyfailover::HealthStatus::Unhealthy,
+        .detail = config.health.command.empty() ? "no health command configured"
+                                                : "health check not evaluated"};
+    const auto local_node_state =
+        loop_result.failover_decisions.empty()
+            ? easyfailover::NodeState::Backup
+            : loop_result.failover_decisions.back().local_status.state;
+
+    auto events = std::vector<easyfailover::LocalApiEvent>{};
+    events.reserve(loop_result.vip_operations.size() + 1);
+    events.push_back(easyfailover::buildLocalApiLifecycleEvent(
+        1, lifecycle_snapshot,
+        easyfailover::RuntimeLogContext{.node_id = config.node_id, .dry_run = dry_run}));
+    for (std::size_t index = 0; index < loop_result.vip_operations.size(); ++index) {
+        events.push_back(easyfailover::buildLocalApiVipOperationEvent(
+            static_cast<std::uint64_t>(index + 2), loop_result.vip_operations.at(index), index));
+    }
+
+    return easyfailover::LocalApiHttpSnapshot{
+        .status = easyfailover::buildLocalApiStatusResponse(
+            config, lifecycle_snapshot, health, local_node_state, dry_run, peers_observed),
+        .config = easyfailover::buildLocalApiConfigResponse(config),
+        .events = easyfailover::buildLocalApiEventsResponse(std::move(events))};
+}
+
+easyfailover::DaemonLoopResult initialLoopResult() {
+    return easyfailover::DaemonLoopResult{
+        .initial_state = easyfailover::DaemonLifecycleState::Stopped,
+        .final_state = easyfailover::DaemonLifecycleState::Stopped,
+        .stop_reason = easyfailover::DaemonLoopStopReason::MaxIterations,
+        .iterations_ran = 0,
+        .validation_errors = {},
+        .vip_operations = {},
+        .health_schedules = {},
+        .heartbeat_send_schedules = {},
+        .heartbeat_sends = {},
+        .heartbeat_receive_states = {},
+        .failover_decisions = {},
+        .detail = "daemon starting"};
+}
+
+class ApiThreadGuard {
+  public:
+    ApiThreadGuard(std::thread& thread, easyfailover::ShutdownSignalState& shutdown_state)
+        : thread_{thread}, shutdown_state_{shutdown_state} {}
+
+    ApiThreadGuard(const ApiThreadGuard&) = delete;
+    ApiThreadGuard& operator=(const ApiThreadGuard&) = delete;
+
+    ~ApiThreadGuard() {
+        stop();
+    }
+
+    void stop() {
+        if (thread_.joinable()) {
+            shutdown_state_.requestShutdown();
+            thread_.join();
+        }
+    }
+
+  private:
+    std::thread& thread_;
+    easyfailover::ShutdownSignalState& shutdown_state_;
+};
+
+struct ApiStartupState {
+    bool reported = false;
+    easyfailover::LocalApiHttpServeResult result;
+    std::exception_ptr exception;
+};
 
 } // namespace
 
@@ -114,6 +225,77 @@ int main(int argc, char** argv) {
         easyfailover::UdpHeartbeatTransport heartbeat_transport{config.heartbeat.bind};
         auto shutdown_state = easyfailover::ShutdownSignalState{};
         easyfailover::pollShutdownSignals(shutdown_state);
+        auto api_snapshot_mutex = std::mutex{};
+        auto api_snapshot = buildHttpSnapshotFromLoopResult(config, initialLoopResult(), dry_run);
+        auto api_serve_result_mutex = std::mutex{};
+        auto api_serve_result = std::optional<easyfailover::LocalApiHttpServeResult>{};
+        auto api_thread = std::thread{};
+        auto api_thread_guard = ApiThreadGuard{api_thread, shutdown_state};
+        auto api_startup_mutex = std::mutex{};
+        auto api_startup_condition = std::condition_variable{};
+        auto api_thread_startup = ApiStartupState{};
+        const auto update_api_snapshot = [&](const easyfailover::DaemonLoopResult& current_result) {
+            if (api_startup.state != easyfailover::LocalApiStartupState::Ready) {
+                return;
+            }
+            auto next_snapshot = buildHttpSnapshotFromLoopResult(config, current_result, dry_run);
+            auto lock = std::lock_guard<std::mutex>{api_snapshot_mutex};
+            api_snapshot = std::move(next_snapshot);
+        };
+        if (api_startup.state == easyfailover::LocalApiStartupState::Ready) {
+            spdlog::info("local API listening bind={} detail=\"{}\"", api_startup.bind,
+                         api_startup.detail);
+            api_thread = std::thread{[&] {
+                try {
+                    const auto serve_result = easyfailover::serveLocalApiHttp(
+                        api_startup.bind,
+                        [&] {
+                            auto lock = std::lock_guard<std::mutex>{api_snapshot_mutex};
+                            return api_snapshot;
+                        },
+                        &shutdown_state,
+                        [&](const easyfailover::LocalApiHttpServeResult& startup_result) {
+                            auto lock = std::lock_guard<std::mutex>{api_startup_mutex};
+                            api_thread_startup.result = startup_result;
+                            api_thread_startup.reported = true;
+                            api_startup_condition.notify_one();
+                        });
+                    {
+                        auto lock = std::lock_guard<std::mutex>{api_serve_result_mutex};
+                        api_serve_result = serve_result;
+                    }
+                    if (!serve_result.error.empty()) {
+                        shutdown_state.requestShutdown();
+                    }
+                } catch (...) {
+                    {
+                        auto lock = std::lock_guard<std::mutex>{api_startup_mutex};
+                        api_thread_startup.exception = std::current_exception();
+                        if (!api_thread_startup.reported) {
+                            api_thread_startup.reported = true;
+                            api_startup_condition.notify_one();
+                        }
+                    }
+                    shutdown_state.requestShutdown();
+                }
+            }};
+            auto api_startup_result = easyfailover::LocalApiHttpServeResult{};
+            auto api_startup_exception = std::exception_ptr{};
+            {
+                auto lock = std::unique_lock<std::mutex>{api_startup_mutex};
+                api_startup_condition.wait(lock, [&] { return api_thread_startup.reported; });
+                api_startup_result = api_thread_startup.result;
+                api_startup_exception = api_thread_startup.exception;
+            }
+            if (api_startup_exception != nullptr) {
+                std::rethrow_exception(api_startup_exception);
+            }
+            if (!api_startup_result.started || !api_startup_result.error.empty()) {
+                spdlog::error("local API listener failed bind={} error=\"{}\"",
+                              api_startup.bind, api_startup_result.error);
+                return EXIT_FAILURE;
+            }
+        }
         const auto loop_result = easyfailover::runDaemonRuntimeLoop(
             easyfailover::DaemonLoopRequest{
                 .config = config,
@@ -127,7 +309,8 @@ int main(int argc, char** argv) {
                 .initial_state = easyfailover::DaemonLifecycleState::Stopped,
                 .shutdown_state = &shutdown_state,
                 .config_prevalidated = true},
-            vip_manager, ownership_probe, heartbeat_transport);
+            vip_manager, ownership_probe, heartbeat_transport, update_api_snapshot);
+        update_api_snapshot(loop_result);
         spdlog::info("{}", easyfailover::formatRuntimeLoopEvent(
                               loop_result,
                               easyfailover::RuntimeLogContext{.node_id = config.node_id,
@@ -137,72 +320,33 @@ int main(int argc, char** argv) {
                          easyfailover::formatRuntimeVipOperationEvent(
                              loop_result.vip_operations.at(index), index));
         }
-        if (!loop_result.validation_errors.empty()) {
-            logValidationErrors(loop_result.validation_errors);
-            return EXIT_FAILURE;
-        }
-        if (loop_result.final_state == easyfailover::DaemonLifecycleState::Faulted) {
-            return EXIT_FAILURE;
-        }
-
         spdlog::info("heartbeat bind={} interval_ms={} timeout_ms={}", config.heartbeat.bind,
                      config.heartbeat.interval_ms, config.heartbeat.timeout_ms);
         spdlog::info("health command='{}' interval_ms={} timeout_ms={}", config.health.command,
                      config.health.interval_ms, config.health.timeout_ms);
         spdlog::info("configured peers={}", config.peers.size());
 
-        if (api_startup.state == easyfailover::LocalApiStartupState::Ready) {
-            auto lifecycle_snapshot = easyfailover::DaemonLifecycleResult{
-                .initial_state = loop_result.initial_state,
-                .final_state = loop_result.final_state,
-                .started = loop_result.iterations_ran > 0,
-                .iteration_ran = loop_result.iterations_ran > 0,
-                .stopped = loop_result.final_state == easyfailover::DaemonLifecycleState::Stopped,
-                .validation_errors = loop_result.validation_errors,
-                .vip_operations = loop_result.vip_operations,
-                .local_status = easyfailover::LocalNodeStatus{.node_id = config.node_id,
-                                                              .priority = config.priority,
-                                                              .healthy = true,
-                                                              .state = easyfailover::NodeState::Backup},
-                .failover_decision = easyfailover::FailoverDecision{},
-                .detail = loop_result.detail};
-            if (!loop_result.failover_decisions.empty()) {
-                const auto& latest_decision = loop_result.failover_decisions.back();
-                lifecycle_snapshot.local_status = latest_decision.local_status;
-                lifecycle_snapshot.failover_decision = latest_decision.decision;
-                lifecycle_snapshot.local_vip_owner =
-                    latest_decision.local_status.state == easyfailover::NodeState::Master;
-                lifecycle_snapshot.local_vip_owner_known = true;
+        if (api_thread.joinable()) {
+            api_thread_guard.stop();
+            {
+                auto lock = std::lock_guard<std::mutex>{api_startup_mutex};
+                if (api_thread_startup.exception != nullptr) {
+                    std::rethrow_exception(api_thread_startup.exception);
+                }
             }
-
-            const auto peers_observed =
-                loop_result.failover_decisions.empty()
-                    ? 0
-                    : static_cast<int>(loop_result.failover_decisions.back().peer_statuses.size());
-            const auto health = easyfailover::HealthCheckResult{
-                .status = config.health.command.empty() ? easyfailover::HealthStatus::Healthy
-                                                        : easyfailover::HealthStatus::Unhealthy,
-                .detail = config.health.command.empty() ? "no health command configured"
-                                                        : "health check not evaluated"};
-            const auto local_node_state =
-                loop_result.failover_decisions.empty()
-                    ? easyfailover::NodeState::Backup
-                    : loop_result.failover_decisions.back().local_status.state;
-            const auto snapshot = easyfailover::LocalApiHttpSnapshot{
-                .status = easyfailover::buildLocalApiStatusResponse(
-                    config, lifecycle_snapshot, health, local_node_state, dry_run, peers_observed),
-                .config = easyfailover::buildLocalApiConfigResponse(config),
-                .events = easyfailover::buildLocalApiEventsResponse()};
-
-            spdlog::info("local API listening bind={} detail=\"{}\"", api_startup.bind,
-                         api_startup.detail);
-            const auto serve_result =
-                easyfailover::serveLocalApiHttp(api_startup.bind, snapshot, &shutdown_state);
-            if (!serve_result.error.empty()) {
+            auto lock = std::lock_guard<std::mutex>{api_serve_result_mutex};
+            if (api_serve_result.has_value() && !api_serve_result->error.empty()) {
                 spdlog::error("local API listener failed bind={} error=\"{}\"",
-                              api_startup.bind, serve_result.error);
+                              api_startup.bind, api_serve_result->error);
                 return EXIT_FAILURE;
             }
+        }
+        if (!loop_result.validation_errors.empty()) {
+            logValidationErrors(loop_result.validation_errors);
+            return EXIT_FAILURE;
+        }
+        if (loop_result.final_state == easyfailover::DaemonLifecycleState::Faulted) {
+            return EXIT_FAILURE;
         }
 
         return EXIT_SUCCESS;

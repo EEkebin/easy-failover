@@ -2,8 +2,10 @@
 
 This optional dashboard is a read-only Next.js app for local easy-failover state.
 
-The dashboard reads the local HTTP API when the daemon is running with `api.enabled = true` and
-falls back to sample data when the API is unavailable.
+The dashboard reads the local HTTP API when the daemon is running with `api.enabled = true`.
+The API listener runs alongside the long-running daemon and falls back to a startup snapshot until
+the first runtime iteration publishes current state. The dashboard falls back to sample data when
+the API is unavailable.
 
 ## Run locally
 
