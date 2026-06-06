@@ -1,0 +1,7 @@
+#!/bin/sh
+# svlogd logger for easy-failover. Captures the agent's logfmt runtime events
+# under /var/log/easy-failover with automatic rotation. Create the directory
+# before activating the service:
+#
+#   install -d -m 0755 /var/log/easy-failover
+exec svlogd -tt /var/log/easy-failover
