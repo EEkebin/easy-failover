@@ -55,8 +55,9 @@ decision loop in dry-run and watch what it *would* do before letting it touch th
 - 🐧 Targets Arch, Ubuntu, Debian, Fedora, RHEL, and Rocky Linux.
 
 > **Project status:** pre-1.0 and under active development. The daemon builds, tests, and runs
-> the full failover loop, but quorum/fencing is still future work. Validate real VIP movement in
-> a lab before trusting it in production — see the [Disclaimer](#disclaimer).
+> the full failover loop with opt-in quorum and self-fencing; remote/STONITH fencing is out of
+> scope. Validate real VIP movement in a lab before trusting it in production — see the
+> [Disclaimer](#disclaimer).
 
 **Documentation** lives in [`docs/`](docs/). Start with the
 [configuration reference](docs/config-reference.md), the
@@ -159,7 +160,10 @@ software under its terms.
 
 easy-failover performs privileged network operations and is **pre-1.0 software**. Moving a virtual
 IP incorrectly can cause split-brain (two nodes claiming the same address) and service outages.
-Quorum and fencing are not yet implemented.
+Opt-in **quorum** and **self-fencing** are implemented (a node releases the VIP when it loses quorum
+or the election); **remote/STONITH fencing is not**. For a 2-node cluster, strict-majority quorum
+means a lone survivor will not take over unless you add a witness node or set `election.quorum_size`
+— see [`docs/failover-safety.md`](docs/failover-safety.md).
 
 Real VIP mutation is disabled by default and must be explicitly enabled. **Do not enable it until
 you have validated the node configuration, Linux capabilities, and failover behavior in your own

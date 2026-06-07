@@ -89,16 +89,24 @@ daemon loop or failover decisions yet.
 [election]
 require_quorum = false
 preempt = true
+quorum_size = 0
 ```
 
-- `require_quorum`: optional boolean reserved for future quorum behavior. Defaults to `false`.
-- `preempt`: optional boolean reserved for future priority preemption behavior. Defaults to `true`.
+- `require_quorum`: optional boolean. When `true`, a node may own the VIP only if it observes a
+  quorum of the cluster (this node + peers with a fresh heartbeat). A node without quorum refuses to
+  claim, and a master that loses quorum releases the VIP (self-fencing). Defaults to `false`.
+- `preempt`: optional boolean. When `true` (default), a higher-priority node takes over from a
+  lower-priority master. When `false`, it defers to an existing healthy master and only takes over
+  once that master stops sending heartbeats (avoids failover flaps).
+- `quorum_size`: optional integer overriding the quorum threshold. `0` (default) means automatic
+  strict majority, `floor(N/2)+1`, where `N` is the configured cluster size (peers + 1). If set, it
+  must be between `1` and `N`. Only used when `require_quorum` is `true`. Setting it below the
+  majority weakens split-brain protection.
 
-Current election logic only chooses the highest-priority healthy candidate and breaks ties by the
-lexicographically lowest `node_id`.
-
-Quorum and split-brain protections are design requirements before real VIP movement is implemented.
-See [`failover-safety.md`](failover-safety.md) for the current safety notes.
+The election chooses the highest-priority healthy candidate and breaks ties by the lexicographically
+lowest `node_id`. Quorum, preemption, and self-fencing layer on top of that result — see
+[`failover-safety.md`](failover-safety.md), including the important note on **two-node clusters**
+(strict majority means a lone survivor cannot own the VIP; add a witness node or set `quorum_size`).
 
 ## API
 
