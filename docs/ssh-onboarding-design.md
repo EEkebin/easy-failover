@@ -6,7 +6,7 @@ This document designs an optional dashboard feature that performs that same flow
 node, driven from the dashboard's server. It is a design only. No onboarding code exists yet, and
 nothing here changes the daemon, the installer scripts, or the existing read-only API.
 
-The onboarding flow deliberately mirrors [`../scripts/install.sh`](../scripts/install.sh): it builds
+The onboarding flow deliberately mirrors the source install flow: it builds
 a Release binary, installs under a prefix, keeps configuration under `/etc/easy-failover`, validates
 the config with `--validate-config`, and never enables real VIP mutation as part of installation.
 
@@ -18,7 +18,7 @@ satisfy, [`failover-safety.md`](failover-safety.md) for the safety posture this 
 ## Goals
 
 - Let an operator onboard a new easy-failover node from the dashboard without leaving a terminal.
-- Reuse the existing source install flow ([`../scripts/install.sh`](../scripts/install.sh)) and the
+- Reuse the existing source install flow (the source install flow) and the
   TOML schema in [`config-reference.md`](config-reference.md) rather than inventing a parallel one.
 - Keep all SSH and all secret handling on the dashboard server. Never ship credentials, key
   material, or SSH logic to the browser.
@@ -118,7 +118,7 @@ The operator picks how easy-failover gets onto the target. Both map to the exist
   - `releaseRef`: release tag (for example `v1.2.3`) or `latest`.
   - SHA-256 verification is mandatory; a checksum mismatch fails the run before anything is installed.
 - `build-from-source`: clone the repository at a git ref and run
-  [`../scripts/install.sh`](../scripts/install.sh) on the target.
+  the source install flow on the target.
   - `gitRef`: branch, tag, or commit to build (defaults to the default branch).
   - This path needs a full build toolchain on the target (a C++23 compiler, CMake, a build tool,
     Git) as listed in [`../README.md`](../README.md), so prerequisite installation does more work.
@@ -145,7 +145,7 @@ The operator does not paste raw TOML. The dashboard collects the fields from
 
 The rendered config is written to `${sysconfdir}/easy-failover/config.toml` on the target and then
 validated in place with `easy-failover --config <path> --validate-config` before the service is
-enabled, exactly as [`../scripts/install.sh`](../scripts/install.sh) does. The dashboard should also
+enabled, exactly as the source install flow does. The dashboard should also
 validate inputs against the schema client-side and server-side for fast feedback, but the
 authoritative check is the on-target `--validate-config` run.
 
@@ -169,7 +169,7 @@ below) and leaves the run in a known state.
 4. **Fetch / build / install easy-failover** — for `release-tarball`: download the tarball and its
    `.sha256`, run `sha256sum -c` (fail on mismatch), unpack, and install into `prefix`/`sysconfdir`.
    For `build-from-source`: clone at `gitRef` and run
-   [`../scripts/install.sh`](../scripts/install.sh) with the mapped `--prefix`/`--sysconfdir`, which
+   the source install flow with the mapped `--prefix`/`--sysconfdir`, which
    builds Release and installs without enabling the service. Reports: source, ref, verified checksum
    or build result, installed binary path.
 5. **Write config** — write the server-rendered `config.toml` to
@@ -200,7 +200,7 @@ the matching service manager:
   that supervisor expects.
 
 The installer scripts themselves only handle systemd reloads
-([`../scripts/install.sh`](../scripts/install.sh) skips the reload when `systemctl` is absent), so
+(the source install flow skips the reload when `systemctl` is absent), so
 non-systemd enablement is an onboarding-side responsibility layered on top of the install. The design
 should pick the service manager from detection, not assume systemd.
 
@@ -244,7 +244,7 @@ Steps are designed to be safe to re-run, so a failed run can be retried from the
 - Prereq install is idempotent (already-present packages are skipped).
 - Install detects an existing same-version binary and can be re-applied; this mirrors the installer's
   own "keep existing" behavior for config.
-- Config write detects an existing `config.toml`. Like [`../scripts/install.sh`](../scripts/install.sh),
+- Config write detects an existing `config.toml`. Like the source install flow,
   it must not clobber an operator-edited config silently: it either confirms the content matches what
   the dashboard would generate, or requires an explicit "overwrite" choice from the operator.
 - Validate, enable, and verify are naturally repeatable.
@@ -261,7 +261,7 @@ where it failed.
   [`../README.md`](../README.md) (install, write config, `--validate-config`, enable the service).
 - Because real VIP mutation stays disabled, a half-finished or abandoned onboarding never endangers
   an existing VIP owner. Cleanup of a partially installed node uses
-  [`../scripts/uninstall.sh`](../scripts/uninstall.sh) (which keeps `config.toml` unless
+  package removal (which keeps `config.toml` unless
   `--purge-config` is passed).
 
 ## Integration with the Authenticated Write API

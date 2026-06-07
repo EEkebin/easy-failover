@@ -1,15 +1,29 @@
 # Distro Packaging Notes
 
-easy-failover does not ship distribution-specific packages yet. These notes define the expected
-package-maintainer contract for future Debian, RPM, and distro repository work.
+easy-failover builds `.deb` and `.rpm` packages via CPack, driven from the same CMake `install()`
+rules. Build them with `scripts/package.sh` (the `.deb` needs `dpkg-deb`; the `.rpm` needs
+`rpmbuild`, so build the RPM on a Fedora/RHEL host or in CI). These notes record the layout and the
+package lifecycle.
 
 ## Scope
 
-Future distro packages should package the existing CMake install output. They should not introduce a
-separate file layout that differs from release tarballs or staged installs.
+The packages reuse the CMake install output via CPack components: only the `daemon` component
+(binary, example config, systemd unit, docs) is shipped — the OpenRC/runit/dinit/s6 service files
+stay out of the packages and remain available for source installs via
+`cmake --install --component <name>`.
 
-This document is guidance only. It does not add Debian packaging, RPM specs, package signing,
-repository publishing, or distribution-specific CI.
+Not yet covered here: official distro-repository submission (lintian/rpmlint-clean `debian/` and
+`.spec` sources), package signing, and repository publishing.
+
+## Lifecycle (maintainer scripts)
+
+- **install** (`postinst` / `%post`): seed `/etc/easy-failover/config.toml` from the shipped example
+  if absent; `systemctl daemon-reload`. The service is **not** auto-started — edit and validate the
+  config first.
+- **remove**: the service is stopped and, if this host owns the VIP, it is released
+  (`easy-failover --release-vip`, best-effort).
+- **config removal**: `apt purge` removes `/etc/easy-failover` on Debian/Ubuntu (plain `apt remove`
+  keeps it, per Debian convention); on RPM, erase removes it.
 
 ## Installed Files
 
