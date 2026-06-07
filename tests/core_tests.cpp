@@ -4007,6 +4007,148 @@ void testDecisionSelectsLocalNodeWhenLocalWinsTieBreak(TestRunner& runner) {
     runner.expect(decision.selected_master == "node-a", "local node should be selected");
 }
 
+// --- Quorum and fencing ---------------------------------------------------------------------
+
+easyfailover::ElectionPolicy quorumPolicy(const int cluster_size, const int quorum_size = 0,
+                                          const bool preempt = true) {
+    return easyfailover::ElectionPolicy{.require_quorum = true,
+                                        .quorum_size = quorum_size,
+                                        .cluster_size = cluster_size,
+                                        .preempt = preempt};
+}
+
+PeerStatus peerStatusWithState(const std::string& node_id, const int priority, const bool healthy,
+                               const bool heartbeat_seen, const easyfailover::NodeState state) {
+    return PeerStatus{.node_id = node_id,
+                      .priority = priority,
+                      .healthy = healthy,
+                      .heartbeat_seen = heartbeat_seen,
+                      .state = state};
+}
+
+void testQuorumThresholdIsStrictMajority(TestRunner& runner) {
+    runner.expect(easyfailover::quorumThreshold(quorumPolicy(2)) == 2,
+                  "2-node cluster needs both nodes for majority");
+    runner.expect(easyfailover::quorumThreshold(quorumPolicy(3)) == 2,
+                  "3-node cluster majority is 2");
+    runner.expect(easyfailover::quorumThreshold(quorumPolicy(5)) == 3,
+                  "5-node cluster majority is 3");
+}
+
+void testQuorumSizeOverrideWins(TestRunner& runner) {
+    runner.expect(easyfailover::quorumThreshold(quorumPolicy(5, 4)) == 4,
+                  "explicit quorum_size overrides automatic majority");
+}
+
+void testObservedClusterMembersCountsSelfPlusFreshPeers(TestRunner& runner) {
+    const std::vector<PeerStatus> peers{
+        peerStatus("node-b", 100, true, true),   // fresh
+        peerStatus("node-c", 100, false, true),  // fresh but unhealthy: still counts (reachable)
+        peerStatus("node-d", 100, true, false),  // stale: not counted
+    };
+    runner.expect(easyfailover::observedClusterMembers(peers) == 3,
+                  "observed = self + 2 fresh peers (health irrelevant to reachability)");
+}
+
+void testQuorumRefusesClaimWithoutMajority(TestRunner& runner) {
+    // 3-node cluster, this node sees only itself -> 1 < 2 -> may not claim.
+    const auto local = localStatus("node-a", 100, true, easyfailover::NodeState::Backup);
+    const std::vector<PeerStatus> peers;
+    const auto decision = decideFailoverAction(local, peers, quorumPolicy(3));
+    runner.expect(decision.action == FailoverAction::StayBackup,
+                  "node without quorum must not claim the VIP");
+    runner.expect(!decision.selected_master.has_value(),
+                  "no-quorum decision selects no master");
+}
+
+void testQuorumDemotesMasterOnQuorumLoss(TestRunner& runner) {
+    // This node is master but is now isolated in a 3-node cluster -> must demote and self-release.
+    const auto local = localStatus("node-a", 100, true, easyfailover::NodeState::Master);
+    const std::vector<PeerStatus> peers;
+    const auto decision = decideFailoverAction(local, peers, quorumPolicy(3));
+    runner.expect(decision.action == FailoverAction::BecomeBackup,
+                  "master that loses quorum must self-fence (release the VIP)");
+}
+
+void testQuorumAllowsClaimWithMajority(TestRunner& runner) {
+    // 3-node cluster, this node + one fresh peer = 2 >= 2 -> may own. Local outranks the peer.
+    const auto local = localStatus("node-a", 200, true, easyfailover::NodeState::Backup);
+    const std::vector<PeerStatus> peers{peerStatus("node-b", 100, true, true)};
+    const auto decision = decideFailoverAction(local, peers, quorumPolicy(3));
+    runner.expect(decision.action == FailoverAction::BecomeMaster,
+                  "node with quorum and highest priority should become master");
+    runner.expect(decision.selected_master == "node-a", "local node should be selected");
+}
+
+void testQuorumDisabledByDefaultPreservesBehavior(TestRunner& runner) {
+    // ElectionPolicy{} has require_quorum=false: an isolated healthy node still becomes master,
+    // matching the pre-quorum behavior (regression guard).
+    const auto local = localStatus("node-a", 100, true, easyfailover::NodeState::Backup);
+    const std::vector<PeerStatus> peers;
+    const auto decision = decideFailoverAction(local, peers, easyfailover::ElectionPolicy{});
+    runner.expect(decision.action == FailoverAction::BecomeMaster,
+                  "with quorum disabled, an isolated node still becomes master");
+}
+
+void testTwoNodeQuorumBlocksLoneSurvivor(TestRunner& runner) {
+    // 2-node cluster, strict majority = 2. A lone survivor (no fresh peer) cannot own.
+    const auto local = localStatus("node-a", 100, true, easyfailover::NodeState::Backup);
+    const std::vector<PeerStatus> peers;
+    const auto decision = decideFailoverAction(local, peers, quorumPolicy(2));
+    runner.expect(decision.action == FailoverAction::StayBackup,
+                  "2-node strict majority blocks a lone survivor from owning");
+}
+
+void testTwoNodeQuorumSizeOneAllowsLoneSurvivor(TestRunner& runner) {
+    // Operator escape hatch: quorum_size=1 lets a lone node own (accepting split-brain risk).
+    const auto local = localStatus("node-a", 100, true, easyfailover::NodeState::Backup);
+    const std::vector<PeerStatus> peers;
+    const auto decision = decideFailoverAction(local, peers, quorumPolicy(2, 1));
+    runner.expect(decision.action == FailoverAction::BecomeMaster,
+                  "quorum_size=1 lets a lone node own the VIP");
+}
+
+void testNonPreemptiveDefersToHealthyMaster(TestRunner& runner) {
+    // Local outranks the peer (200 > 100) and would normally take over, but preempt=false and the
+    // lower-priority peer is a healthy, fresh master -> do not displace it.
+    const auto local = localStatus("node-a", 200, true, easyfailover::NodeState::Backup);
+    const std::vector<PeerStatus> peers{
+        peerStatusWithState("node-b", 100, true, true, easyfailover::NodeState::Master)};
+    const auto decision = decideFailoverAction(local, peers, quorumPolicy(2, 1, false));
+    runner.expect(decision.action == FailoverAction::StayBackup,
+                  "non-preemptive node should defer to an existing healthy master");
+}
+
+void testNonPreemptiveStillTakesOverWhenNoMasterPresent(TestRunner& runner) {
+    // preempt=false but the peer is a backup (no current master) -> local takes over normally.
+    const auto local = localStatus("node-a", 200, true, easyfailover::NodeState::Backup);
+    const std::vector<PeerStatus> peers{
+        peerStatusWithState("node-b", 100, true, true, easyfailover::NodeState::Backup)};
+    const auto decision = decideFailoverAction(local, peers, quorumPolicy(2, 1, false));
+    runner.expect(decision.action == FailoverAction::BecomeMaster,
+                  "non-preemptive node still claims when no healthy master is present");
+}
+
+void testPreemptiveTakesOverHealthyMaster(TestRunner& runner) {
+    // Default preempt=true: local outranks and displaces the lower-priority healthy master.
+    const auto local = localStatus("node-a", 200, true, easyfailover::NodeState::Backup);
+    const std::vector<PeerStatus> peers{
+        peerStatusWithState("node-b", 100, true, true, easyfailover::NodeState::Master)};
+    const auto decision = decideFailoverAction(local, peers, quorumPolicy(2, 1, true));
+    runner.expect(decision.action == FailoverAction::BecomeMaster,
+                  "preemptive node takes over a lower-priority master");
+}
+
+void testPeerStatusFromHeartbeatCarriesState(TestRunner& runner) {
+    const auto message = easyfailover::HeartbeatMessage{.node_id = "node-b",
+                                                        .priority = 100,
+                                                        .healthy = true,
+                                                        .state = easyfailover::NodeState::Master};
+    const auto status = easyfailover::peerStatusFromHeartbeat(message);
+    runner.expect(status.state == easyfailover::NodeState::Master,
+                  "peer status should carry the advertised heartbeat state");
+}
+
 } // namespace
 
 int writeApiTestCounter() {
@@ -4754,6 +4896,43 @@ int main() {
     });
     runner.run("decision selects local node when local wins tie-break", [&runner] {
         testDecisionSelectsLocalNodeWhenLocalWinsTieBreak(runner);
+    });
+    runner.run("quorum threshold is strict majority", [&runner] {
+        testQuorumThresholdIsStrictMajority(runner);
+    });
+    runner.run("quorum_size override wins", [&runner] { testQuorumSizeOverrideWins(runner); });
+    runner.run("observed cluster members count self plus fresh peers", [&runner] {
+        testObservedClusterMembersCountsSelfPlusFreshPeers(runner);
+    });
+    runner.run("quorum refuses claim without majority", [&runner] {
+        testQuorumRefusesClaimWithoutMajority(runner);
+    });
+    runner.run("quorum demotes master on quorum loss", [&runner] {
+        testQuorumDemotesMasterOnQuorumLoss(runner);
+    });
+    runner.run("quorum allows claim with majority", [&runner] {
+        testQuorumAllowsClaimWithMajority(runner);
+    });
+    runner.run("quorum disabled by default preserves behavior", [&runner] {
+        testQuorumDisabledByDefaultPreservesBehavior(runner);
+    });
+    runner.run("two-node quorum blocks lone survivor", [&runner] {
+        testTwoNodeQuorumBlocksLoneSurvivor(runner);
+    });
+    runner.run("two-node quorum_size=1 allows lone survivor", [&runner] {
+        testTwoNodeQuorumSizeOneAllowsLoneSurvivor(runner);
+    });
+    runner.run("non-preemptive defers to healthy master", [&runner] {
+        testNonPreemptiveDefersToHealthyMaster(runner);
+    });
+    runner.run("non-preemptive still takes over when no master present", [&runner] {
+        testNonPreemptiveStillTakesOverWhenNoMasterPresent(runner);
+    });
+    runner.run("preemptive takes over healthy master", [&runner] {
+        testPreemptiveTakesOverHealthyMaster(runner);
+    });
+    runner.run("peer status from heartbeat carries state", [&runner] {
+        testPeerStatusFromHeartbeatCarriesState(runner);
     });
 
     if (runner.failures() != 0) {
