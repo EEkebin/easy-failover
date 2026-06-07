@@ -320,8 +320,11 @@ export async function onboard(
     {
       const generated = generateConfigToml(req.config);
       reachedStep = "write-config";
-      // First, read any existing config to detect divergence.
-      const existing = await runner.run(readConfigCommand(sysconfdir));
+      // First, read any existing config to detect divergence. Run privileged: a
+      // root-only (0600) existing config would otherwise read empty under the
+      // login user, silently bypassing the no-clobber guard below.
+      const existingPlanned = privileged(readConfigCommand(sysconfdir), req.connection.sudo);
+      const existing = await runPlanned(runner, existingPlanned, sudoPassword);
       const existingContent = existing.code === 0 ? existing.stdout : "";
       if (existingContent.trim().length > 0 && existingContent.trim() !== generated.trim() && !req.overwriteConfig) {
         await emit({

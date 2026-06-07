@@ -394,9 +394,26 @@ constexpr auto kMaxRequestBytes = kMaxApplyBodyBytes + 8192U;
             if (value_start == std::string_view::npos) {
                 return std::nullopt;
             }
+            // Accept only an unsigned decimal integer. std::stoull would wrap
+            // "-1" to SIZE_MAX and silently accept trailing junk ("5abc" -> 5),
+            // which breaks the read-loop terminator and enables slow-drip holds.
+            // Strip trailing OWS (RFC 7230 allows optional whitespace around the
+            // field value) before the all-digits check so a legal "123 " parses.
+            auto digits = line.substr(value_start);
+            const auto value_end = digits.find_last_not_of(" \t");
+            if (value_end != std::string_view::npos) {
+                digits = digits.substr(0, value_end + 1);
+            }
+            if (digits.empty() ||
+                digits.find_first_not_of("0123456789") != std::string_view::npos) {
+                return std::nullopt;
+            }
             try {
-                return static_cast<std::size_t>(
-                    std::stoull(std::string{line.substr(value_start)}));
+                const auto parsed = std::stoull(std::string{digits});
+                if (parsed > kMaxRequestBytes) {
+                    return std::nullopt;
+                }
+                return static_cast<std::size_t>(parsed);
             } catch (...) {
                 return std::nullopt;
             }

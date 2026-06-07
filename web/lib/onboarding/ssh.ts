@@ -72,7 +72,9 @@ export function hostKeyFingerprint(key: Buffer): string {
 
 /** Normalize fingerprints for comparison (tolerate missing `SHA256:` prefix). */
 function normalizeFingerprint(value: string): string {
-  return value.trim().replace(/^SHA256:/i, "");
+  // Strip the prefix and any base64 padding: hostKeyFingerprint() drops trailing
+  // `=`, so a pinned value copied WITH padding would otherwise falsely mismatch.
+  return value.trim().replace(/^SHA256:/i, "").replace(/=+$/, "");
 }
 
 /**
