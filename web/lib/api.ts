@@ -56,6 +56,9 @@ export type ConfigResponse = {
     enabled: boolean;
     bind: string;
     read_only: boolean;
+    // Whether a token file is configured. The PATH itself is never returned
+    // (GET /config is unauthenticated); the editor must re-enter it to keep it.
+    auth_token_configured?: boolean;
   };
   mutation_safety: {
     allow_network_mutation: boolean;

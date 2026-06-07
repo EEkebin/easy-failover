@@ -529,7 +529,25 @@ function ConfigEditorPanel({ nodeId }: { nodeId: string }) {
                 checked={form.api.readOnly}
                 onChange={(v) => update((d) => ({ ...d, api: { ...d.api, readOnly: v } }))}
               />
+              <TextField
+                label="auth_token_file (re-enter to keep)"
+                value={form.api.authTokenFile}
+                placeholder={
+                  form.api.authTokenConfigured
+                    ? "configured — leave blank to clear on apply"
+                    : "path to the write-API token file"
+                }
+                onChange={(v) => update((d) => ({ ...d, api: { ...d.api, authTokenFile: v } }))}
+              />
             </div>
+            {form.api.authTokenConfigured && (
+              <p className="configHint warn">
+                This node has a write-API token file configured, but its path is
+                never returned by the node. Apply replaces the whole config, so
+                leaving this blank will <strong>clear the token file</strong> and
+                disable write-API authentication. Re-enter the path to keep it.
+              </p>
+            )}
           </div>
 
           <div className="configSection">

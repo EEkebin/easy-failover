@@ -74,6 +74,14 @@ export type ConfigFormValue = {
     enabled: boolean;
     bind: string;
     readOnly: boolean;
+    /**
+     * Re-entered token-file path. Like `health.command`, the daemon never
+     * returns the path (only whether one is configured), so this starts blank
+     * and an empty value clears the write-API auth gate on apply.
+     */
+    authTokenFile: string;
+    /** Whether the node reported a token file configured (for the editor warning). */
+    authTokenConfigured: boolean;
   };
   mutationSafety: {
     allowNetworkMutation: boolean;
@@ -115,7 +123,11 @@ export function formFromConfig(config: import("../api").ConfigResponse): ConfigF
     api: {
       enabled: config.api.enabled,
       bind: config.api.bind,
-      readOnly: config.api.read_only
+      readOnly: config.api.read_only,
+      // Always blank: the daemon reports only whether a token file is configured,
+      // never the path. The operator must re-enter it to keep write-API auth.
+      authTokenFile: "",
+      authTokenConfigured: config.api.auth_token_configured ?? false
     },
     mutationSafety: {
       allowNetworkMutation: config.mutation_safety.allow_network_mutation
@@ -190,6 +202,12 @@ export function serializeConfigToml(form: ConfigFormValue): string {
   lines.push(`enabled = ${tomlBool(form.api.enabled)}`);
   lines.push(`bind = ${tomlString(form.api.bind)}`);
   lines.push(`read_only = ${tomlBool(form.api.readOnly)}`);
+  // Emit the token-file path only when set, so a fresh node without one stays
+  // unset rather than being pinned to an empty path.
+  const authTokenFile = form.api.authTokenFile.trim();
+  if (authTokenFile) {
+    lines.push(`auth_token_file = ${tomlString(authTokenFile)}`);
+  }
   lines.push("");
 
   // Mutation safety — operator-controllable in this editor.
