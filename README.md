@@ -1,125 +1,88 @@
 # easy-failover
 
 [![CI](https://github.com/EEkebin/easy-failover/actions/workflows/ci.yml/badge.svg)](https://github.com/EEkebin/easy-failover/actions/workflows/ci.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Language: C++23](https://img.shields.io/badge/C%2B%2B-23-00599C.svg)](#)
 
-easy-failover is a lightweight C++ Linux agent for automatic virtual IP failover between nodes.
+**Keep your service address alive when a server dies.** easy-failover is a lightweight Linux
+daemon that moves a virtual IP (VIP) between nodes automatically, so the address your clients
+talk to stays reachable even when the node behind it goes down.
 
-This repository is named `easy-failover`, and the binary is named `easy-failover`.
-The project is licensed under Apache-2.0.
+---
 
-## Contents
+## Introduction
 
-- [Overview](#overview)
-- [Status](#status)
-- [Platform Targets](#platform-targets)
-- [Quick Start](#quick-start)
-- [Install](#install)
-  - [Source Install with the Installer Script](#source-install-with-the-installer-script)
-  - [Manual Source Install](#manual-source-install)
-  - [Build Dependencies](#build-dependencies)
-- [Two-Node Setup](#two-node-setup)
-- [Configuration](#configuration)
-- [Optional Dashboard](#optional-dashboard)
-- [Failover Testing](#failover-testing)
-  - [Running the Daemon](#running-the-daemon)
-  - [Runtime Logging](#runtime-logging)
-- [Uninstall](#uninstall)
-- [Development and Contribution](#development-and-contribution)
-  - [Build from Source](#build-from-source)
-  - [Contribution Workflow](#contribution-workflow)
-  - [Automation](#automation)
-- [Documentation Index](#documentation-index)
+When a server owning a shared service IP fails, that address goes dark until someone intervenes.
+easy-failover removes the human from that loop: peer nodes exchange heartbeats, elect an owner,
+and relocate the VIP to a healthy node — usually before anyone notices.
 
-## Overview
+It's a single small binary, configured with one TOML file, with no external control plane,
+no agents-of-agents, and no cloud dependency. Drop it on two or more Linux boxes and they sort
+out the VIP between themselves.
 
-easy-failover moves a virtual IP (VIP) between Linux nodes so that a service address stays
-reachable when a node fails. The daemon parses a TOML config, exchanges UDP heartbeats with peers,
-runs a decision loop, and performs guarded VIP operations. A disabled-by-default read-only local API
-exposes status for an optional dashboard.
+## Description
 
-Real VIP movement is guarded by runtime dry-run mode and
-`mutation_safety.allow_network_mutation`. UDP heartbeat is wired into the daemon, but quorum/fencing
-behavior remains future work, so validate carefully before using real network mutation.
+easy-failover runs as a daemon on each node in a pool. It:
 
-## Status
+- **Exchanges UDP heartbeats** with its peers to track who's alive.
+- **Runs health checks** so an unhealthy owner steps aside.
+- **Elects an owner** by priority and runs a continuous decision loop.
+- **Moves the VIP** with guarded `iproute2` / `arping` operations and gratuitous ARP so the
+  network learns the new location fast.
+- **Exposes an optional read-only local API** for status, backing an optional web dashboard.
 
-early WIP. The current codebase builds and tests a Linux VIP failover agent with CLI parsing,
-logging, TOML config loading and validation, heartbeat transport integration, guarded VIP
-operations, a runtime decision loop, and a disabled-by-default read-only local API. Real VIP
-movement is still opt-in and should be validated in a lab before production use.
+**Safety first.** Real VIP changes are gated behind two independent controls — runtime dry-run
+mode and `mutation_safety.allow_network_mutation` — both off by default. You can run the full
+decision loop in dry-run and watch what it *would* do before letting it touch the network.
 
-## Platform Targets
+**Highlights**
 
-Primary Linux targets:
+- 🪶 Single C++23 binary, one TOML config, zero runtime dependencies beyond `iproute2`/`arping`.
+- 🔌 Ships a systemd unit and also runs under **OpenRC, runit, dinit, and s6**.
+- 🔒 Dry-run by default; real mutation is explicit, opt-in, and auditable.
+- 📊 Optional read-only Next.js dashboard (separate from the daemon, never privileged).
+- 🐧 Targets Arch, Ubuntu, Debian, Fedora, RHEL, and Rocky Linux.
 
-- Arch Linux latest
-- Ubuntu latest LTS and latest stable
-- Debian latest stable
-- Fedora latest stable
-- RHEL latest
-- Rocky Linux latest
+> **Project status:** pre-1.0 and under active development. The daemon builds, tests, and runs
+> the full failover loop, but quorum/fencing is still future work. Validate real VIP movement in
+> a lab before trusting it in production — see the [Disclaimer](#disclaimer).
 
-Future planned targets:
+**Documentation** lives in [`docs/`](docs/). Start with the
+[configuration reference](docs/config-reference.md), the
+[Linux capability requirements](docs/linux-capabilities.md) for real VIP movement, and the
+[failover safety notes](docs/failover-safety.md).
 
-- Windows 11
-- Windows Server 2025
-- latest macOS
+## Installation
 
-## Quick Start
-
-Build the project and validate the sample config without touching the host:
+### Quick try (no changes to your host)
 
 ```sh
 cmake -S . -B build
 cmake --build build
 ./build/easy-failover --config configs/easy-failover.toml --validate-config
+./build/easy-failover --config configs/easy-failover.toml --dry-run   # never moves a VIP
 ```
 
-Run a single bounded iteration in dry-run mode against the sample config:
+### Install from source (recommended)
+
+The installer builds in Release mode, installs under `/usr`, keeps config in `/etc/easy-failover`,
+validates the active config, and reloads systemd if present. It does **not** auto-start the service.
 
 ```sh
-./build/easy-failover --config configs/easy-failover.toml --dry-run
+./scripts/install.sh                 # default install
+./scripts/install.sh --dry-run       # preview the exact commands first
 ```
 
-This never moves a VIP. To install onto a host and configure a real two-node pair, continue with
-[Install](#install), [Two-Node Setup](#two-node-setup), and [Configuration](#configuration). Do not
-enable real VIP mutation until the node config, Linux capabilities, and failover behavior have been
-tested in your target environment.
-
-## Install
-
-easy-failover does not publish distro packages yet. Install from source with CMake or stage the
-install tree and package it yourself. The install rules place the binary, example config, systemd
-unit, README, license, and docs using the layout described in
-[`docs/install-package-layout.md`](docs/install-package-layout.md).
-
-### Source Install with the Installer Script
-
-For the simplest source install, run the installer script from the repository root:
+Then create and edit the node config before starting:
 
 ```sh
-./scripts/install.sh
+sudo cp /etc/easy-failover/config.example.toml /etc/easy-failover/config.toml
+sudo editor /etc/easy-failover/config.toml
+easy-failover --config /etc/easy-failover/config.toml --validate-config
+sudo systemctl enable --now easy-failover.service   # only after the config is valid
 ```
 
-By default, the script builds Release mode, installs under `/usr`, keeps configuration under
-`/etc/easy-failover`, creates `config.toml` only if it does not already exist, validates the active
-config, and reloads systemd if available. It does not enable or start the service automatically.
-
-For a local prefix, pass both the prefix and config root:
-
-```sh
-./scripts/install.sh --prefix /usr/local --sysconfdir /usr/local/etc
-```
-
-Review the planned commands without changing the host:
-
-```sh
-./scripts/install.sh --dry-run
-```
-
-### Manual Source Install
-
-For a manual production-style source install under `/usr`, with configuration under `/etc`, use:
+### Manual install
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_SYSCONFDIR=/etc
@@ -127,254 +90,67 @@ cmake --build build
 sudo cmake --install build --prefix /usr
 ```
 
-The install step stages an example config, not an active config:
+**Build dependencies:** a C++23 compiler (GCC or Clang), CMake, `make` or Ninja, Git, plus
+`iproute2` and `arping` on any host that will perform real VIP movement.
 
-```text
-/etc/easy-failover/config.example.toml
-```
+**Not using systemd?** See the per-init guides for
+[OpenRC](docs/service-openrc.md), [runit](docs/service-runit.md),
+[dinit](docs/service-dinit.md), and [s6](docs/service-s6.md).
 
-Create the active config yourself and edit it for the node before starting the daemon:
+**Want the dashboard?** It's an optional read-only Next.js app under [`web/`](web/), run
+separately from the daemon — see [running the dashboard](docs/dashboard-service.md).
 
-```sh
-sudo install -d -m 0755 /etc/easy-failover
-sudo cp /etc/easy-failover/config.example.toml /etc/easy-failover/config.toml
-sudo editor /etc/easy-failover/config.toml
-easy-failover --config /etc/easy-failover/config.toml --validate-config
-```
-
-For a local `/usr/local` install instead, leave `CMAKE_INSTALL_SYSCONFDIR` at its default:
+## Uninstallation
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-sudo cmake --install build --prefix /usr/local
+./scripts/uninstall.sh                  # keeps /etc/easy-failover/config.toml
+./scripts/uninstall.sh --purge-config   # also removes the config directory
 ```
 
-That installs the example config under the local prefix:
+If you installed via a future distro package, use your package manager instead.
 
-```text
-/usr/local/etc/easy-failover/config.example.toml
-```
+## Contributing
 
-Use the same prefix when creating and validating the active config:
-
-```sh
-sudo install -d -m 0755 /usr/local/etc/easy-failover
-sudo cp /usr/local/etc/easy-failover/config.example.toml /usr/local/etc/easy-failover/config.toml
-sudo editor /usr/local/etc/easy-failover/config.toml
-easy-failover --config /usr/local/etc/easy-failover/config.toml --validate-config
-```
-
-If the systemd unit was installed, reload systemd and enable/start only after the config is valid:
-
-```sh
-sudo systemctl daemon-reload
-sudo systemctl enable --now easy-failover.service
-sudo systemctl status easy-failover.service
-```
-
-For a source checkout without installing, keep using the build-tree binary:
-
-```sh
-./build/easy-failover --config configs/easy-failover.toml --dry-run
-```
-
-Packaging guidance lives in [`docs/distro-packaging-notes.md`](docs/distro-packaging-notes.md).
-Do not enable real VIP mutation until the node config, Linux capabilities, and failover behavior
-have been tested in your target environment.
-
-### Build Dependencies
-
-Install build dependencies with your distro package manager. Package names vary, but a typical
-Linux build host needs:
-
-- a C++23-capable compiler such as GCC or Clang;
-- CMake;
-- `make` or Ninja;
-- Git;
-- `iproute2` and `arping` for hosts that will test real VIP movement.
-
-## Two-Node Setup
-
-For a two-node lab, set each node's `node_id`, `vip.interface`, and single peer address, then keep
-`mutation_safety.allow_network_mutation = false` for the first dry-run service start. The daemon
-binds UDP heartbeat on `[heartbeat].bind` and sends to each `[[peers]].address`. When real mutation
-is later enabled, the daemon waits through one successful heartbeat cycle before allowing real VIP
-operations.
-
-## Configuration
-
-The sample config lives at `configs/easy-failover.toml`. A minimal config only needs the VIP and
-peer/server pool. See [`docs/config-reference.md`](docs/config-reference.md) for the current TOML
-schema, defaults, and validation rules.
-
-Failover safety notes live in [`docs/failover-safety.md`](docs/failover-safety.md). Linux
-capability notes live in [`docs/linux-capabilities.md`](docs/linux-capabilities.md). The local
-read-only API is disabled by default and documented in
-[`docs/local-api-design.md`](docs/local-api-design.md).
-Install/package layout notes live in
-[`docs/install-package-layout.md`](docs/install-package-layout.md). Distro packaging guidance lives
-in [`docs/distro-packaging-notes.md`](docs/distro-packaging-notes.md).
-Real VIP movement is guarded by runtime dry-run mode and
-`mutation_safety.allow_network_mutation`. UDP heartbeat is wired into the daemon, but quorum/fencing
-behavior remains future work, so validate carefully before using real network mutation.
-
-Example production config path:
-
-```text
-/etc/easy-failover/config.toml
-```
-
-Example systemd service name:
-
-```text
-easy-failover.service
-```
-
-## Optional Dashboard
-
-An optional read-only Next.js dashboard lives under `web/`. It is not built or installed by CMake
-and remains separate from the daemon binary.
-
-```sh
-cd web
-npm install
-npm run dev
-```
-
-The dashboard reads the local HTTP API when the daemon is running with `api.enabled = true`.
-The API listener runs alongside the long-running daemon and falls back to a startup snapshot until
-the first runtime iteration publishes current state. The dashboard falls back to sample data when
-the API is unavailable. It does not expose VIP mutation, daemon controls, config writes, or other
-privileged actions.
-
-Frontend plans live in [`docs/frontend-roadmap.md`](docs/frontend-roadmap.md).
-
-## Failover Testing
-
-### Running the Daemon
-
-Validate the sample config:
-
-```sh
-./build/easy-failover --config configs/easy-failover.toml --validate-config
-```
-
-Run in dry-run mode:
-
-```sh
-./build/easy-failover --config configs/easy-failover.toml --dry-run
-```
-
-Run continuously until SIGINT or SIGTERM:
-
-```sh
-./build/easy-failover --config configs/easy-failover.toml --run-forever --dry-run
-```
-
-The installed systemd unit uses `--run-forever`. Without that flag, the CLI runs one bounded
-iteration by default for smoke tests and development checks. Use `--max-iterations N` to run a
-bounded multi-iteration check.
-
-### Runtime Logging
-
-The normal runtime path emits stable logfmt-style runtime events. Current event names are
-`daemon_lifecycle_result` and `vip_operation`. Fields include lifecycle state, dry-run status,
-validation error count, VIP operation count, VIP address/interface, operation type, success, and
-error detail.
-
-## Uninstall
-
-Uninstall a source install while keeping `/etc/easy-failover/config.toml`:
-
-```sh
-./scripts/uninstall.sh
-```
-
-Remove the active config directory too:
-
-```sh
-./scripts/uninstall.sh --purge-config
-```
-
-Uninstalling package builds should use the package manager. For manual source installs, use
-`./scripts/uninstall.sh`, or inspect the staged layout first with:
-
-```sh
-cmake --install build --prefix "$PWD/stage"
-find "$PWD/stage" -type f | sort
-```
-
-## Development and Contribution
-
-### Build from Source
-
-```sh
-cmake -S . -B build
-cmake --build build
-ctest --test-dir build --output-on-failure
-```
-
-Stage the install layout without touching host paths:
-
-```sh
-cmake --install build --prefix "$PWD/stage"
-```
-
-For package-style builds that configure absolute install directories, stage through `DESTDIR`:
-
-```sh
-cmake -S . -B build -DCMAKE_INSTALL_SYSCONFDIR=/etc
-DESTDIR="$PWD/stage-root" cmake --install build --prefix /usr
-```
-
-### Contribution Workflow
-
-The `main` branch is protected. Changes should be made on a feature branch and merged through a
-pull request after the required CI check passes.
-
-Expected workflow:
+Contributions are welcome. The `main` branch is protected; all changes land through a pull request
+that passes the `Linux smoke build` CI check, and merges are squashed to keep history linear.
 
 ```sh
 git checkout -b feature/my-change
-git add .
-git commit -m "Describe your change"
+# make your change, then:
+cmake -S . -B build && cmake --build build
+ctest --test-dir build --output-on-failure
+git commit -am "Describe your change"
 git push -u origin feature/my-change
 ```
 
-Pull requests must pass the `Linux smoke build` status check before merging. The repository uses
-squash merging to keep `main` linear and readable.
+Open a PR against `main` and reference any related issue. CI builds the project on Linux, runs the
+test suite, and smoke-tests `--version`, config validation, and dry-run mode.
 
-### Automation
+## Credits
 
-GitHub Actions runs CI on pull requests and pushes to `main`. The current CI job builds the
-project on Linux, runs CTest, and runs smoke checks for `--version`, config validation, and dry-run
-mode.
+Created and maintained by [**EEkebin**](https://github.com/EEkebin).
 
-Release automation runs on tags matching `v*` and can also be started manually. Tagged releases
-build a Linux x86_64 tarball, generate a SHA-256 checksum file, and publish both files to the
-GitHub release.
+Built with these excellent open-source libraries:
 
-Verify a downloaded release artifact:
+- [spdlog](https://github.com/gabime/spdlog) — fast logging
+- [CLI11](https://github.com/CLIUtils/CLI11) — command-line parsing
+- [toml++](https://github.com/marzer/tomlplusplus) — TOML configuration parsing
 
-```sh
-sha256sum -c easy-failover-linux-x86_64.tar.gz.sha256
-```
+The optional dashboard is built with [Next.js](https://nextjs.org/) and
+[React](https://react.dev/).
 
-## Documentation Index
+## License
 
-Deep reference material lives under `docs/`:
+Licensed under the [Apache License 2.0](LICENSE). You may use, modify, and distribute this
+software under its terms.
 
-- [`docs/config-reference.md`](docs/config-reference.md) — TOML schema, defaults, and validation
-  rules.
-- [`docs/failover-safety.md`](docs/failover-safety.md) — failover safety notes and split-brain
-  considerations.
-- [`docs/linux-capabilities.md`](docs/linux-capabilities.md) — Linux capability requirements for
-  real VIP movement.
-- [`docs/local-api-design.md`](docs/local-api-design.md) — the disabled-by-default read-only local
-  API.
-- [`docs/install-package-layout.md`](docs/install-package-layout.md) — install and package layout.
-- [`docs/distro-packaging-notes.md`](docs/distro-packaging-notes.md) — distro packaging guidance.
-- [`docs/frontend-roadmap.md`](docs/frontend-roadmap.md) — optional dashboard / frontend roadmap.
-</content>
-</invoke>
+## Disclaimer
+
+easy-failover performs privileged network operations and is **pre-1.0 software**. Moving a virtual
+IP incorrectly can cause split-brain (two nodes claiming the same address) and service outages.
+Quorum and fencing are not yet implemented.
+
+Real VIP mutation is disabled by default and must be explicitly enabled. **Do not enable it until
+you have validated the node configuration, Linux capabilities, and failover behavior in your own
+target environment.** The software is provided "as is", without warranty of any kind, to the extent
+permitted by the Apache 2.0 license.
