@@ -1,0 +1,20 @@
+#!/bin/sh
+# Debian/Ubuntu post-remove: drop config only on purge (Debian convention).
+set -e
+
+case "$1" in
+    purge)
+        # `apt purge` removes all local config; plain `apt remove` keeps it.
+        rm -rf /etc/easy-failover
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload || true
+        fi
+        ;;
+    remove)
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload || true
+        fi
+        ;;
+esac
+
+exit 0

@@ -1,0 +1,23 @@
+#!/bin/sh
+# Debian/Ubuntu post-install: seed an active config and refresh systemd.
+set -e
+
+case "$1" in
+    configure)
+        # On first install, create an active config from the shipped example if the
+        # operator does not already have one. Upgrades never overwrite it.
+        if [ ! -e /etc/easy-failover/config.toml ] \
+            && [ -e /etc/easy-failover/config.example.toml ]; then
+            cp /etc/easy-failover/config.example.toml /etc/easy-failover/config.toml
+            chmod 0644 /etc/easy-failover/config.toml
+        fi
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload || true
+        fi
+        # Intentionally not enabled/started automatically: edit
+        # /etc/easy-failover/config.toml (VIP, peers) and validate it first, then
+        # `systemctl enable --now easy-failover.service`.
+        ;;
+esac
+
+exit 0

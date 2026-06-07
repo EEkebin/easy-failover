@@ -155,22 +155,76 @@ if(BUILD_TESTING)
     set_tests_properties(easy-failover-core-tests PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 endif()
 
-install(TARGETS easy-failover RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+# Install components: "daemon" is everything the .deb/.rpm ships (binary, example config, systemd
+# unit, docs). The OpenRC/runit/dinit/s6 service files are their own components so packages exclude
+# them (they target distros that don't use systemd), while a plain `cmake --install` still installs
+# everything for source installs.
+install(TARGETS easy-failover RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" COMPONENT daemon)
 
 install(
     FILES configs/easy-failover.toml
     DESTINATION "${CMAKE_INSTALL_SYSCONFDIR}/easy-failover"
-    RENAME config.example.toml)
+    RENAME config.example.toml
+    COMPONENT daemon)
 
-install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-systemd-unit.cmake")
-install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-openrc.cmake")
-install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-runit.cmake")
-install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-dinit.cmake")
-install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-s6.cmake")
+install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-systemd-unit.cmake" COMPONENT daemon)
+install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-openrc.cmake" COMPONENT openrc)
+install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-runit.cmake" COMPONENT runit)
+install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-dinit.cmake" COMPONENT dinit)
+install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/cmake/install-s6.cmake" COMPONENT s6)
 
-install(FILES README.md LICENSE DESTINATION "${CMAKE_INSTALL_DOCDIR}")
+install(FILES README.md LICENSE DESTINATION "${CMAKE_INSTALL_DOCDIR}" COMPONENT daemon)
 install(
     DIRECTORY docs/
     DESTINATION "${CMAKE_INSTALL_DOCDIR}/docs"
+    COMPONENT daemon
     FILES_MATCHING
     PATTERN "*.md")
+
+# --- Native packaging (CPack -> .deb and .rpm) -------------------------------------------------
+# Build packages with the package-oriented prefix:
+#   cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
+#         -DCMAKE_INSTALL_SYSCONFDIR=/etc
+#   cmake --build build && (cd build && cpack)
+# scripts/package.sh wraps this. .deb is built/verified locally; .rpm requires rpmbuild (CI/Fedora).
+set(CPACK_PACKAGE_NAME "easy-failover")
+set(CPACK_PACKAGE_VENDOR "EEkebin")
+set(CPACK_PACKAGE_CONTACT "EEkebin <easy-failover@users.noreply.github.com>")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "${PROJECT_DESCRIPTION}")
+set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/EEkebin/easy-failover")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
+
+# Package only the daemon component as a single package; the alternative init-system files
+# (openrc/runit/dinit/s6 components) stay out. Component-install mode is required for this filter
+# to apply, with ALL_COMPONENTS_IN_ONE grouping so it stays one package, not per-component.
+set(CPACK_COMPONENTS_ALL daemon)
+set(CPACK_COMPONENTS_GROUPING "ALL_COMPONENTS_IN_ONE")
+set(CPACK_DEB_COMPONENT_INSTALL ON)
+set(CPACK_RPM_COMPONENT_INSTALL ON)
+
+set(CPACK_GENERATOR "DEB;RPM")
+
+# Debian/Ubuntu
+set(CPACK_DEBIAN_PACKAGE_MAINTAINER "${CPACK_PACKAGE_CONTACT}")
+set(CPACK_DEBIAN_PACKAGE_SECTION "admin")
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "iproute2, arping")
+set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "${CPACK_PACKAGE_HOMEPAGE_URL}")
+set(CPACK_DEBIAN_FILE_NAME "DEB-DEFAULT")
+set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
+    "${CMAKE_CURRENT_SOURCE_DIR}/packaging/deb/postinst;${CMAKE_CURRENT_SOURCE_DIR}/packaging/deb/prerm;${CMAKE_CURRENT_SOURCE_DIR}/packaging/deb/postrm")
+
+# Fedora/RHEL/Rocky (built where rpmbuild is available)
+set(CPACK_RPM_PACKAGE_LICENSE "Apache-2.0")
+set(CPACK_RPM_PACKAGE_GROUP "Applications/System")
+set(CPACK_RPM_PACKAGE_REQUIRES "iproute, iputils")
+set(CPACK_RPM_PACKAGE_URL "${CPACK_PACKAGE_HOMEPAGE_URL}")
+set(CPACK_RPM_FILE_NAME "RPM-DEFAULT")
+set(CPACK_RPM_POST_INSTALL_SCRIPT_FILE "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rpm/postinst.sh")
+set(CPACK_RPM_PRE_UNINSTALL_SCRIPT_FILE "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rpm/prerm.sh")
+set(CPACK_RPM_POST_UNINSTALL_SCRIPT_FILE "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rpm/postrm.sh")
+# Don't let the RPM claim ownership of system directories provided by other packages.
+set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION
+    "/etc;/usr/lib;/usr/lib/systemd;/usr/lib/systemd/system;/usr/share;/usr/share/doc")
+
+include(CPack)
