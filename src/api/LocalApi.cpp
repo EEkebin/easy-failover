@@ -703,7 +703,8 @@ LocalApiConfigResponse buildLocalApiConfigResponse(const Config& config) {
                                        .interval_ms = config.health.interval_ms,
                                        .timeout_ms = config.health.timeout_ms},
         .election = LocalApiConfigElection{.require_quorum = config.election.require_quorum,
-                                           .preempt = config.election.preempt},
+                                           .preempt = config.election.preempt,
+                                           .quorum_size = config.election.quorum_size},
         .api = LocalApiConfigApi{.enabled = config.api.enabled,
                                  .bind = config.api.bind,
                                  .read_only = config.api.read_only,
@@ -1049,6 +1050,7 @@ std::string serializeLocalApiConfigResponse(const LocalApiConfigResponse& respon
            << "},\"election\":{\"require_quorum\":"
            << jsonBool(response.election.require_quorum)
            << ",\"preempt\":" << jsonBool(response.election.preempt)
+           << ",\"quorum_size\":" << response.election.quorum_size
            << "},\"api\":{\"enabled\":" << jsonBool(response.api.enabled)
            << ",\"bind\":" << jsonString(response.api.bind)
            << ",\"read_only\":" << jsonBool(response.api.read_only)

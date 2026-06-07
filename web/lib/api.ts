@@ -51,6 +51,7 @@ export type ConfigResponse = {
   election: {
     require_quorum: boolean;
     preempt: boolean;
+    quorum_size?: number;
   };
   api: {
     enabled: boolean;
@@ -154,7 +155,8 @@ export const sampleDashboardData: DashboardData = {
     },
     election: {
       require_quorum: false,
-      preempt: true
+      preempt: true,
+      quorum_size: 0
     },
     api: {
       enabled: false,
