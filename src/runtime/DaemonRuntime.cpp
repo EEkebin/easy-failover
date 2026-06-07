@@ -173,6 +173,13 @@ void expirePeers(std::map<std::string, RecentPeerStatus>& recent_peers,
     return "real VIP lifecycle iteration completed";
 }
 
+[[nodiscard]] ElectionPolicy electionPolicyFromConfig(const Config& config) {
+    return ElectionPolicy{.require_quorum = config.election.require_quorum,
+                          .quorum_size = config.election.quorum_size,
+                          .cluster_size = static_cast<int>(config.peers.size()) + 1,
+                          .preempt = config.election.preempt};
+}
+
 [[nodiscard]] FailoverDecisionObservation evaluateFailoverDecision(
     const Config& config,
     const bool local_healthy,
@@ -181,7 +188,8 @@ void expirePeers(std::map<std::string, RecentPeerStatus>& recent_peers,
     std::vector<PeerStatus> peer_statuses) {
     auto local_status = localStatusFromOwnership(config, local_healthy, local_vip_owner);
 
-    auto decision = decideFailoverAction(local_status, peer_statuses);
+    auto decision =
+        decideFailoverAction(local_status, peer_statuses, electionPolicyFromConfig(config));
     return FailoverDecisionObservation{.iteration_index = receive_state.iteration_index,
                                        .elapsed_ms = receive_state.elapsed_ms,
                                        .local_status = std::move(local_status),
@@ -271,7 +279,8 @@ DaemonLifecycleResult runDaemonLifecycleOnce(const DaemonLifecycleRequest& reque
     }
     result.local_status = localStatusFromOwnership(request.config, request.local_healthy,
                                                   result.local_vip_owner);
-    result.failover_decision = decideFailoverAction(result.local_status, request.peer_statuses);
+    result.failover_decision = decideFailoverAction(result.local_status, request.peer_statuses,
+                                                    electionPolicyFromConfig(request.config));
 
     if (result.failover_decision.action == FailoverAction::EnterFault) {
         result.final_state = DaemonLifecycleState::Faulted;

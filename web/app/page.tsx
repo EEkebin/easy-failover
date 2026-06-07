@@ -508,7 +508,23 @@ function ConfigEditorPanel({ nodeId }: { nodeId: string }) {
                   update((d) => ({ ...d, election: { ...d.election, preempt: v } }))
                 }
               />
+              <TextField
+                label="quorum_size (0 = auto majority)"
+                type="number"
+                value={form.election.quorumSize}
+                onChange={(v) =>
+                  update((d) => ({
+                    ...d,
+                    election: { ...d.election, quorumSize: Math.max(0, Number.parseInt(v, 10) || 0) }
+                  }))
+                }
+              />
             </div>
+            <p className="configHint">
+              Quorum requires a majority of the cluster to be visible before this node owns the VIP;
+              a node that loses quorum releases it. For a 2-node cluster, add a witness node or set
+              quorum_size to keep failover.
+            </p>
           </div>
 
           <div className="configSection">

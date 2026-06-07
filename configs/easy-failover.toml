@@ -16,8 +16,15 @@ interval_ms = 1000
 timeout_ms = 2000
 
 [election]
+# Enable quorum to require a majority of the cluster to be visible before owning the VIP.
+# A node that loses quorum releases the VIP (self-fencing). Off by default.
 require_quorum = false
+# When false, defer to an existing healthy master instead of preempting it.
 preempt = true
+# Quorum threshold override: 0 = automatic strict majority (floor(N/2)+1, N = peers + 1).
+# For a 2-node cluster, majority is 2 (a lone survivor cannot own); add a witness node, or set
+# quorum_size = 1 to let a lone node own (accepts split-brain risk on a partition).
+quorum_size = 0
 
 [api]
 enabled = false

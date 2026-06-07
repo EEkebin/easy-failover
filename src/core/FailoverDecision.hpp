@@ -21,6 +21,9 @@ struct PeerStatus {
     int priority = 0;
     bool healthy = false;
     bool heartbeat_seen = false;
+    // Last state this peer advertised over heartbeat. Used to honor non-preemptive election
+    // (do not displace an existing healthy master when election.preempt is false).
+    NodeState state = NodeState::Backup;
 };
 
 enum class FailoverAction { StayBackup, BecomeMaster, StayMaster, BecomeBackup, EnterFault };
@@ -48,7 +51,25 @@ struct FailoverDecision {
     std::string reason;
 };
 
+// Runtime election/quorum knobs derived from ElectionConfig plus the configured cluster size.
+// A default-constructed policy disables quorum and preempts (the pre-quorum behavior).
+struct ElectionPolicy {
+    bool require_quorum = false;
+    int quorum_size = 0;   // 0 = automatic strict majority
+    int cluster_size = 1;  // total configured nodes = peers + self
+    bool preempt = true;   // when false, do not displace an existing healthy master
+};
+
+// Strict-majority threshold for a cluster of `cluster_size` nodes: floor(N/2) + 1.
+[[nodiscard]] int quorumThreshold(const ElectionPolicy& policy);
+
+// Number of cluster members this node can currently observe: itself plus peers with a fresh
+// heartbeat. Reachability (not health) — a reachable-but-unhealthy peer still proves no partition.
+[[nodiscard]] int observedClusterMembers(const std::vector<PeerStatus>& peers);
+
+// A default-constructed ElectionPolicy disables quorum and preempts (the pre-quorum behavior).
 [[nodiscard]] FailoverDecision decideFailoverAction(const LocalNodeStatus& local,
-                                                    const std::vector<PeerStatus>& peers);
+                                                    const std::vector<PeerStatus>& peers,
+                                                    const ElectionPolicy& policy = ElectionPolicy{});
 
 } // namespace easyfailover

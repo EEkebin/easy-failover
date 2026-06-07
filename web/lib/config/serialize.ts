@@ -69,6 +69,8 @@ export type ConfigFormValue = {
   election: {
     requireQuorum: boolean;
     preempt: boolean;
+    /** Quorum threshold override; 0 = automatic strict majority. */
+    quorumSize: number;
   };
   api: {
     enabled: boolean;
@@ -118,7 +120,8 @@ export function formFromConfig(config: import("../api").ConfigResponse): ConfigF
     },
     election: {
       requireQuorum: config.election.require_quorum,
-      preempt: config.election.preempt
+      preempt: config.election.preempt,
+      quorumSize: config.election.quorum_size ?? 0
     },
     api: {
       enabled: config.api.enabled,
@@ -195,6 +198,7 @@ export function serializeConfigToml(form: ConfigFormValue): string {
   lines.push("[election]");
   lines.push(`require_quorum = ${tomlBool(form.election.requireQuorum)}`);
   lines.push(`preempt = ${tomlBool(form.election.preempt)}`);
+  lines.push(`quorum_size = ${form.election.quorumSize}`);
   lines.push("");
 
   // API.

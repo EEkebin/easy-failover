@@ -95,6 +95,7 @@ struct LocalApiConfigHealth {
 struct LocalApiConfigElection {
     bool require_quorum = false;
     bool preempt = true;
+    int quorum_size = 0;
 };
 
 struct LocalApiConfigApi {

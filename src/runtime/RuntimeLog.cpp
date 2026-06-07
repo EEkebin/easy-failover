@@ -71,6 +71,7 @@ std::string formatRuntimeLifecycleEvent(const DaemonLifecycleResult& result,
            << " failover_action=" << toString(result.failover_decision.action)
            << " selected_master="
            << quotedValue(result.failover_decision.selected_master.value_or(""))
+           << " failover_reason=" << quotedValue(result.failover_decision.reason)
            << " detail=" << quotedValue(result.detail);
     return output.str();
 }

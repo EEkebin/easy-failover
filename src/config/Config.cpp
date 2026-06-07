@@ -95,6 +95,8 @@ Config configFromTable(const toml::table& root) {
         config.election.require_quorum =
             optionalBool(*election, "require_quorum", config.election.require_quorum);
         config.election.preempt = optionalBool(*election, "preempt", config.election.preempt);
+        config.election.quorum_size = static_cast<int>(
+            optionalInt(*election, "quorum_size", config.election.quorum_size));
     }
 
     if (const auto* api = optionalTable(root, "api"); api != nullptr) {
@@ -176,6 +178,14 @@ std::vector<std::string> Config::validate() const {
     }
     if (peers.empty()) {
         errors.emplace_back("at least one peer must be configured");
+    }
+    if (election.quorum_size < 0) {
+        errors.emplace_back("election.quorum_size must not be negative");
+    }
+    if (election.quorum_size > 0 &&
+        static_cast<std::size_t>(election.quorum_size) > peers.size() + 1) {
+        errors.emplace_back(
+            "election.quorum_size must not exceed the cluster size (peers + 1)");
     }
     if (api.enabled && api.bind.empty()) {
         errors.emplace_back("api.bind must not be empty when api.enabled is true");

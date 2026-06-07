@@ -6,8 +6,8 @@ namespace easyfailover {
 
 std::optional<CandidateNode> chooseHighestPriorityHealthyNode(
     const std::vector<CandidateNode>& candidates) {
-    // TODO: Add quorum and split-brain protection before this controls real VIP ownership.
-    // TODO: Account for observed heartbeat state and fencing when a real consensus model exists.
+    // This helper stays pure priority selection. Quorum, non-preemptive election, and self-fencing
+    // are layered on top in decideFailoverAction (see core/FailoverDecision.cpp).
     const auto winner = std::max_element(
         candidates.begin(), candidates.end(), [](const CandidateNode& left, const CandidateNode& right) {
             if (!left.healthy && right.healthy) {
