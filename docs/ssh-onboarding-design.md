@@ -18,7 +18,7 @@ satisfy, [`failover-safety.md`](failover-safety.md) for the safety posture this 
 ## Goals
 
 - Let an operator onboard a new easy-failover node from the dashboard without leaving a terminal.
-- Reuse the existing source install flow (the source install flow) and the
+- Reuse the existing source install flow (CMake build + install) and the
   TOML schema in [`config-reference.md`](config-reference.md) rather than inventing a parallel one.
 - Keep all SSH and all secret handling on the dashboard server. Never ship credentials, key
   material, or SSH logic to the browser.

@@ -3,6 +3,7 @@
 if [ "$1" = "0" ]; then
     if command -v systemctl >/dev/null 2>&1; then
         systemctl stop easy-failover.service || true
+        systemctl disable easy-failover.service || true
     fi
     if [ -x /usr/bin/easy-failover ] && [ -e /etc/easy-failover/config.toml ]; then
         /usr/bin/easy-failover --config /etc/easy-failover/config.toml --release-vip || true

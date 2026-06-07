@@ -202,6 +202,9 @@ set(CPACK_COMPONENTS_ALL daemon)
 set(CPACK_COMPONENTS_GROUPING "ALL_COMPONENTS_IN_ONE")
 set(CPACK_DEB_COMPONENT_INSTALL ON)
 set(CPACK_RPM_COMPONENT_INSTALL ON)
+# Without a main component the RPM generator suffixes the package name/file with the group name
+# (easy-failover-ALL_COMPONENTS_IN_ONE-...). Naming the main component keeps it "easy-failover".
+set(CPACK_RPM_MAIN_COMPONENT daemon)
 
 set(CPACK_GENERATOR "DEB;RPM")
 

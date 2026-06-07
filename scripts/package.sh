@@ -24,6 +24,10 @@ else
     echo "note: rpmbuild not found; building .deb only (run on Fedora/RHEL or CI for .rpm)" >&2
 fi
 
+# Remove stale packages from previous runs so the produced artifact is unambiguous
+# (the documented `apt install ./build-pkg/easy-failover_*.deb` glob assumes exactly one).
+rm -f "${BUILD_DIR}"/*.deb "${BUILD_DIR}"/*.rpm
+
 (cd "${BUILD_DIR}" && cpack -G "${generators}")
 
 echo "Packages:"

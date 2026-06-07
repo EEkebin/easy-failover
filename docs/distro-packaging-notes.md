@@ -38,13 +38,12 @@ The intended packaged Linux layout is:
 /usr/share/doc/easy-failover/docs/*.md
 ```
 
-The CMake install rules stage `config.example.toml`, not an active `config.toml`. A distro package
-should install the example config as documentation or as a non-clobbering package-managed
-configuration template, then create `/etc/easy-failover/config.toml` only through the distro's
-normal conffile or admin-prompt mechanism.
-
-Packages must not overwrite an operator's existing `/etc/easy-failover/config.toml` during install
-or upgrade.
+The CMake install rules stage `config.example.toml`, not an active `config.toml`. The shipped
+maintainer scripts (`packaging/deb/postinst`, `packaging/rpm/postinst.sh`) seed
+`/etc/easy-failover/config.toml` from the example on first install **only when it does not already
+exist**, so an operator's edited `config.toml` is never overwritten on reinstall or upgrade. The
+active `config.toml` is intentionally not tracked in the package file database; `apt purge` (Debian)
+or erase (RPM) removes the whole `/etc/easy-failover` directory.
 
 ## Build and Staging
 
@@ -73,9 +72,10 @@ for the package build. Deployments that enable real VIP movement also require:
   ARP announcement and unsolicited ARP update packets;
 - systemd when installing and enabling the packaged service unit.
 
-Do not add hard runtime dependencies for real VIP movement until packaged mutation support is enabled
-and tested. While easy-failover remains non-mutating by default, package dependencies should stay
-aligned with the actual packaged behavior.
+The packages declare these as hard runtime dependencies so the package manager installs them
+alongside the daemon: Debian/Ubuntu `Depends: iproute2, arping`; RPM `Requires: iproute, iputils`.
+They are required for any host that performs real VIP movement; declaring them up front avoids a
+runtime failure the first time mutation is enabled.
 
 ## systemd Service Lifecycle
 
