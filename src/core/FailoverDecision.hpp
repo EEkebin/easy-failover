@@ -67,11 +67,9 @@ struct ElectionPolicy {
 // heartbeat. Reachability (not health) — a reachable-but-unhealthy peer still proves no partition.
 [[nodiscard]] int observedClusterMembers(const std::vector<PeerStatus>& peers);
 
-[[nodiscard]] FailoverDecision decideFailoverAction(const LocalNodeStatus& local,
-                                                    const std::vector<PeerStatus>& peers);
-
+// A default-constructed ElectionPolicy disables quorum and preempts (the pre-quorum behavior).
 [[nodiscard]] FailoverDecision decideFailoverAction(const LocalNodeStatus& local,
                                                     const std::vector<PeerStatus>& peers,
-                                                    const ElectionPolicy& policy);
+                                                    const ElectionPolicy& policy = ElectionPolicy{});
 
 } // namespace easyfailover

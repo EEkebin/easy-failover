@@ -515,7 +515,7 @@ function ConfigEditorPanel({ nodeId }: { nodeId: string }) {
                 onChange={(v) =>
                   update((d) => ({
                     ...d,
-                    election: { ...d.election, quorumSize: Number.parseInt(v, 10) || 0 }
+                    election: { ...d.election, quorumSize: Math.max(0, Number.parseInt(v, 10) || 0) }
                   }))
                 }
               />

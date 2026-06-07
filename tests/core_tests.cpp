@@ -4117,6 +4117,43 @@ void testNonPreemptiveDefersToHealthyMaster(TestRunner& runner) {
     const auto decision = decideFailoverAction(local, peers, quorumPolicy(2, 1, false));
     runner.expect(decision.action == FailoverAction::StayBackup,
                   "non-preemptive node should defer to an existing healthy master");
+    runner.expect(decision.selected_master == "node-b",
+                  "deferral should name the master being deferred to");
+}
+
+void testNonPreemptiveIncumbentMasterRetainsVip(TestRunner& runner) {
+    // The reciprocal of the deferral case: node-b is the incumbent (lower-priority) master and sees
+    // the higher-priority node-a (a healthy backup). With preempt=false it must KEEP the VIP, not
+    // step down -- otherwise both sides go backup and the VIP is orphaned.
+    const auto local = localStatus("node-b", 100, true, easyfailover::NodeState::Master);
+    const std::vector<PeerStatus> peers{
+        peerStatusWithState("node-a", 200, true, true, easyfailover::NodeState::Backup)};
+    const auto decision = decideFailoverAction(local, peers, quorumPolicy(2, 1, false));
+    runner.expect(decision.action == FailoverAction::StayMaster,
+                  "non-preemptive incumbent master must retain the VIP when outranked by a backup");
+    runner.expect(decision.selected_master == "node-b", "incumbent master should remain selected");
+}
+
+void testPreemptiveIncumbentMasterYields(TestRunner& runner) {
+    // With preempt=true (default), the incumbent lower-priority master yields to the higher one.
+    const auto local = localStatus("node-b", 100, true, easyfailover::NodeState::Master);
+    const std::vector<PeerStatus> peers{
+        peerStatusWithState("node-a", 200, true, true, easyfailover::NodeState::Backup)};
+    const auto decision = decideFailoverAction(local, peers, quorumPolicy(2, 1, true));
+    runner.expect(decision.action == FailoverAction::BecomeBackup,
+                  "preemptive incumbent master should yield to the higher-priority node");
+}
+
+void testNonPreemptiveDualMasterResolvesToHigher(TestRunner& runner) {
+    // Post-partition heal: both nodes think they are master. Even with preempt=false, the
+    // lower-priority master yields to a higher-priority peer that is also master, so dual master
+    // resolves deterministically (the higher node keeps it via its own StayMaster decision).
+    const auto local = localStatus("node-b", 100, true, easyfailover::NodeState::Master);
+    const std::vector<PeerStatus> peers{
+        peerStatusWithState("node-a", 200, true, true, easyfailover::NodeState::Master)};
+    const auto decision = decideFailoverAction(local, peers, quorumPolicy(2, 1, false));
+    runner.expect(decision.action == FailoverAction::BecomeBackup,
+                  "lower-priority master yields to a higher-priority peer that is also master");
 }
 
 void testNonPreemptiveStillTakesOverWhenNoMasterPresent(TestRunner& runner) {
@@ -4924,6 +4961,15 @@ int main() {
     });
     runner.run("non-preemptive defers to healthy master", [&runner] {
         testNonPreemptiveDefersToHealthyMaster(runner);
+    });
+    runner.run("non-preemptive incumbent master retains vip", [&runner] {
+        testNonPreemptiveIncumbentMasterRetainsVip(runner);
+    });
+    runner.run("preemptive incumbent master yields", [&runner] {
+        testPreemptiveIncumbentMasterYields(runner);
+    });
+    runner.run("non-preemptive dual master resolves to higher", [&runner] {
+        testNonPreemptiveDualMasterResolvesToHigher(runner);
     });
     runner.run("non-preemptive still takes over when no master present", [&runner] {
         testNonPreemptiveStillTakesOverWhenNoMasterPresent(runner);

@@ -2,6 +2,7 @@
 
 #include "core/Election.hpp"
 
+#include <optional>
 #include <string>
 
 namespace easyfailover {
@@ -26,10 +27,22 @@ int observedClusterMembers(const std::vector<PeerStatus>& peers) {
 
 namespace {
 
-// True when some observed, healthy peer is currently advertising itself as master.
-[[nodiscard]] bool healthyPeerMasterPresent(const std::vector<PeerStatus>& peers) {
+// node_id of some observed, healthy peer currently advertising itself as master, if any.
+[[nodiscard]] std::optional<std::string> healthyPeerMaster(const std::vector<PeerStatus>& peers) {
     for (const auto& peer : peers) {
         if (peer.healthy && peer.heartbeat_seen && peer.state == NodeState::Master) {
+            return peer.node_id;
+        }
+    }
+    return std::nullopt;
+}
+
+// True when the named peer is an observed, healthy master.
+[[nodiscard]] bool peerIsHealthyMaster(const std::vector<PeerStatus>& peers,
+                                       const std::string& node_id) {
+    for (const auto& peer : peers) {
+        if (peer.node_id == node_id && peer.healthy && peer.heartbeat_seen &&
+            peer.state == NodeState::Master) {
             return true;
         }
     }
@@ -91,10 +104,12 @@ FailoverDecision decideFailoverAction(const LocalNodeStatus& local,
 
         // Non-preemptive: do not displace an existing healthy master even though this node now
         // outranks it. A failed master stops sending heartbeats, after which this node takes over.
-        if (!policy.preempt && healthyPeerMasterPresent(peers)) {
-            return FailoverDecision{.action = FailoverAction::StayBackup,
-                                    .selected_master = std::nullopt,
-                                    .reason = "preempt disabled; deferring to existing healthy master"};
+        if (!policy.preempt) {
+            if (const auto master_id = healthyPeerMaster(peers); master_id.has_value()) {
+                return FailoverDecision{.action = FailoverAction::StayBackup,
+                                        .selected_master = master_id,
+                                        .reason = "preempt disabled; deferring to existing healthy master"};
+            }
         }
 
         return FailoverDecision{.action = FailoverAction::BecomeMaster,
@@ -102,7 +117,18 @@ FailoverDecision decideFailoverAction(const LocalNodeStatus& local,
                                 .reason = "local node is highest-priority healthy candidate"};
     }
 
+    // A peer is the highest-priority healthy candidate.
     if (local.state == NodeState::Master) {
+        // Non-preemptive: an incumbent healthy master keeps the VIP rather than hand it to a
+        // higher-priority peer. It still yields if that peer is itself already master (so a
+        // post-partition dual master resolves deterministically to the higher-priority node), and
+        // always yields under preemption. Health loss and quorum loss are handled earlier.
+        if (!policy.preempt && !peerIsHealthyMaster(peers, selected.node_id)) {
+            return FailoverDecision{.action = FailoverAction::StayMaster,
+                                    .selected_master = local.node_id,
+                                    .reason = "preempt disabled; incumbent master retains VIP"};
+        }
+
         return FailoverDecision{.action = FailoverAction::BecomeBackup,
                                 .selected_master = selected.node_id,
                                 .reason = "peer is highest-priority healthy candidate"};
@@ -111,11 +137,6 @@ FailoverDecision decideFailoverAction(const LocalNodeStatus& local,
     return FailoverDecision{.action = FailoverAction::StayBackup,
                             .selected_master = selected.node_id,
                             .reason = "peer remains highest-priority healthy candidate"};
-}
-
-FailoverDecision decideFailoverAction(const LocalNodeStatus& local,
-                                      const std::vector<PeerStatus>& peers) {
-    return decideFailoverAction(local, peers, ElectionPolicy{});
 }
 
 } // namespace easyfailover
