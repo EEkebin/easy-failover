@@ -28,8 +28,8 @@ export type SudoMethod =
   | { kind: "already-root" };
 
 /**
- * How easy-failover is placed on the target. Both map onto the existing install
- * flow described in the README and `scripts/install.sh`.
+ * How easy-failover is placed on the target: a prebuilt release tarball, or a
+ * build-from-source via CMake (`cmake` configure/build/install).
  */
 export type InstallSource =
   | {

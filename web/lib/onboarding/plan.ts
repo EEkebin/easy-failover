@@ -256,9 +256,11 @@ export function releaseInstallCommand(
 }
 
 /**
- * Build the clone + install.sh command for build-from-source. Returns the
- * unprivileged body (install.sh itself invokes sudo as needed; we run the whole
- * thing privileged for the install step).
+ * Build the clone + CMake build/install command for build-from-source. Returns
+ * the unprivileged body; the orchestrator runs it via privileged() so the
+ * `cmake --install` step can write under the prefix and sysconfdir. The install
+ * stages only the example config (no active config.toml) — the onboarding flow
+ * writes the active config separately in the write-config step.
  */
 export function sourceInstallCommand(
   source: Extract<InstallSource, { kind: "build-from-source" }>,
@@ -273,7 +275,9 @@ export function sourceInstallCommand(
     'TMP="$(mktemp -d)"',
     `git clone --depth 1 ${refArg} ${shellQuote(repo)} "$TMP/src"`,
     'cd "$TMP/src"',
-    `./scripts/install.sh --prefix ${shellQuote(prefix)} --sysconfdir ${shellQuote(sysconfdir)} --no-config`,
+    `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${shellQuote(prefix)} -DCMAKE_INSTALL_SYSCONFDIR=${shellQuote(sysconfdir)} -DBUILD_TESTING=OFF`,
+    "cmake --build build --parallel",
+    "cmake --install build",
     'rm -rf "$TMP"'
   ]
     .filter((line) => line.length > 0)

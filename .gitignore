@@ -1,7 +1,12 @@
 # Build output
 build/
+build-pkg/
 cmake-build-*/
 out/
+
+# Packages
+*.deb
+*.rpm
 
 # CMake generated files
 CMakeCache.txt

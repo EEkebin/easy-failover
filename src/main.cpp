@@ -155,6 +155,7 @@ int main(int argc, char** argv) {
     bool dry_run = false;
     bool show_version = false;
     bool run_forever = false;
+    bool release_vip = false;
     std::size_t max_iterations = 1;
 
     CLI::App app{"easy-failover virtual IP failover agent"};
@@ -166,6 +167,8 @@ int main(int argc, char** argv) {
     app.add_flag("--validate-config", validate_config, "Validate config and exit");
     app.add_flag("--dry-run", dry_run, "Log intended actions without changing system state");
     app.add_flag("--run-forever", run_forever, "Run daemon loop until SIGINT or SIGTERM");
+    app.add_flag("--release-vip", release_vip,
+                 "Release the configured VIP from this host if owned, then exit (used on uninstall)");
     app.add_option("--max-iterations", max_iterations,
                   "Bound daemon loop iterations for smoke tests and development")
         ->capture_default_str();
@@ -185,6 +188,46 @@ int main(int argc, char** argv) {
     try {
         initializeLogging();
         const auto config = easyfailover::loadConfigFromFile(config_path);
+
+        // Explicit operator-invoked VIP teardown (used by package prerm on uninstall). This is a
+        // manual action, not the autonomous loop, so it runs the real removal regardless of the
+        // mutation-safety gate, but only after confirming this host actually owns the VIP. It is
+        // best-effort and never fails the process, so it cannot block a package removal. It runs
+        // before config validation so an unrelated validation error cannot strand the VIP.
+        if (release_vip) {
+            if (config.vip.address.empty() || config.vip.interface.empty()) {
+                spdlog::warn("release-vip: vip.address/interface not configured; nothing to release");
+                return EXIT_SUCCESS;
+            }
+            easyfailover::LinuxVipOwnershipProbe ownership_probe;
+            const auto ownership =
+                ownership_probe.probeLocalVip(config.vip.address, config.vip.interface);
+            if (!ownership.success) {
+                spdlog::warn("release-vip: ownership probe for {} on {} failed: {}",
+                             config.vip.address, config.vip.interface,
+                             ownership.error.empty() ? "unknown error" : ownership.error);
+                return EXIT_SUCCESS;
+            }
+            if (!ownership.local_owner) {
+                spdlog::info("release-vip: {} not present on {}; nothing to release",
+                             config.vip.address, config.vip.interface);
+                return EXIT_SUCCESS;
+            }
+            easyfailover::LinuxVipManager vip_manager{easyfailover::LinuxVipManagerOptions{
+                .allow_network_mutation = true, .dry_run = dry_run}};
+            const auto remove_result =
+                vip_manager.removeVip(config.vip.address, config.vip.interface);
+            if (remove_result.success) {
+                spdlog::info("release-vip: released {} from {}{}", config.vip.address,
+                             config.vip.interface, dry_run ? " (dry-run)" : "");
+            } else {
+                spdlog::warn("release-vip: failed to release {} from {}: {}", config.vip.address,
+                             config.vip.interface,
+                             remove_result.error.empty() ? "unknown error" : remove_result.error);
+            }
+            return EXIT_SUCCESS;
+        }
+
         const auto validation_errors = config.validate();
         if (validate_config) {
             if (!validation_errors.empty()) {

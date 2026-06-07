@@ -69,57 +69,67 @@ decision loop in dry-run and watch what it *would* do before letting it touch th
 ### Quick try (no changes to your host)
 
 ```sh
-cmake -S . -B build
-cmake --build build
+./scripts/build.sh
 ./build/easy-failover --config configs/easy-failover.toml --validate-config
 ./build/easy-failover --config configs/easy-failover.toml --dry-run   # never moves a VIP
 ```
 
-### Install from source (recommended)
+### Install as a package (recommended)
 
-The installer builds in Release mode, installs under `/usr`, keeps config in `/etc/easy-failover`,
-validates the active config, and reloads systemd if present. It does **not** auto-start the service.
+Build a native package and install it with your package manager, which also pulls in the runtime
+dependencies (`iproute2`, `arping`):
 
 ```sh
-./scripts/install.sh                 # default install
-./scripts/install.sh --dry-run       # preview the exact commands first
+./scripts/package.sh        # produces build-pkg/easy-failover_<ver>_amd64.deb (+ .rpm where rpmbuild exists)
+
+# Debian / Ubuntu
+sudo apt install ./build-pkg/easy-failover_*.deb
+
+# Fedora / RHEL / Rocky
+sudo dnf install ./build-pkg/easy-failover-*.rpm
 ```
 
-Then create and edit the node config before starting:
+Installing seeds `/etc/easy-failover/config.toml` from the example but does **not** auto-start the
+service. Edit the node config, validate it, then enable:
 
 ```sh
-sudo cp /etc/easy-failover/config.example.toml /etc/easy-failover/config.toml
-sudo editor /etc/easy-failover/config.toml
+sudoedit /etc/easy-failover/config.toml                      # set VIP, interface, peers
 easy-failover --config /etc/easy-failover/config.toml --validate-config
-sudo systemctl enable --now easy-failover.service   # only after the config is valid
+sudo systemctl enable --now easy-failover.service            # only after the config is valid
 ```
 
-### Manual install
+### Build from source without packaging
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_SYSCONFDIR=/etc
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_SYSCONFDIR=/etc
 cmake --build build
-sudo cmake --install build --prefix /usr
+sudo cmake --install build
 ```
 
-**Build dependencies:** a C++23 compiler (GCC or Clang), CMake, `make` or Ninja, Git, plus
-`iproute2` and `arping` on any host that will perform real VIP movement.
+**Build dependencies:** a C++23 compiler (GCC or Clang), CMake, `make` or Ninja, Git. **Runtime
+dependencies:** `iproute2` and `arping` (declared by the package; install manually for source builds).
 
-**Not using systemd?** See the per-init guides for
+**Not using systemd?** The packages target systemd, but the repo also ships OpenRC, runit, dinit, and
+s6 service files for source installs — see the per-init guides for
 [OpenRC](docs/service-openrc.md), [runit](docs/service-runit.md),
 [dinit](docs/service-dinit.md), and [s6](docs/service-s6.md).
 
-**Want the dashboard?** It's an optional read-only Next.js app under [`web/`](web/), run
+**Want the dashboard?** It's an optional read-only Next.js app under [`web/`](web/), packaged and run
 separately from the daemon — see [running the dashboard](docs/dashboard-service.md).
 
 ## Uninstallation
 
-```sh
-./scripts/uninstall.sh                  # keeps /etc/easy-failover/config.toml
-./scripts/uninstall.sh --purge-config   # also removes the config directory
-```
+Use your package manager. On removal, the service is stopped and — if this host currently owns the
+VIP — the VIP is released from its interface.
 
-If you installed via a future distro package, use your package manager instead.
+```sh
+# Debian / Ubuntu
+sudo apt remove easy-failover         # keeps /etc/easy-failover (Debian convention)
+sudo apt purge  easy-failover         # also removes /etc/easy-failover
+
+# Fedora / RHEL / Rocky
+sudo dnf remove easy-failover         # removes the package and /etc/easy-failover
+```
 
 ## Contributing
 
