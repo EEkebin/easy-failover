@@ -27,6 +27,10 @@ struct HealthConfig {
 struct ElectionConfig {
     bool require_quorum = false;
     bool preempt = true;
+    // Minimum nodes (this node + observed peers) that must be visible before this node may own the
+    // VIP. 0 = automatic strict majority (floor(N/2)+1, where N = peers + 1). Only enforced when
+    // require_quorum is true.
+    int quorum_size = 0;
 };
 
 struct ApiConfig {

@@ -142,7 +142,8 @@ PeerStatus peerStatusFromHeartbeat(const HeartbeatMessage& message) {
     return PeerStatus{.node_id = message.node_id,
                       .priority = message.priority,
                       .healthy = message.healthy,
-                      .heartbeat_seen = true};
+                      .heartbeat_seen = true,
+                      .state = message.state};
 }
 
 } // namespace easyfailover
