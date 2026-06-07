@@ -10,6 +10,17 @@ talk to stays reachable even when the node behind it goes down.
 
 ---
 
+## Contents
+
+- [Introduction](#introduction)
+- [Description](#description)
+- [Installation](#installation)
+- [Uninstallation](#uninstallation)
+- [Contributing](#contributing)
+- [Credits](#credits)
+- [License](#license)
+- [Disclaimer](#disclaimer)
+
 ## Introduction
 
 When a server owning a shared service IP fails, that address goes dark until someone intervenes.
