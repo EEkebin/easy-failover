@@ -1,8 +1,10 @@
 # Build output
 build/
 build-pkg/
+build-dashboard-pkg/
 cmake-build-*/
 out/
+web/dist-dashboard/
 
 # Packages
 *.deb

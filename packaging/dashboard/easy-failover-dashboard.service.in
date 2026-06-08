@@ -1,0 +1,49 @@
+[Unit]
+Description=easy-failover optional read-only dashboard
+Documentation=https://github.com/EEkebin/easy-failover/blob/main/docs/dashboard-service.md
+After=network-online.target
+Wants=network-online.target
+# Ordering only (no requirement): if the daemon runs on the same host, start it first. The dashboard
+# does not require a local daemon — it proxies to the nodes in its roster.
+After=easy-failover.service
+
+[Service]
+Type=simple
+# Dedicated unprivileged user, created by the package postinst.
+User=easy-failover-dashboard
+Group=easy-failover-dashboard
+
+# Prebuilt Next.js standalone server installed by the package.
+WorkingDirectory=@EASY_FAILOVER_DASHBOARD_FULL_DIR@
+Environment=NODE_ENV=production
+Environment=HOSTNAME=127.0.0.1
+Environment=PORT=3000
+EnvironmentFile=-@EASY_FAILOVER_DASHBOARD_SYSCONFDIR@/easy-failover-dashboard/dashboard.env
+# Resolve the Node binary at runtime: distros name it `node` or `nodejs`, and
+# NodeSource installs it outside /usr/bin. `exec` lets systemd track the process.
+ExecStart=/bin/sh -c 'exec "$(command -v node || command -v nodejs)" @EASY_FAILOVER_DASHBOARD_FULL_DIR@/server.js'
+
+Restart=on-failure
+RestartSec=2s
+
+# Writable state directory (/var/lib/easy-failover-dashboard) for the mutable node roster that
+# onboarding appends to. ProtectSystem=strict keeps everything else (including /etc) read-only.
+StateDirectory=easy-failover-dashboard
+
+# Read-only, unprivileged hardening. The standalone server serves prebuilt output and writes only
+# to its StateDirectory.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+# AF_NETLINK is needed for getifaddrs() (os.networkInterfaces()) at server startup.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictRealtime=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
