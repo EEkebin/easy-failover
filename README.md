@@ -115,8 +115,10 @@ s6 service files for source installs — see the per-init guides for
 [OpenRC](docs/service-openrc.md), [runit](docs/service-runit.md),
 [dinit](docs/service-dinit.md), and [s6](docs/service-s6.md).
 
-**Want the dashboard?** It's an optional read-only Next.js app under [`web/`](web/), packaged and run
-separately from the daemon — see [running the dashboard](docs/dashboard-service.md).
+**Want the dashboard?** It's an optional read-only Next.js app shipped as a **separate**
+`easy-failover-dashboard` package (its own `.deb`/`.rpm`, attached to releases or built with
+`scripts/package-dashboard.sh`), running as an unprivileged service independent of the daemon —
+see [running the dashboard](docs/dashboard-service.md).
 
 ## Uninstallation
 
