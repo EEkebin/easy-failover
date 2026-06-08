@@ -26,8 +26,12 @@ ExecStart=/bin/sh -c 'exec "$(command -v node || command -v nodejs)" @EASY_FAILO
 Restart=on-failure
 RestartSec=2s
 
-# Read-only, unprivileged hardening. The standalone server serves prebuilt output and does not
-# write to its install tree.
+# Writable state directory (/var/lib/easy-failover-dashboard) for the mutable node roster that
+# onboarding appends to. ProtectSystem=strict keeps everything else (including /etc) read-only.
+StateDirectory=easy-failover-dashboard
+
+# Read-only, unprivileged hardening. The standalone server serves prebuilt output and writes only
+# to its StateDirectory.
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
@@ -36,7 +40,8 @@ PrivateDevices=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# AF_NETLINK is needed for getifaddrs() (os.networkInterfaces()) at server startup.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 RestrictRealtime=true
 LockPersonality=true
 

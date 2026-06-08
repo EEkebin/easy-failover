@@ -202,20 +202,24 @@ jobs:
           test -f /etc/easy-failover-dashboard/dashboard.env        # seeded by postinst
           test -f /etc/easy-failover-dashboard/dashboard.env.example
 
-      - name: Smoke-test the standalone server
+      - name: Smoke-test via systemd (real unit, hardening, and runtime nodejs)
         run: |
           set -euo pipefail
-          node_bin=$(command -v node || command -v nodejs)
-          sudo -u easy-failover-dashboard env PORT=3001 HOSTNAME=127.0.0.1 \
-            "$node_bin" /usr/lib/easy-failover-dashboard/server.js &
-          srv=$!
+          # Start through systemd so the actual unit (User=, EnvironmentFile, hardening,
+          # StateDirectory, node|nodejs resolution against the system PATH) is exercised.
+          sudo systemctl start easy-failover-dashboard.service
           ok=0
           for _ in $(seq 1 20); do
-            if curl -fsS -o /dev/null http://127.0.0.1:3001/; then ok=1; break; fi
+            if curl -fsS -o /dev/null http://127.0.0.1:3000/; then ok=1; break; fi
             sleep 1
           done
-          kill "$srv" 2>/dev/null || true
-          test "$ok" = "1" || { echo "::error::dashboard server did not serve a request"; exit 1; }
+          sudo systemctl --no-pager --full status easy-failover-dashboard.service || true
+          if [ "$ok" != "1" ]; then
+            sudo journalctl -u easy-failover-dashboard.service --no-pager | tail -50 || true
+            echo "::error::dashboard service did not serve a request"; exit 1
+          fi
+          test -d /var/lib/easy-failover-dashboard      # writable StateDirectory created
+          sudo systemctl stop easy-failover-dashboard.service
 
       - name: Purge removes config and user
         run: |
