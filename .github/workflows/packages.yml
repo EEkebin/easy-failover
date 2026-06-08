@@ -62,8 +62,10 @@ jobs:
           test -f /etc/easy-failover/config.toml            # seeded from the example by postinst
           test -f /etc/easy-failover/config.example.toml
           test -f /usr/lib/systemd/system/easy-failover.service
-          command -v ip          # from iproute2 (declared dependency)
-          command -v arping      # declared dependency
+          # Declared deps are present (the package install already enforced them); check by command
+          # or known sbin path, since arping ships in /usr/sbin on Debian.
+          command -v ip     >/dev/null || [ -x /usr/sbin/ip ]     || [ -x /usr/bin/ip ]
+          command -v arping >/dev/null || [ -x /usr/sbin/arping ] || [ -x /usr/bin/arping ]
           easy-failover --version
           easy-failover --config /etc/easy-failover/config.toml --validate-config
 
@@ -128,8 +130,8 @@ jobs:
           test -x /usr/bin/easy-failover
           test -f /etc/easy-failover/config.toml
           test -f /usr/lib/systemd/system/easy-failover.service
-          command -v ip
-          command -v arping
+          command -v ip     >/dev/null || [ -x /usr/sbin/ip ]     || [ -x /usr/bin/ip ]
+          command -v arping >/dev/null || [ -x /usr/sbin/arping ] || [ -x /usr/bin/arping ]
           easy-failover --version
           easy-failover --config /etc/easy-failover/config.toml --validate-config
 
