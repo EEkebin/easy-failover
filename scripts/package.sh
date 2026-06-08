@@ -17,12 +17,20 @@ cmake -S . -B "${BUILD_DIR}" \
     -DBUILD_TESTING=OFF
 cmake --build "${BUILD_DIR}" --parallel
 
-generators="DEB"
-if command -v rpmbuild >/dev/null 2>&1; then
-    generators="DEB;RPM"
-else
-    echo "note: rpmbuild not found; building .deb only (run on Fedora/RHEL or CI for .rpm)" >&2
+# Pick generators by available tooling: .deb needs dpkg-deb, .rpm needs rpmbuild.
+# This lets the same script build .deb on Debian/Ubuntu and .rpm on Fedora/RHEL.
+generators=""
+if command -v dpkg-deb >/dev/null 2>&1; then
+    generators="DEB"
 fi
+if command -v rpmbuild >/dev/null 2>&1; then
+    generators="${generators:+${generators};}RPM"
+fi
+if [ -z "${generators}" ]; then
+    echo "error: neither dpkg-deb nor rpmbuild found; cannot build any package" >&2
+    exit 1
+fi
+echo "Building package generator(s): ${generators}" >&2
 
 # Remove stale packages from previous runs so the produced artifact is unambiguous
 # (the documented `apt install ./build-pkg/easy-failover_*.deb` glob assumes exactly one).

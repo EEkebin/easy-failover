@@ -76,8 +76,9 @@ decision loop in dry-run and watch what it *would* do before letting it touch th
 
 ### Install as a package (recommended)
 
-Build a native package and install it with your package manager, which also pulls in the runtime
-dependencies (`iproute2`, `arping`):
+Prebuilt `.deb` and `.rpm` packages are attached to each [GitHub release](https://github.com/EEkebin/easy-failover/releases) —
+download one and install it with your package manager. Or build a package yourself; either way the
+package manager pulls in the runtime dependencies (`iproute2`, `arping`):
 
 ```sh
 ./scripts/package.sh        # produces build-pkg/easy-failover_<ver>_amd64.deb (+ .rpm where rpmbuild exists)

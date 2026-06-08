@@ -1,0 +1,150 @@
+name: Packages
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CMAKE_VERSION: 4.3.2
+
+jobs:
+  deb:
+    name: Build and smoke-test .deb (Debian/Ubuntu)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install build tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y build-essential dpkg-dev fakeroot
+          curl -L --fail --retry 3 \
+            "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz" \
+            -o "$RUNNER_TEMP/cmake.tar.gz"
+          tar -xzf "$RUNNER_TEMP/cmake.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/cmake-${CMAKE_VERSION}-linux-x86_64/bin" >> "$GITHUB_PATH"
+
+      - name: Build .deb
+        run: ./scripts/package.sh
+
+      - name: Inspect package
+        run: |
+          set -euo pipefail
+          deb=$(ls build-pkg/easy-failover_*_amd64.deb)
+          echo "Package: $deb"
+          dpkg-deb -I "$deb"
+          echo "--- contents ---"
+          dpkg-deb -c "$deb"
+          # The alternative init-system files must not be in the package.
+          if dpkg-deb -c "$deb" | grep -E '/etc/(init\.d|sv|dinit\.d|s6)/'; then
+            echo "::error::package unexpectedly contains alternative init-system files"; exit 1
+          fi
+
+      - name: Install (resolves iproute2/arping deps)
+        run: |
+          set -euo pipefail
+          deb=$(ls build-pkg/easy-failover_*_amd64.deb)
+          sudo apt-get install -y "./$deb"
+
+      - name: Verify install
+        run: |
+          set -euo pipefail
+          test -x /usr/bin/easy-failover
+          test -f /etc/easy-failover/config.toml            # seeded from the example by postinst
+          test -f /etc/easy-failover/config.example.toml
+          test -f /usr/lib/systemd/system/easy-failover.service
+          # Declared deps are present (the package install already enforced them); check by command
+          # or known sbin path, since arping ships in /usr/sbin on Debian.
+          command -v ip     >/dev/null || [ -x /usr/sbin/ip ]     || [ -x /usr/bin/ip ]
+          command -v arping >/dev/null || [ -x /usr/sbin/arping ] || [ -x /usr/bin/arping ]
+          easy-failover --version
+          easy-failover --config /etc/easy-failover/config.toml --validate-config
+
+      - name: Remove keeps config; purge removes it
+        run: |
+          set -euo pipefail
+          sudo apt-get remove -y easy-failover
+          test ! -e /usr/bin/easy-failover
+          test -f /etc/easy-failover/config.toml || { echo "::error::remove should keep config"; exit 1; }
+          sudo apt-get purge -y easy-failover
+          test ! -e /etc/easy-failover || { echo "::error::purge should remove /etc/easy-failover"; exit 1; }
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: easy-failover-deb
+          path: build-pkg/easy-failover_*_amd64.deb
+          if-no-files-found: error
+
+  rpm:
+    name: Build and smoke-test .rpm (Fedora)
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install build tools
+        run: |
+          set -euo pipefail
+          dnf install -y cmake gcc-c++ make rpm-build git
+
+      - name: Build .rpm
+        run: ./scripts/package.sh
+
+      - name: Inspect package
+        run: |
+          set -euo pipefail
+          rpm_file=$(ls build-pkg/easy-failover-*.rpm)
+          echo "Package: $rpm_file"
+          rpm -qpi "$rpm_file"
+          echo "--- name must be exactly 'easy-failover' (no component suffix) ---"
+          name=$(rpm -qp --queryformat '%{NAME}' "$rpm_file")
+          test "$name" = "easy-failover" || { echo "::error::unexpected RPM name: $name"; exit 1; }
+          echo "--- contents ---"
+          rpm -qpl "$rpm_file"
+          if rpm -qpl "$rpm_file" | grep -E '/etc/(init\.d|sv|dinit\.d|s6)/'; then
+            echo "::error::package unexpectedly contains alternative init-system files"; exit 1
+          fi
+
+      - name: Install (resolves iproute/iputils deps)
+        run: |
+          set -euo pipefail
+          rpm_file=$(ls build-pkg/easy-failover-*.rpm)
+          dnf install -y "./$rpm_file"
+
+      - name: Verify install
+        run: |
+          set -euo pipefail
+          test -x /usr/bin/easy-failover
+          test -f /etc/easy-failover/config.toml
+          test -f /usr/lib/systemd/system/easy-failover.service
+          command -v ip     >/dev/null || [ -x /usr/sbin/ip ]     || [ -x /usr/bin/ip ]
+          command -v arping >/dev/null || [ -x /usr/sbin/arping ] || [ -x /usr/bin/arping ]
+          easy-failover --version
+          easy-failover --config /etc/easy-failover/config.toml --validate-config
+
+      - name: Erase removes config
+        run: |
+          set -euo pipefail
+          dnf remove -y easy-failover
+          test ! -e /usr/bin/easy-failover
+          test ! -e /etc/easy-failover || { echo "::error::erase should remove /etc/easy-failover"; exit 1; }
+
+      - name: Upload .rpm artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: easy-failover-rpm
+          path: build-pkg/easy-failover-*.rpm
+          if-no-files-found: error
