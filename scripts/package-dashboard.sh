@@ -13,10 +13,14 @@ STAGE="${WEB}/dist-dashboard"
 BUILD_DIR="${BUILD_DIR:-${ROOT}/build-dashboard-pkg}"
 
 echo "==> Building the Next.js standalone dashboard"
+# DASHBOARD_BUILD_FLAGS lets a caller pass extra `next build` flags. Used on
+# riscv64, where Turbopack (the Next 16 default) has no native bindings, to
+# force the pure-JS webpack bundler: DASHBOARD_BUILD_FLAGS=--webpack.
 (
     cd "${WEB}"
     npm ci
-    npm run build
+    # shellcheck disable=SC2086 # intentional word-splitting of the flags
+    npm run build -- ${DASHBOARD_BUILD_FLAGS:-}
 )
 
 echo "==> Assembling the standalone runtime tree"

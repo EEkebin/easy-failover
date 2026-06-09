@@ -22,9 +22,11 @@ package lifecycle.
   daemon and dashboard, `.deb` and `.rpm`.
 - **riscv64** — built **emulated** (QEMU, Debian container) and **experimental** / non-blocking in
   CI, since there are no native riscv64 GitHub runners. Both the daemon `.deb` and the dashboard
-  `.deb` are attempted: `sharp` ships a `linux-riscv64` prebuilt (in the lockfile) and `ssh2`'s
-  `cpu-features` is optional (pure-JS fallback), so the dashboard *should* build — but the emulated
-  build is slow and unverified, so treat riscv64 artifacts as best-effort and possibly absent.
+  `.deb` are attempted. The dashboard is built with the **webpack** bundler on riscv64
+  (`DASHBOARD_BUILD_FLAGS=--webpack`) because Turbopack — the Next 16 default on amd64/arm64 — has no
+  riscv64 native bindings; `sharp` ships a `linux-riscv64` prebuilt and `ssh2`'s `cpu-features` is
+  optional, so the rest of the bundle is fine. The emulated build is slow, so treat riscv64
+  artifacts as best-effort and possibly absent.
 
 ## Scope
 
