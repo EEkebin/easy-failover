@@ -93,16 +93,18 @@ environment variable). The `start` script runs `next start`.
 
 ## Run as a systemd service
 
-A unit template and an example environment file are provided under
-[`packaging/dashboard/`](../packaging/dashboard/):
+The package already installs and starts the dashboard as a service (see "Comes
+with the package" above). For a hand-rolled deployment, the unit template and an
+example env file live under [`packaging/dashboard/`](../packaging/dashboard/):
 
-- [`easy-failover-dashboard.service`](../packaging/dashboard/easy-failover-dashboard.service)
+- [`easy-failover-dashboard.service.in`](../packaging/dashboard/easy-failover-dashboard.service.in)
+  — a CMake `configure_file` template; the package substitutes the
+  `@EASY_FAILOVER_DASHBOARD_*@` paths at build time. For a manual setup, replace
+  those tokens with your install paths (e.g. `/usr/lib/easy-failover-dashboard`).
 - [`easy-failover-dashboard.env.example`](../packaging/dashboard/easy-failover-dashboard.env.example)
-- [`packaging/dashboard/README.md`](../packaging/dashboard/README.md)
 
-Because the dashboard is not CMake-installed, the unit uses documented
-placeholder paths rather than `@`-substituted CMake variables. Adjust them for
-your deployment.
+The unit runs the prebuilt standalone server directly (`node server.js`), not
+`npm run start`.
 
 ### Install layout
 
