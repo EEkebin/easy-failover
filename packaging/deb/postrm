@@ -4,8 +4,10 @@ set -e
 
 case "$1" in
     purge)
-        # `apt purge` removes all local config; plain `apt remove` keeps it.
-        rm -rf /etc/easy-failover /etc/easy-failover-dashboard
+        # `apt purge` removes all local config; plain `apt remove` keeps it. This includes
+        # the generated write token (/etc/easy-failover/api.token), the dashboard env (which
+        # holds a copy of it), and the dashboard state dir (roster).
+        rm -rf /etc/easy-failover /etc/easy-failover-dashboard /var/lib/easy-failover-dashboard
         if getent passwd easy-failover-dashboard >/dev/null 2>&1; then
             userdel easy-failover-dashboard || true
         fi

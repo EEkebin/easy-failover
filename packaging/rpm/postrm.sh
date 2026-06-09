@@ -1,7 +1,7 @@
 # RPM %postun: remove local config on final erase (RPM has no separate purge).
 # $1 == 0 on final erase; >= 1 during an upgrade.
 if [ "$1" = "0" ]; then
-    rm -rf /etc/easy-failover /etc/easy-failover-dashboard
+    rm -rf /etc/easy-failover /etc/easy-failover-dashboard /var/lib/easy-failover-dashboard
     if getent passwd easy-failover-dashboard >/dev/null 2>&1; then
         userdel easy-failover-dashboard || true
     fi

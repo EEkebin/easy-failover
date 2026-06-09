@@ -1,31 +1,92 @@
 #!/bin/sh
-# Debian/Ubuntu post-install: seed config, refresh systemd, set up the bundled dashboard.
+# Debian/Ubuntu post-install: seed config, provision a write token, set up the bundled
+# dashboard, and start both services.
 set -e
+
+TOKEN_FILE=/etc/easy-failover/api.token
+DASH_USER=easy-failover-dashboard
+DASH_ENV=/etc/easy-failover-dashboard/dashboard.env
+DASH_STATE=/var/lib/easy-failover-dashboard
+DASH_ROSTER="${DASH_STATE}/nodes.json"
 
 case "$1" in
     configure)
         # On first install, create an active config from the shipped example if the
         # operator does not already have one. Upgrades never overwrite it.
+        seeded_config=0
         if [ ! -e /etc/easy-failover/config.toml ] \
             && [ -e /etc/easy-failover/config.example.toml ]; then
             cp /etc/easy-failover/config.example.toml /etc/easy-failover/config.toml
             chmod 0644 /etc/easy-failover/config.toml
+            seeded_config=1
+        fi
+
+        # Generate a random write token once (root-only). The daemon authenticates write
+        # requests against it; the local dashboard is handed the same value (below) so its
+        # Apply button works out of the box without the operator wiring a secret by hand.
+        if [ ! -e "$TOKEN_FILE" ]; then
+            ( umask 077
+              if command -v openssl >/dev/null 2>&1; then
+                  openssl rand -hex 32 > "$TOKEN_FILE"
+              else
+                  head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$TOKEN_FILE"
+              fi )
+            chmod 0600 "$TOKEN_FILE"
+        fi
+        TOKEN="$(cat "$TOKEN_FILE" 2>/dev/null || true)"
+
+        # On a freshly seeded config, enable token-authenticated write mode so the local
+        # dashboard can apply config. We never rewrite an operator's existing config.
+        if [ "$seeded_config" = "1" ] && [ -n "$TOKEN" ]; then
+            sed -i \
+                -e 's|^[[:space:]]*read_only[[:space:]]*=.*|read_only = false|' \
+                -e "s|^[[:space:]]*auth_token_file[[:space:]]*=.*|auth_token_file = \"${TOKEN_FILE}\"|" \
+                /etc/easy-failover/config.toml || true
         fi
 
         # Bundled dashboard (present only when the package was built with it): create its
-        # unprivileged user, seed its env, and enable+start it. It is read-only, so it is safe to
-        # start immediately; it reads the daemon's local API (enabled by default in the seeded
-        # config). It binds 0.0.0.0 by default — see dashboard.env to restrict it.
+        # unprivileged user, seed its env, hand it the write token, and wire a roster entry
+        # for the local node. It binds localhost by default (it is unauthenticated and now
+        # write-capable) — see dashboard.env to expose it via an SSH tunnel / reverse proxy.
         if [ -e /usr/lib/easy-failover-dashboard/server.js ]; then
-            if ! getent passwd easy-failover-dashboard >/dev/null 2>&1; then
+            if ! getent passwd "$DASH_USER" >/dev/null 2>&1; then
                 useradd --system --no-create-home --shell /usr/sbin/nologin \
-                    --comment "easy-failover dashboard" easy-failover-dashboard || true
+                    --comment "easy-failover dashboard" "$DASH_USER" || true
             fi
-            if [ ! -e /etc/easy-failover-dashboard/dashboard.env ] \
+
+            if [ ! -e "$DASH_ENV" ] \
                 && [ -e /etc/easy-failover-dashboard/dashboard.env.example ]; then
-                cp /etc/easy-failover-dashboard/dashboard.env.example \
-                    /etc/easy-failover-dashboard/dashboard.env
-                chmod 0644 /etc/easy-failover-dashboard/dashboard.env
+                cp /etc/easy-failover-dashboard/dashboard.env.example "$DASH_ENV"
+            fi
+
+            # The env file holds the write token, so it is a secret: readable by the
+            # dashboard user, not world-readable.
+            if [ -e "$DASH_ENV" ]; then
+                if [ -n "$TOKEN" ] \
+                    && ! grep -q '^[[:space:]]*EASY_FAILOVER_TOKEN_LOCAL=' "$DASH_ENV"; then
+                    printf 'EASY_FAILOVER_TOKEN_LOCAL=%s\n' "$TOKEN" >> "$DASH_ENV"
+                fi
+                chgrp "$DASH_USER" "$DASH_ENV" 2>/dev/null || true
+                chmod 0640 "$DASH_ENV" || true
+            fi
+
+            # StateDirectory (systemd also manages it, but we need it now to seed the roster).
+            mkdir -p "$DASH_STATE"
+            chown "$DASH_USER":"$DASH_USER" "$DASH_STATE" 2>/dev/null || true
+            chmod 0750 "$DASH_STATE" || true
+            if [ ! -e "$DASH_ROSTER" ]; then
+                cat > "$DASH_ROSTER" <<JSON
+[
+  {
+    "id": "local",
+    "label": "local",
+    "apiBase": "http://127.0.0.1:8743",
+    "tokenEnv": "EASY_FAILOVER_TOKEN_LOCAL"
+  }
+]
+JSON
+                chown "$DASH_USER":"$DASH_USER" "$DASH_ROSTER" 2>/dev/null || true
+                chmod 0640 "$DASH_ROSTER" || true
             fi
         fi
 

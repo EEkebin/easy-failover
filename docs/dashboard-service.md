@@ -1,12 +1,14 @@
 # Running the Dashboard as an Optional Service
 
-easy-failover ships an optional read-only Next.js dashboard **bundled in the same
+easy-failover ships an optional Next.js dashboard **bundled in the same
 `easy-failover` package** as the daemon. It runs as its own service, as a dedicated
 unprivileged `easy-failover-dashboard` user, independent of the (root) daemon. This
 document covers configuring the packaged dashboard and building/running it by hand.
 
-The dashboard exposes no privileged actions by default: it reads each node's
-local API and proxies writes only when an operator has wired a write token.
+The dashboard has **no login of its own**. It reads each node's local API and proxies
+config writes using a server-side write token. Because anyone who can reach the dashboard
+can therefore use its **Apply** button, the packaged dashboard binds **localhost only** by
+default (see below).
 
 ## Comes with the package
 
@@ -15,10 +17,30 @@ self-contained Next.js standalone server at `/usr/lib/easy-failover-dashboard`, 
 unit `easy-failover-dashboard.service`, and seeds `/etc/easy-failover-dashboard/dashboard.env`
 from the example. The package depends on `nodejs`. **The dashboard service is enabled
 and started automatically on install**, and the daemon's local API is on by default, so
-the dashboard works out of the box. Both default to binding `0.0.0.0` (all interfaces) so
-the dashboard is reachable from other hosts; the dashboard ships read-only. If you don't
-want it exposed off-box, set `HOSTNAME=127.0.0.1` in the dashboard env (and/or
-`api.bind = "127.0.0.1:8743"` for the daemon) or firewall the ports.
+the dashboard works out of the box.
+
+**Write access is auto-provisioned.** On first install the package:
+
+- generates a random write token at `/etc/easy-failover/api.token` (root, `0600`);
+- flips the daemon's seeded config to `read_only = false` with that `auth_token_file`;
+- copies the token into the dashboard env as `EASY_FAILOVER_TOKEN_LOCAL`
+  (`/etc/easy-failover-dashboard/dashboard.env`, `0640`, group `easy-failover-dashboard`);
+- writes a roster entry for the local node at `/var/lib/easy-failover-dashboard/nodes.json`
+  whose `tokenEnv` points at that variable.
+
+So the dashboard's **Apply** works for the local node immediately — no manual token wiring.
+
+**Exposure.** The daemon's read API binds `0.0.0.0:8743` (so remote read-only/fleet dashboards
+can reach it; writes still require the token). The **dashboard** binds `127.0.0.1:3000` by
+default, because it is unauthenticated and now write-capable — binding it to the network would
+expose an unauthenticated write panel. Reach it remotely with an SSH tunnel:
+
+```sh
+ssh -L 3000:localhost:3000 user@node    # then open http://localhost:3000
+```
+
+Only set `HOSTNAME=0.0.0.0` in the dashboard env if you put real authentication or a reverse
+proxy in front of it.
 
 Configure it by editing the env file (listen address, which nodes to show, onboarding
 gate) and restarting:

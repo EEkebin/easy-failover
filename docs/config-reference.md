@@ -165,10 +165,18 @@ the auth model in [`write-api-design.md`](write-api-design.md).
 
 ### Enabling write mode (the "write token")
 
-By default the API is **read-only**, so the dashboard can show status but cannot change anything. To
-let the dashboard (or `curl`) apply config changes — including the VIP set during onboarding — you
-enable write mode with a **bearer token**. The token is a shared secret: requests that mutate state
-must send it in an `Authorization: Bearer <token>` header.
+A **write token** is a shared secret: requests that change config must send it in an
+`Authorization: Bearer <token>` header. It exists because the API ships read-only — write mode lets
+the dashboard (or `curl`) apply config changes, including the VIP.
+
+> **On a packaged install (`.deb`/`.rpm`) this is already done for you.** The installer generates a
+> random token in `/etc/easy-failover/api.token`, flips the daemon to `read_only = false`, writes
+> the same token into the dashboard's env (`EASY_FAILOVER_TOKEN_LOCAL`), and creates a roster entry
+> for the local node pointing at it — so the bundled dashboard's **Apply** button works out of the
+> box. The dashboard binds **localhost** by default (it is unauthenticated and now write-capable);
+> reach it remotely with an SSH tunnel. See [`dashboard-service.md`](dashboard-service.md). The
+> steps below are for **building/running from source**, where the API stays read-only until you opt
+> in, or for rotating/replacing the token.
 
 1. Generate a token and store it where only the daemon can read it:
 
