@@ -211,7 +211,9 @@ set(CPACK_GENERATOR "DEB;RPM")
 # Debian/Ubuntu
 set(CPACK_DEBIAN_PACKAGE_MAINTAINER "${CPACK_PACKAGE_CONTACT}")
 set(CPACK_DEBIAN_PACKAGE_SECTION "admin")
-set(CPACK_DEBIAN_PACKAGE_DEPENDS "iproute2, arping")
+# iputils-arping (not the conflicting Thomas-Habets `arping` package): the daemon invokes
+# `arping -A/-U -c N -I <iface> <addr>`, which is the iputils arping CLI.
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "iproute2, iputils-arping")
 set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "${CPACK_PACKAGE_HOMEPAGE_URL}")
 set(CPACK_DEBIAN_FILE_NAME "DEB-DEFAULT")
 set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
