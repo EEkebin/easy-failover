@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<!--
+  easy-failover Cockpit plugin.
+
+  Served by Cockpit from /usr/share/cockpit/easy-failover/. Cockpit handles the
+  login, TLS and (via the superuser bridge) privilege escalation, so this page
+  needs no bearer token of its own: it reads the daemon's local API for status
+  and uses the privileged file/spawn channels to apply config + restart.
+-->
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>easy-failover</title>
+    <link rel="stylesheet" href="../base1/cockpit.css">
+    <link rel="stylesheet" href="easy-failover.css">
+    <script src="../base1/cockpit.js"></script>
+</head>
+<body>
+    <main class="ct-page">
+        <header class="ef-header">
+            <h1>easy-failover</h1>
+            <p class="ef-sub">Local node — virtual IP failover</p>
+        </header>
+
+        <div id="banner" class="ef-banner" hidden></div>
+
+        <section class="ef-card">
+            <h2>Status</h2>
+            <dl class="ef-grid" id="status-grid">
+                <dt>Node</dt><dd id="s-node">…</dd>
+                <dt>Role</dt><dd id="s-role">…</dd>
+                <dt>Health</dt><dd id="s-health">…</dd>
+                <dt>VIP</dt><dd id="s-vip">…</dd>
+                <dt>Owns VIP</dt><dd id="s-owner">…</dd>
+                <dt>Detail</dt><dd id="s-detail">…</dd>
+            </dl>
+            <p class="ef-muted" id="s-source"></p>
+        </section>
+
+        <section class="ef-card">
+            <h2>Virtual IP</h2>
+            <p class="ef-muted">
+                Set the address and interface this node may own, then apply. Applying
+                rewrites <code>/etc/easy-failover/config.toml</code> and restarts the daemon.
+                Leave both blank to unconfigure (the daemon idles).
+            </p>
+            <form id="vip-form" class="ef-form">
+                <label for="vip-address">Address (CIDR, e.g. 10.0.0.50/24)</label>
+                <input id="vip-address" type="text" autocomplete="off" placeholder="10.0.0.50/24">
+
+                <label for="vip-interface">Interface (e.g. eth0)</label>
+                <input id="vip-interface" type="text" autocomplete="off" placeholder="eth0">
+
+                <div class="ef-actions">
+                    <button id="vip-apply" type="submit" class="pf-c-button pf-m-primary">
+                        Apply &amp; restart
+                    </button>
+                    <span id="vip-status" class="ef-muted"></span>
+                </div>
+            </form>
+        </section>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>

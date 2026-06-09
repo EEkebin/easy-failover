@@ -54,7 +54,9 @@ letting it touch the network.
 - 🪶 Single C++23 binary, one TOML config, zero runtime dependencies beyond `iproute2`/`arping`.
 - 🔌 Ships a systemd unit and also runs under **OpenRC, runit, dinit, and s6**.
 - 🔒 Dry-run by default; real mutation is explicit, opt-in, and auditable.
-- 📊 Optional read-only Next.js dashboard (separate from the daemon, never privileged).
+- 📊 Optional Next.js dashboard (separate from the daemon, never privileged), plus an optional
+  [Cockpit plugin](docs/cockpit-plugin.md) (`easy-failover-cockpit`) that manages a node from the
+  Cockpit console using its login/privilege model — no API token to plumb.
 - 🐧 Targets Arch, Ubuntu, Debian, Fedora, RHEL, and Rocky Linux.
 
 > **Project status:** pre-1.0 and under active development. The daemon builds, tests, and runs
