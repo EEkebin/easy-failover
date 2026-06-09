@@ -75,8 +75,8 @@ jobs:
           test -f /etc/easy-failover/api.token                         # token generated
           grep -qE '^\s*read_only\s*=\s*false' /etc/easy-failover/config.toml
           grep -qF 'auth_token_file = "/etc/easy-failover/api.token"' /etc/easy-failover/config.toml
-          test -f /var/lib/easy-failover-dashboard/nodes.json          # roster seeded
-          grep -q '"tokenEnv": "EASY_FAILOVER_TOKEN_LOCAL"' /var/lib/easy-failover-dashboard/nodes.json
+          sudo test -f /var/lib/easy-failover-dashboard/nodes.json     # roster seeded
+          sudo grep -q '"tokenEnv": "EASY_FAILOVER_TOKEN_LOCAL"' /var/lib/easy-failover-dashboard/nodes.json
           sudo grep -qE '^EASY_FAILOVER_TOKEN_LOCAL=' /etc/easy-failover-dashboard/dashboard.env
           # The dashboard env holds the secret, so it must not be world-readable.
           perms="$(stat -c '%a' /etc/easy-failover-dashboard/dashboard.env)"
