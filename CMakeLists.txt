@@ -181,6 +181,46 @@ install(
     FILES_MATCHING
     PATTERN "*.md")
 
+# --- Optional bundled dashboard ---------------------------------------------------------------
+# When EASY_FAILOVER_DASHBOARD_DIST points at a prebuilt Next.js standalone tree (assembled by
+# scripts/package.sh), bundle the dashboard into the same package: the standalone server, its
+# systemd unit, and its env example. This makes the .deb/.rpm a single "daemon + dashboard"
+# package that depends on nodejs. The maintainer scripts detect the dashboard at runtime and set
+# up its user/env/service only when present, so a dist-less build is still daemon-only.
+set(EASY_FAILOVER_DASHBOARD_DIST ""
+    CACHE PATH "Prebuilt Next.js standalone tree to bundle (must contain server.js); empty = no dashboard")
+set(EASY_FAILOVER_WITH_DASHBOARD OFF)
+if(EASY_FAILOVER_DASHBOARD_DIST)
+    if(NOT EXISTS "${EASY_FAILOVER_DASHBOARD_DIST}/server.js")
+        message(FATAL_ERROR
+            "EASY_FAILOVER_DASHBOARD_DIST must point at an assembled standalone tree containing "
+            "server.js. Build it with scripts/package.sh.")
+    endif()
+    set(EASY_FAILOVER_WITH_DASHBOARD ON)
+
+    set(EASY_FAILOVER_DASHBOARD_FULL_DIR "${CMAKE_INSTALL_PREFIX}/lib/easy-failover-dashboard")
+    set(EASY_FAILOVER_DASHBOARD_SYSCONFDIR "${CMAKE_INSTALL_FULL_SYSCONFDIR}")
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/packaging/dashboard/easy-failover-dashboard.service.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/easy-failover-dashboard.service"
+        @ONLY)
+
+    install(
+        DIRECTORY "${EASY_FAILOVER_DASHBOARD_DIST}/"
+        DESTINATION "lib/easy-failover-dashboard"
+        COMPONENT dashboard
+        USE_SOURCE_PERMISSIONS)
+    install(
+        FILES "${CMAKE_CURRENT_BINARY_DIR}/easy-failover-dashboard.service"
+        DESTINATION "lib/systemd/system"
+        COMPONENT dashboard)
+    install(
+        FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/dashboard/easy-failover-dashboard.env.example"
+        DESTINATION "${CMAKE_INSTALL_SYSCONFDIR}/easy-failover-dashboard"
+        RENAME dashboard.env.example
+        COMPONENT dashboard)
+endif()
+
 # --- Native packaging (CPack -> .deb and .rpm) -------------------------------------------------
 # Build packages with the package-oriented prefix:
 #   cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
@@ -199,6 +239,9 @@ set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
 # (openrc/runit/dinit/s6 components) stay out. Component-install mode is required for this filter
 # to apply, with ALL_COMPONENTS_IN_ONE grouping so it stays one package, not per-component.
 set(CPACK_COMPONENTS_ALL daemon)
+if(EASY_FAILOVER_WITH_DASHBOARD)
+    list(APPEND CPACK_COMPONENTS_ALL dashboard)
+endif()
 set(CPACK_COMPONENTS_GROUPING "ALL_COMPONENTS_IN_ONE")
 set(CPACK_DEB_COMPONENT_INSTALL ON)
 set(CPACK_RPM_COMPONENT_INSTALL ON)
@@ -214,6 +257,9 @@ set(CPACK_DEBIAN_PACKAGE_SECTION "admin")
 # iputils-arping (not the conflicting Thomas-Habets `arping` package): the daemon invokes
 # `arping -A/-U -c N -I <iface> <addr>`, which is the iputils arping CLI.
 set(CPACK_DEBIAN_PACKAGE_DEPENDS "iproute2, iputils-arping")
+if(EASY_FAILOVER_WITH_DASHBOARD)
+    string(APPEND CPACK_DEBIAN_PACKAGE_DEPENDS ", nodejs (>= 18.18.0)")
+endif()
 set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "${CPACK_PACKAGE_HOMEPAGE_URL}")
 set(CPACK_DEBIAN_FILE_NAME "DEB-DEFAULT")
 set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
@@ -223,6 +269,9 @@ set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
 set(CPACK_RPM_PACKAGE_LICENSE "Apache-2.0")
 set(CPACK_RPM_PACKAGE_GROUP "Applications/System")
 set(CPACK_RPM_PACKAGE_REQUIRES "iproute, iputils")
+if(EASY_FAILOVER_WITH_DASHBOARD)
+    string(APPEND CPACK_RPM_PACKAGE_REQUIRES ", nodejs >= 1:18.18")
+endif()
 set(CPACK_RPM_PACKAGE_URL "${CPACK_PACKAGE_HOMEPAGE_URL}")
 set(CPACK_RPM_FILE_NAME "RPM-DEFAULT")
 set(CPACK_RPM_POST_INSTALL_SCRIPT_FILE "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rpm/postinst.sh")

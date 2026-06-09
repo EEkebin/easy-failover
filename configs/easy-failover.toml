@@ -27,11 +27,16 @@ preempt = true
 quorum_size = 0
 
 [api]
-enabled = false
+# Read-only status API on localhost, on by default so the bundled dashboard works
+# out of the box. It exposes no privileged actions. To reach it from a remote
+# dashboard, change bind to a routable address and front it with a proxy/SSH tunnel.
+enabled = true
 bind = "127.0.0.1:8743"
 read_only = true
 
 [mutation_safety]
+# Real VIP movement stays OFF by default. Enable only after validating the node
+# config, capabilities, and failover behavior in your environment.
 allow_network_mutation = false
 
 [[peers]]

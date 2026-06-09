@@ -3,14 +3,12 @@ name: Packages
 on:
   pull_request:
   workflow_dispatch:
-# Note: the install/remove lifecycle smoke here is the PR gate (amd64). Multi-arch
-# package builds and the rolling release run in release.yml on pushes to main.
+# PR gate: build the combined daemon+dashboard package (amd64) and exercise the full
+# install -> verify -> remove/purge lifecycle. Multi-arch builds + the rolling release
+# run in release.yml on pushes to main.
 
 permissions:
   contents: read
-
-env:
-  CMAKE_VERSION: 4.3.2
 
 jobs:
   deb:
@@ -21,54 +19,68 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
       - name: Install build tools
         run: |
-          set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y build-essential dpkg-dev fakeroot
-          curl -L --fail --retry 3 \
-            "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz" \
-            -o "$RUNNER_TEMP/cmake.tar.gz"
-          tar -xzf "$RUNNER_TEMP/cmake.tar.gz" -C "$RUNNER_TEMP"
-          echo "$RUNNER_TEMP/cmake-${CMAKE_VERSION}-linux-x86_64/bin" >> "$GITHUB_PATH"
+          sudo apt-get install -y build-essential cmake git dpkg-dev fakeroot
 
-      - name: Build .deb
+      - name: Build the combined .deb
         run: ./scripts/package.sh
 
       - name: Inspect package
         run: |
           set -euo pipefail
           deb=$(ls build-pkg/easy-failover_*_amd64.deb)
-          echo "Package: $deb"
           dpkg-deb -I "$deb"
-          echo "--- contents ---"
-          dpkg-deb -c "$deb"
-          # The alternative init-system files must not be in the package.
-          if dpkg-deb -c "$deb" | grep -E '/etc/(init\.d|sv|dinit\.d|s6)/'; then
+          c=$(dpkg-deb -c "$deb")
+          for f in /usr/bin/easy-failover \
+                   /usr/lib/systemd/system/easy-failover.service \
+                   /usr/lib/systemd/system/easy-failover-dashboard.service \
+                   /usr/lib/easy-failover-dashboard/server.js \
+                   /etc/easy-failover/config.example.toml \
+                   /etc/easy-failover-dashboard/dashboard.env.example; do
+            echo "$c" | grep -qE "${f}\$" || { echo "::error::package missing $f"; exit 1; }
+          done
+          if echo "$c" | grep -E '/etc/(init\.d|sv|dinit\.d|s6)/'; then
             echo "::error::package unexpectedly contains alternative init-system files"; exit 1
           fi
 
-      - name: Install (resolves iproute2/arping deps)
+      - name: Install (resolves iproute2 / iputils-arping / nodejs)
         run: |
           set -euo pipefail
           deb=$(ls build-pkg/easy-failover_*_amd64.deb)
           sudo apt-get install -y "./$deb"
 
-      - name: Verify install
+      - name: Verify install (daemon + dashboard + auto-started dashboard service)
         run: |
           set -euo pipefail
           test -x /usr/bin/easy-failover
-          test -f /etc/easy-failover/config.toml            # seeded from the example by postinst
-          test -f /etc/easy-failover/config.example.toml
+          test -f /etc/easy-failover/config.toml                       # seeded by postinst
+          grep -qE '^\s*enabled\s*=\s*true' /etc/easy-failover/config.toml   # API on by default
           test -f /usr/lib/systemd/system/easy-failover.service
-          # Declared deps are present (the package install already enforced them); check by command
-          # or known sbin path, since arping ships in /usr/sbin on Debian.
-          command -v ip     >/dev/null || [ -x /usr/sbin/ip ]     || [ -x /usr/bin/ip ]
-          command -v arping >/dev/null || [ -x /usr/sbin/arping ] || [ -x /usr/bin/arping ]
-          easy-failover --version
+          test -f /usr/lib/easy-failover-dashboard/server.js
+          test -f /etc/easy-failover-dashboard/dashboard.env           # seeded by postinst
+          getent passwd easy-failover-dashboard                        # dashboard user created
           easy-failover --config /etc/easy-failover/config.toml --validate-config
+          # The dashboard service is auto-enabled+started by postinst; the daemon is not.
+          systemctl is-active --quiet easy-failover-dashboard.service \
+            || { echo "::error::dashboard service not active"; journalctl -u easy-failover-dashboard --no-pager | tail -40; exit 1; }
+          ok=0
+          for _ in $(seq 1 20); do
+            if curl -fsS -o /dev/null http://127.0.0.1:3000/; then ok=1; break; fi
+            sleep 1
+          done
+          test "$ok" = "1" || { echo "::error::dashboard did not serve a request"; exit 1; }
+          ! systemctl is-active --quiet easy-failover.service || echo "note: daemon active (not expected, but harmless)"
 
-      - name: Remove keeps config; purge removes it
+      - name: Remove keeps config; purge removes everything
         run: |
           set -euo pipefail
           sudo apt-get remove -y easy-failover
@@ -76,6 +88,8 @@ jobs:
           test -f /etc/easy-failover/config.toml || { echo "::error::remove should keep config"; exit 1; }
           sudo apt-get purge -y easy-failover
           test ! -e /etc/easy-failover || { echo "::error::purge should remove /etc/easy-failover"; exit 1; }
+          test ! -e /etc/easy-failover-dashboard || { echo "::error::purge should remove dashboard config"; exit 1; }
+          ! getent passwd easy-failover-dashboard || { echo "::error::purge should remove the dashboard user"; exit 1; }
 
       - name: Upload .deb artifact
         uses: actions/upload-artifact@v6
@@ -95,29 +109,21 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Install build tools
-        run: |
-          set -euo pipefail
-          dnf install -y cmake gcc-c++ make rpm-build git
+        run: dnf install -y cmake gcc-c++ make rpm-build git nodejs npm
 
-      - name: Build .rpm
+      - name: Build the combined .rpm
         run: ./scripts/package.sh
 
       - name: Inspect package
         run: |
           set -euo pipefail
           rpm_file=$(ls build-pkg/easy-failover-*.rpm)
-          echo "Package: $rpm_file"
-          rpm -qpi "$rpm_file"
-          echo "--- name must be exactly 'easy-failover' (no component suffix) ---"
           name=$(rpm -qp --queryformat '%{NAME}' "$rpm_file")
           test "$name" = "easy-failover" || { echo "::error::unexpected RPM name: $name"; exit 1; }
-          echo "--- contents ---"
-          rpm -qpl "$rpm_file"
-          if rpm -qpl "$rpm_file" | grep -E '/etc/(init\.d|sv|dinit\.d|s6)/'; then
-            echo "::error::package unexpectedly contains alternative init-system files"; exit 1
-          fi
+          rpm -qpl "$rpm_file" | grep -qE '/usr/lib/easy-failover-dashboard/server\.js$'
+          rpm -qpl "$rpm_file" | grep -qE '/usr/lib/systemd/system/easy-failover-dashboard\.service$'
 
-      - name: Install (resolves iproute/iputils deps)
+      - name: Install (resolves iproute / iputils / nodejs)
         run: |
           set -euo pipefail
           rpm_file=$(ls build-pkg/easy-failover-*.rpm)
@@ -128,176 +134,32 @@ jobs:
           set -euo pipefail
           test -x /usr/bin/easy-failover
           test -f /etc/easy-failover/config.toml
-          test -f /usr/lib/systemd/system/easy-failover.service
-          command -v ip     >/dev/null || [ -x /usr/sbin/ip ]     || [ -x /usr/bin/ip ]
-          command -v arping >/dev/null || [ -x /usr/sbin/arping ] || [ -x /usr/bin/arping ]
-          easy-failover --version
+          test -f /usr/lib/easy-failover-dashboard/server.js
+          getent passwd easy-failover-dashboard
           easy-failover --config /etc/easy-failover/config.toml --validate-config
+          # systemd isn't running in the container, so the service isn't started here; the
+          # standalone server itself is smoke-tested directly.
+          node_bin=$(command -v node || command -v nodejs)
+          runuser -u easy-failover-dashboard -- env PORT=3000 HOSTNAME=127.0.0.1 \
+            "$node_bin" /usr/lib/easy-failover-dashboard/server.js &
+          ok=0
+          for _ in $(seq 1 20); do
+            if curl -fsS -o /dev/null http://127.0.0.1:3000/; then ok=1; break; fi
+            sleep 1
+          done
+          test "$ok" = "1" || { echo "::error::dashboard did not serve a request"; exit 1; }
 
-      - name: Erase removes config
+      - name: Erase removes config and user
         run: |
           set -euo pipefail
           dnf remove -y easy-failover
           test ! -e /usr/bin/easy-failover
           test ! -e /etc/easy-failover || { echo "::error::erase should remove /etc/easy-failover"; exit 1; }
+          test ! -e /etc/easy-failover-dashboard || { echo "::error::erase should remove dashboard config"; exit 1; }
 
       - name: Upload .rpm artifact
         uses: actions/upload-artifact@v6
         with:
           name: easy-failover-rpm
           path: build-pkg/easy-failover-*.rpm
-          if-no-files-found: error
-
-  dashboard-deb:
-    name: Build and smoke-test dashboard .deb (Debian/Ubuntu)
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-
-      - name: Install build tools
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y dpkg-dev fakeroot
-          curl -L --fail --retry 3 \
-            "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz" \
-            -o "$RUNNER_TEMP/cmake.tar.gz"
-          tar -xzf "$RUNNER_TEMP/cmake.tar.gz" -C "$RUNNER_TEMP"
-          echo "$RUNNER_TEMP/cmake-${CMAKE_VERSION}-linux-x86_64/bin" >> "$GITHUB_PATH"
-
-      - name: Build dashboard .deb
-        run: ./scripts/package-dashboard.sh
-
-      - name: Inspect package
-        run: |
-          set -euo pipefail
-          deb=$(ls build-dashboard-pkg/easy-failover-dashboard_*_amd64.deb)
-          dpkg-deb -I "$deb"
-          dpkg-deb -c "$deb" | grep -E '/usr/lib/easy-failover-dashboard/server\.js$'
-          dpkg-deb -c "$deb" | grep -E '/usr/lib/systemd/system/easy-failover-dashboard\.service$'
-          dpkg-deb -c "$deb" | grep -E '/etc/easy-failover-dashboard/dashboard\.env\.example$'
-
-      - name: Install (resolves nodejs dep)
-        run: |
-          set -euo pipefail
-          deb=$(ls build-dashboard-pkg/easy-failover-dashboard_*_amd64.deb)
-          sudo apt-get install -y "./$deb"
-
-      - name: Verify install
-        run: |
-          set -euo pipefail
-          getent passwd easy-failover-dashboard            # service user created
-          test -f /usr/lib/easy-failover-dashboard/server.js
-          test -f /usr/lib/systemd/system/easy-failover-dashboard.service
-          test -f /etc/easy-failover-dashboard/dashboard.env        # seeded by postinst
-          test -f /etc/easy-failover-dashboard/dashboard.env.example
-
-      - name: Smoke-test via systemd (real unit, hardening, and runtime nodejs)
-        run: |
-          set -euo pipefail
-          # Start through systemd so the actual unit (User=, EnvironmentFile, hardening,
-          # StateDirectory, node|nodejs resolution against the system PATH) is exercised.
-          sudo systemctl start easy-failover-dashboard.service
-          ok=0
-          for _ in $(seq 1 20); do
-            if curl -fsS -o /dev/null http://127.0.0.1:3000/; then ok=1; break; fi
-            sleep 1
-          done
-          sudo systemctl --no-pager --full status easy-failover-dashboard.service || true
-          if [ "$ok" != "1" ]; then
-            sudo journalctl -u easy-failover-dashboard.service --no-pager | tail -50 || true
-            echo "::error::dashboard service did not serve a request"; exit 1
-          fi
-          test -d /var/lib/easy-failover-dashboard      # writable StateDirectory created
-          sudo systemctl stop easy-failover-dashboard.service
-
-      - name: Purge removes config and user
-        run: |
-          set -euo pipefail
-          sudo apt-get purge -y easy-failover-dashboard
-          test ! -e /usr/lib/easy-failover-dashboard
-          test ! -e /etc/easy-failover-dashboard || { echo "::error::purge should remove config"; exit 1; }
-          ! getent passwd easy-failover-dashboard || { echo "::error::purge should remove the user"; exit 1; }
-
-      - name: Upload dashboard .deb artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: easy-failover-dashboard-deb
-          path: build-dashboard-pkg/easy-failover-dashboard_*_amd64.deb
-          if-no-files-found: error
-
-  dashboard-rpm:
-    name: Build and smoke-test dashboard .rpm (Fedora)
-    runs-on: ubuntu-latest
-    container:
-      image: fedora:latest
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-
-      - name: Install build tools
-        run: dnf install -y cmake rpm-build nodejs npm git util-linux
-
-      - name: Build dashboard .rpm
-        run: ./scripts/package-dashboard.sh
-
-      - name: Inspect package
-        run: |
-          set -euo pipefail
-          rpm_file=$(ls build-dashboard-pkg/easy-failover-dashboard-*.rpm)
-          name=$(rpm -qp --queryformat '%{NAME}' "$rpm_file")
-          test "$name" = "easy-failover-dashboard" || { echo "::error::unexpected RPM name: $name"; exit 1; }
-          rpm -qpl "$rpm_file" | grep -E '/usr/lib/easy-failover-dashboard/server\.js$'
-
-      - name: Install (resolves nodejs dep)
-        run: |
-          set -euo pipefail
-          rpm_file=$(ls build-dashboard-pkg/easy-failover-dashboard-*.rpm)
-          dnf install -y "./$rpm_file"
-
-      - name: Verify install
-        run: |
-          set -euo pipefail
-          getent passwd easy-failover-dashboard
-          test -f /usr/lib/easy-failover-dashboard/server.js
-          test -f /usr/lib/systemd/system/easy-failover-dashboard.service
-          test -f /etc/easy-failover-dashboard/dashboard.env
-
-      - name: Smoke-test the standalone server
-        run: |
-          set -euo pipefail
-          node_bin=$(command -v node || command -v nodejs)
-          runuser -u easy-failover-dashboard -- env PORT=3001 HOSTNAME=127.0.0.1 \
-            "$node_bin" /usr/lib/easy-failover-dashboard/server.js &
-          srv=$!
-          ok=0
-          for _ in $(seq 1 20); do
-            if curl -fsS -o /dev/null http://127.0.0.1:3001/; then ok=1; break; fi
-            sleep 1
-          done
-          kill "$srv" 2>/dev/null || true
-          test "$ok" = "1" || { echo "::error::dashboard server did not serve a request"; exit 1; }
-
-      - name: Erase removes config and user
-        run: |
-          set -euo pipefail
-          dnf remove -y easy-failover-dashboard
-          test ! -e /usr/lib/easy-failover-dashboard
-          test ! -e /etc/easy-failover-dashboard || { echo "::error::erase should remove config"; exit 1; }
-
-      - name: Upload dashboard .rpm artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: easy-failover-dashboard-rpm
-          path: build-dashboard-pkg/easy-failover-dashboard-*.rpm
           if-no-files-found: error

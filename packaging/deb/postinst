@@ -1,5 +1,5 @@
 #!/bin/sh
-# Debian/Ubuntu post-install: seed an active config and refresh systemd.
+# Debian/Ubuntu post-install: seed config, refresh systemd, set up the bundled dashboard.
 set -e
 
 case "$1" in
@@ -11,11 +11,32 @@ case "$1" in
             cp /etc/easy-failover/config.example.toml /etc/easy-failover/config.toml
             chmod 0644 /etc/easy-failover/config.toml
         fi
+
+        # Bundled dashboard (present only when the package was built with it): create its
+        # unprivileged user, seed its env, and enable+start it. It is read-only and binds to
+        # localhost, so it is safe to start immediately; it reads the daemon's local API
+        # (enabled by default in the seeded config).
+        if [ -e /usr/lib/easy-failover-dashboard/server.js ]; then
+            if ! getent passwd easy-failover-dashboard >/dev/null 2>&1; then
+                useradd --system --no-create-home --shell /usr/sbin/nologin \
+                    --comment "easy-failover dashboard" easy-failover-dashboard || true
+            fi
+            if [ ! -e /etc/easy-failover-dashboard/dashboard.env ] \
+                && [ -e /etc/easy-failover-dashboard/dashboard.env.example ]; then
+                cp /etc/easy-failover-dashboard/dashboard.env.example \
+                    /etc/easy-failover-dashboard/dashboard.env
+                chmod 0644 /etc/easy-failover-dashboard/dashboard.env
+            fi
+        fi
+
         if command -v systemctl >/dev/null 2>&1; then
             systemctl daemon-reload || true
+            if [ -e /usr/lib/easy-failover-dashboard/server.js ]; then
+                systemctl enable --now easy-failover-dashboard.service || true
+            fi
         fi
-        # Intentionally not enabled/started automatically: edit
-        # /etc/easy-failover/config.toml (VIP, peers) and validate it first, then
+        # The daemon is intentionally NOT auto-started: edit /etc/easy-failover/config.toml
+        # (VIP, interface, peers) and validate it first, then
         # `systemctl enable --now easy-failover.service`.
         ;;
 esac
