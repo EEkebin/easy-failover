@@ -21,11 +21,11 @@ package lifecycle.
 
 - **amd64** and **arm64** — built natively (GitHub `ubuntu-24.04` / `ubuntu-24.04-arm` runners), the
   full combined package (`.deb` and `.rpm`).
-- **riscv64** — a **daemon-only `.deb`** (`EASY_FAILOVER_NO_DASHBOARD=1`), built **emulated** (QEMU,
-  Debian container; there are no native riscv64 GitHub runners) and non-blocking in CI. The dashboard
-  is excluded on riscv64: Next.js 16 ships no riscv64 native binding for Turbopack or `next-swc`, and
-  the WASM `next-swc` fallback crashes (`RuntimeError: unreachable`) under emulated riscv64. Revisit
-  if upstream publishes a riscv64 `@next/swc`.
+- **riscv64** — disabled for now. The emulated (QEMU) build is slow, and Next.js 16 ships no riscv64
+  native binding for Turbopack or `next-swc` (the WASM `next-swc` fallback crashes,
+  `RuntimeError: unreachable`, under emulated riscv64), so there is no riscv64 dashboard. The daemon
+  itself still cross-compiles to riscv64 if the build is re-added later (the package can be built
+  daemon-only with `EASY_FAILOVER_NO_DASHBOARD=1`).
 
 ## Scope
 

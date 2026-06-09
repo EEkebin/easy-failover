@@ -3,10 +3,26 @@
 easy-failover uses TOML configuration. The sample config lives at
 `configs/easy-failover.toml`.
 
-The minimal required config is the VIP plus the peer/server pool. Other fields have defaults and
-can be overridden when needed.
+The shipped config is a **clean slate**: no VIP and no peers. The daemon starts and idles until you
+configure it — set the VIP and add peers via the dashboard's onboarding, or edit the config directly
+and restart. Every field has a default, so an empty config is valid (and idle).
 
-## Minimal Config
+## Clean-Slate Config (shipped default)
+
+```toml
+node_id = "node-a"
+priority = 100
+
+[vip]
+address = ""    # leave empty to stay unconfigured / idle
+interface = ""
+
+# No [[peers]] — added later via the dashboard or by editing this file.
+```
+
+## Minimal Working Config
+
+To actually own a VIP and fail over, set the VIP and (optionally) add peers:
 
 ```toml
 [vip]
@@ -40,8 +56,13 @@ address = "10.0.0.50/24"
 interface = "eth0"
 ```
 
-- `address`: required non-empty virtual IP address string; CIDR/prefix-length format (for example `10.0.0.50/24`) is recommended but not currently validated.
-- `interface`: required non-empty Linux network interface name.
+- `address`: the virtual IP address string; CIDR/prefix-length format (for example `10.0.0.50/24`) is recommended but not currently validated. May be left empty to stay unconfigured.
+- `interface`: the Linux network interface name. May be left empty to stay unconfigured.
+
+`address` and `interface` must be set **together**: setting one but not the other is rejected.
+Leaving **both** empty is valid and means "unconfigured" — the daemon runs but idles (no VIP
+operations) until a VIP is configured. This is the shipped default; configure the VIP via the
+dashboard onboarding or by editing this file, then restart the daemon.
 
 VIP movement is guarded by dry-run mode and the mutation safety config. By default, VIP manager
 methods build dry-run `iproute2` and `arping` command requests. Real command requests require both a
@@ -112,14 +133,14 @@ lowest `node_id`. Quorum, preemption, and self-fencing layer on top of that resu
 
 ```toml
 [api]
-enabled = false
-bind = "127.0.0.1:8743"
+enabled = true
+bind = "0.0.0.0:8743"
 read_only = true
 auth_token_file = ""
 ```
 
-- `enabled`: optional boolean. Defaults to `false`.
-- `bind`: optional non-empty string. Defaults to `127.0.0.1:8743` and is required when
+- `enabled`: optional boolean. Defaults to `true` (the dashboard reads this API).
+- `bind`: optional non-empty string. Defaults to `0.0.0.0:8743` (all interfaces) and is required when
   `enabled = true`.
 - `read_only`: optional boolean. Defaults to `true`. Write mode (`read_only = false`) is opt-in and
   fails closed: API startup is rejected unless `auth_token_file` points at a readable, non-empty
@@ -130,28 +151,79 @@ auth_token_file = ""
   by the API or written to logs; `GET /api/v1/config` exposes only whether a token file is
   configured, never its contents.
 
-The local API opens a loopback HTTP listener only when `enabled = true`. In read-only mode it serves
-the read endpoints unauthenticated. In write mode it additionally serves the authenticated
+> **Exposure note — `0.0.0.0`.** The default binds the API to **all** interfaces so a dashboard on
+> another host can reach it. That also means anything that can route to this host can reach the API.
+> In read-only mode it exposes only status/config-shape (no token contents, no privileged actions),
+> but if you do not want it reachable off-box, set `bind = "127.0.0.1:8743"` or firewall the port.
+
+The local API opens an HTTP listener when `enabled = true`. In read-only mode it serves the read
+endpoints unauthenticated. In write mode it additionally serves the authenticated
 `POST /api/v1/config/apply` endpoint, which validates a submitted config and atomically replaces the
 active config (keeping a `config.toml.bak` backup); the change takes effect on the next daemon
 restart. The full endpoint shape is documented in [`local-api-design.md`](local-api-design.md) and
 the auth model in [`write-api-design.md`](write-api-design.md).
 
+### Enabling write mode (the "write token")
+
+By default the API is **read-only**, so the dashboard can show status but cannot change anything. To
+let the dashboard (or `curl`) apply config changes — including the VIP set during onboarding — you
+enable write mode with a **bearer token**. The token is a shared secret: requests that mutate state
+must send it in an `Authorization: Bearer <token>` header.
+
+1. Generate a token and store it where only the daemon can read it:
+
+   ```sh
+   sudo install -d -m 0700 /etc/easy-failover
+   openssl rand -hex 32 | sudo tee /etc/easy-failover/api.token >/dev/null
+   sudo chmod 0600 /etc/easy-failover/api.token
+   ```
+
+2. Point the daemon at it and turn off read-only in `/etc/easy-failover/config.toml`:
+
+   ```toml
+   [api]
+   enabled = true
+   bind = "0.0.0.0:8743"
+   read_only = false
+   auth_token_file = "/etc/easy-failover/api.token"
+   ```
+
+   (If `read_only = false` but `auth_token_file` is missing or empty, the API refuses to start —
+   it fails closed.)
+
+3. Restart the daemon: `sudo systemctl restart easy-failover`.
+
+4. Give the dashboard the same token. The dashboard reads it from an **environment variable** (its
+   roster entry references the variable *name* via `tokenEnv`, never the token itself); set that
+   variable in `/etc/easy-failover-dashboard/dashboard.env` and restart
+   `easy-failover-dashboard`. See [`dashboard-service.md`](dashboard-service.md).
+
+`curl` example for a write request:
+
+```sh
+TOKEN="$(sudo cat /etc/easy-failover/api.token)"
+curl -fsS -X POST http://127.0.0.1:8743/api/v1/config/apply \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -d '{"format":"toml","config":"..."}'
+```
+
 ## Mutation Safety
 
 ```toml
 [mutation_safety]
-allow_network_mutation = false
+allow_network_mutation = true
 ```
 
 - `allow_network_mutation`: optional boolean that permits non-dry-run VIP manager command requests
-  only when the runtime is also not in dry-run mode. Defaults to `false`.
+  only when the runtime is also not in dry-run mode. Defaults to `true`.
 
-The default is intentionally safe: real network mutation is not permitted unless an operator
-explicitly opts in and starts the daemon without `--dry-run`. CLI/runtime dry-run remains an
-overriding safety control even when this setting is `true`. The installed systemd unit runs without
-`--dry-run`, so keep this setting `false` until real VIP movement has been tested in the target
-environment.
+Real network mutation is **on by default** so a configured node actually moves the VIP. This is
+safe on a fresh install because the shipped config is unconfigured (no VIP), so the daemon idles and
+performs **no** network operations until you set a VIP. CLI/runtime `--dry-run` remains an overriding
+safety control even when this setting is `true`: start the daemon with `--dry-run` to rehearse
+without touching the network. Set `allow_network_mutation = false` if you want a node that runs and
+participates but never performs real VIP add/remove/announce operations.
 
 When real mutation is enabled, the runtime still waits through one successful heartbeat cycle before
 allowing real VIP add/remove/announce operations. Heartbeat send or receive errors fail closed
@@ -168,8 +240,9 @@ address = "10.0.0.12:7432"
 - `id`: required non-empty peer node identifier.
 - `address`: required non-empty peer heartbeat IPv4 `host:port` address.
 
-Each peer entry must be a TOML table.
-At least one peer is required.
+Each peer entry must be a TOML table. Peers are **optional**: zero peers is valid (a clean-slate or
+single-node config — the node simply has no failover partner). Add peers via the dashboard onboarding
+or by editing this file.
 
 ## Validation Summary
 
@@ -177,12 +250,12 @@ Config validation currently checks:
 
 - `node_id` is not empty after applying the hostname default.
 - `priority` is positive.
-- `vip.address` and `vip.interface` are not empty.
+- `vip.address` and `vip.interface` are set together (both empty = unconfigured/idle is valid;
+  setting only one is rejected).
 - `heartbeat.bind` is not empty.
 - `heartbeat.interval_ms` and `heartbeat.timeout_ms` are positive.
 - `health.interval_ms` and `health.timeout_ms` are positive.
-- at least one peer is configured.
-- each peer has a non-empty `id` and `address`.
+- each peer has a non-empty `id` and `address` (zero peers is allowed).
 - `api.bind` is not empty when `api.enabled = true`.
 
 Missing `[vip]` fails during config loading. `[heartbeat]`, `[health]`, `[election]`, `[api]`, and

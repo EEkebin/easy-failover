@@ -147,11 +147,10 @@ std::vector<std::string> Config::validate() const {
     if (priority <= 0) {
         errors.emplace_back("priority must be positive");
     }
-    if (vip.address.empty()) {
-        errors.emplace_back("vip.address must not be empty");
-    }
-    if (vip.interface.empty()) {
-        errors.emplace_back("vip.interface must not be empty");
+    // A clean-slate config leaves the VIP unset: both vip.address and vip.interface empty means
+    // "unconfigured" (the daemon idles until configured). If one is set, the other must be too.
+    if (vip.address.empty() != vip.interface.empty()) {
+        errors.emplace_back("vip.address and vip.interface must be set together");
     }
     if (heartbeat.bind.empty()) {
         errors.emplace_back("heartbeat.bind must not be empty");
@@ -176,9 +175,8 @@ std::vector<std::string> Config::validate() const {
             errors.emplace_back("peers[].address must not be empty");
         }
     }
-    if (peers.empty()) {
-        errors.emplace_back("at least one peer must be configured");
-    }
+    // Zero peers is allowed: a clean-slate or single-node config (peers are added later, e.g. via
+    // the dashboard). With no peers the node simply has no failover partner.
     if (election.quorum_size < 0) {
         errors.emplace_back("election.quorum_size must not be negative");
     }

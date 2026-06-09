@@ -31,13 +31,14 @@ case "$1" in
 
         if command -v systemctl >/dev/null 2>&1; then
             systemctl daemon-reload || true
+            # Auto-start the daemon. It idles until a VIP is configured (clean-slate config),
+            # so this is safe on a fresh install; configure the VIP/peers via the dashboard or
+            # /etc/easy-failover/config.toml and it begins failover on the next restart.
+            systemctl enable --now easy-failover.service || true
             if [ -e /usr/lib/easy-failover-dashboard/server.js ]; then
                 systemctl enable --now easy-failover-dashboard.service || true
             fi
         fi
-        # The daemon is intentionally NOT auto-started: edit /etc/easy-failover/config.toml
-        # (VIP, interface, peers) and validate it first, then
-        # `systemctl enable --now easy-failover.service`.
         ;;
 esac
 

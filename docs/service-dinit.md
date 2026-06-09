@@ -55,9 +55,10 @@ sudo $EDITOR /etc/easy-failover/config.toml
 easy-failover --config /etc/easy-failover/config.toml --validate-config
 ```
 
-See [`config-reference.md`](config-reference.md) for the full TOML schema. Keep
-`mutation_safety.allow_network_mutation = false` until real VIP movement has been validated in your
-environment, as described in [`failover-safety.md`](failover-safety.md).
+See [`config-reference.md`](config-reference.md) for the full TOML schema. Real VIP mutation is on by
+default, but a clean-slate config (no VIP) idles and touches nothing until you configure it; use
+`--dry-run` to rehearse, or set `mutation_safety.allow_network_mutation = false` to keep a node from
+performing real VIP operations, as described in [`failover-safety.md`](failover-safety.md).
 
 By default the service writes its output to `/var/log/easy-failover.log` (the `logfile` setting). The
 installed description also includes a commented `depends-on = network` line; uncomment and set it to

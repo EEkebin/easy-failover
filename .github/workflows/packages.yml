@@ -59,7 +59,7 @@ jobs:
           deb=$(ls build-pkg/easy-failover_*_amd64.deb)
           sudo apt-get install -y "./$deb"
 
-      - name: Verify install (daemon + dashboard + auto-started dashboard service)
+      - name: Verify install (daemon + dashboard + both services auto-started)
         run: |
           set -euo pipefail
           test -x /usr/bin/easy-failover
@@ -70,16 +70,18 @@ jobs:
           test -f /etc/easy-failover-dashboard/dashboard.env           # seeded by postinst
           getent passwd easy-failover-dashboard                        # dashboard user created
           easy-failover --config /etc/easy-failover/config.toml --validate-config
-          # The dashboard service is auto-enabled+started by postinst; the daemon is not.
+          # Both services are auto-enabled+started by postinst. The daemon idles (clean-slate
+          # config has no VIP) but its process stays up, so the unit is active.
           systemctl is-active --quiet easy-failover-dashboard.service \
             || { echo "::error::dashboard service not active"; journalctl -u easy-failover-dashboard --no-pager | tail -40; exit 1; }
+          systemctl is-active --quiet easy-failover.service \
+            || { echo "::error::daemon service not active"; journalctl -u easy-failover --no-pager | tail -40; exit 1; }
           ok=0
           for _ in $(seq 1 20); do
             if curl -fsS -o /dev/null http://127.0.0.1:3000/; then ok=1; break; fi
             sleep 1
           done
           test "$ok" = "1" || { echo "::error::dashboard did not serve a request"; exit 1; }
-          ! systemctl is-active --quiet easy-failover.service || echo "note: daemon active (not expected, but harmless)"
 
       - name: Remove keeps config; purge removes everything
         run: |

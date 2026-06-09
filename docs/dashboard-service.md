@@ -14,8 +14,11 @@ Installing the `easy-failover` `.deb`/`.rpm` lays down, alongside the daemon, th
 self-contained Next.js standalone server at `/usr/lib/easy-failover-dashboard`, its
 unit `easy-failover-dashboard.service`, and seeds `/etc/easy-failover-dashboard/dashboard.env`
 from the example. The package depends on `nodejs`. **The dashboard service is enabled
-and started automatically on install** (it's read-only and binds to localhost), and the
-daemon's local API is on by default, so the dashboard works out of the box.
+and started automatically on install**, and the daemon's local API is on by default, so
+the dashboard works out of the box. Both default to binding `0.0.0.0` (all interfaces) so
+the dashboard is reachable from other hosts; the dashboard ships read-only. If you don't
+want it exposed off-box, set `HOSTNAME=127.0.0.1` in the dashboard env (and/or
+`api.bind = "127.0.0.1:8743"` for the daemon) or firewall the ports.
 
 Configure it by editing the env file (listen address, which nodes to show, onboarding
 gate) and restarting:
@@ -68,7 +71,8 @@ Changing it later requires rebuilding the dashboard.
 
 To serve the dashboard on a node and point it at that node's local API, run the
 daemon on that node with `api.enabled = true` (the API binds to
-`127.0.0.1:8743` by default), and build with the matching base:
+`0.0.0.0:8743` by default, reachable as `127.0.0.1:8743` from the same host), and
+build with the matching base:
 
 ```sh
 cd web
