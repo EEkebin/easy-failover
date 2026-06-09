@@ -199,32 +199,9 @@ jobs:
           path: build-pkg/easy-failover_*.deb
           if-no-files-found: warn
 
-  dashboard-deb-riscv64:
-    name: Dashboard .deb (riscv64, emulated, experimental)
-    needs: version
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v6
-      - uses: docker/setup-qemu-action@v3
-      - name: Build riscv64 dashboard .deb (webpack bundler; Turbopack has no riscv64 bindings)
-        env:
-          PKG_VERSION: ${{ needs.version.outputs.version }}
-        run: |
-          docker run --rm --platform linux/riscv64 \
-            -e PKG_VERSION="${PKG_VERSION}" \
-            -e DASHBOARD_BUILD_FLAGS="--webpack" \
-            -v "$PWD":/src -w /src debian:trixie bash -c '
-              set -e
-              apt-get update
-              apt-get install -y cmake git dpkg-dev fakeroot ca-certificates nodejs npm
-              ./scripts/package-dashboard.sh
-            '
-      - uses: actions/upload-artifact@v6
-        with:
-          name: dashboard-deb-riscv64
-          path: build-dashboard-pkg/easy-failover-dashboard_*.deb
-          if-no-files-found: warn
+  # Note: there is no riscv64 dashboard job. Next.js 16 has no riscv64 native binding for either
+  # Turbopack or next-swc; the WASM swc fallback crashes (`RuntimeError: unreachable`) under emulated
+  # riscv64. Revisit if upstream ships a riscv64 @next/swc. The riscv64 daemon package is built above.
 
   # ---- Publish --------------------------------------------------------------------------------
   publish:
@@ -236,7 +213,6 @@ jobs:
       - dashboard-deb
       - dashboard-rpm
       - daemon-deb-riscv64
-      - dashboard-deb-riscv64
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

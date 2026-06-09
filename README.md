@@ -82,9 +82,10 @@ Prebuilt `.deb` and `.rpm` packages are published to GitHub:
   tracks every push to `main` (version `YYYY.MM.DD.<build>`, e.g. `2026.06.08.342`);
 - tagged [stable releases](https://github.com/EEkebin/easy-failover/releases) (`vX.Y.Z`).
 
-Packages are built for **amd64** and **arm64** (riscv64 `.deb` is experimental). Download one for your
-architecture and install it with your package manager, or build a package yourself — either way the
-package manager pulls in the runtime dependencies (`iproute2`, `arping`):
+Packages are built for **amd64** and **arm64** (daemon + dashboard); the **daemon** also has an
+experimental **riscv64** `.deb` (no riscv64 dashboard — the Next.js toolchain has no riscv64 build
+yet). Download one for your architecture and install it with your package manager, or build a package
+yourself — either way the package manager pulls in the runtime dependencies (`iproute2`, `arping`):
 
 ```sh
 ./scripts/package.sh        # produces build-pkg/easy-failover_<ver>_amd64.deb (+ .rpm where rpmbuild exists)
