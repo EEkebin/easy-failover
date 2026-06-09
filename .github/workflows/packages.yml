@@ -2,10 +2,9 @@ name: Packages
 
 on:
   pull_request:
-  push:
-    branches:
-      - main
   workflow_dispatch:
+# Note: the install/remove lifecycle smoke here is the PR gate (amd64). Multi-arch
+# package builds and the rolling release run in release.yml on pushes to main.
 
 permissions:
   contents: read
