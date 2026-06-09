@@ -22,10 +22,16 @@ fi
 
 if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload || true
-    # Auto-start the daemon; it idles until a VIP is configured (clean-slate config).
-    systemctl enable --now easy-failover.service || true
+    # Auto-start the daemon; it idles until a VIP is configured (clean-slate config). Clear any
+    # failed/start-limited state from a previous version, then enable (for boot) and start
+    # separately so a tripped `enable` still leaves the unit running.
+    systemctl reset-failed easy-failover.service 2>/dev/null || true
+    systemctl enable easy-failover.service 2>/dev/null || true
+    systemctl start easy-failover.service || true
     if [ -e /usr/lib/easy-failover-dashboard/server.js ]; then
-        systemctl enable --now easy-failover-dashboard.service || true
+        systemctl reset-failed easy-failover-dashboard.service 2>/dev/null || true
+        systemctl enable easy-failover-dashboard.service 2>/dev/null || true
+        systemctl start easy-failover-dashboard.service || true
     fi
 fi
 exit 0
