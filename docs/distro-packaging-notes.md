@@ -96,7 +96,10 @@ for the package build. Deployments that enable real VIP movement also require:
 - systemd when installing and enabling the packaged service unit.
 
 The packages declare these as hard runtime dependencies so the package manager installs them
-alongside the daemon: Debian/Ubuntu `Depends: iproute2, arping`; RPM `Requires: iproute, iputils`.
+alongside the daemon: Debian/Ubuntu `Depends: iproute2, iputils-arping`; RPM `Requires: iproute,
+iputils`. The daemon's `arping -A/-U -I <iface>` invocation is the **iputils** arping CLI, so the
+dependency is `iputils-arping` — not the conflicting Thomas-Habets `arping` package, which uses
+different flags (`-i` for the interface).
 They are required for any host that performs real VIP movement; declaring them up front avoids a
 runtime failure the first time mutation is enabled.
 
