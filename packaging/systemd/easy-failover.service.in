@@ -15,6 +15,9 @@ CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
 NoNewPrivileges=true
 ProtectSystem=strict
+# The write API rewrites config.toml (+ a .bak) in place on apply, so the config dir must
+# stay writable under ProtectSystem=strict. Everything else remains read-only.
+ReadWritePaths=@EASY_FAILOVER_SYSTEMD_SYSCONFDIR@/easy-failover
 ProtectHome=true
 PrivateTmp=true
 PrivateDevices=true
