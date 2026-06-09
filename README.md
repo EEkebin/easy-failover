@@ -85,7 +85,13 @@ Prebuilt `.deb` and `.rpm` packages are published to GitHub:
 Packages are built for **amd64** and **arm64** (daemon + dashboard); the **daemon** also has an
 experimental **riscv64** `.deb` (no riscv64 dashboard — the Next.js toolchain has no riscv64 build
 yet). Download one for your architecture and install it with your package manager, or build a package
-yourself — either way the package manager pulls in the runtime dependencies (`iproute2`, `arping`):
+yourself — either way the package manager pulls in the runtime dependencies (`iproute2`,
+`iputils-arping`, and `nodejs >= 20.9` for the dashboard).
+
+> The bundled dashboard needs **Node.js ≥ 20.9** (Next.js 16). Most current distros ship a new-enough
+> Node, but some older LTS releases (e.g. Ubuntu 24.04, default Node 18) don't — there, add a newer
+> Node (e.g. NodeSource) before installing, or build a daemon-only package with
+> `EASY_FAILOVER_NO_DASHBOARD=1 ./scripts/package.sh`.
 
 ```sh
 ./scripts/package.sh        # produces build-pkg/easy-failover_<ver>_amd64.deb (+ .rpm where rpmbuild exists)
