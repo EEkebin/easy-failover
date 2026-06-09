@@ -19,17 +19,16 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-
-      - name: Install build tools
+      - name: Install build tools (incl. Node 22 from NodeSource for the dashboard)
         run: |
+          set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake git dpkg-dev fakeroot
+          sudo apt-get install -y build-essential cmake git dpkg-dev fakeroot curl ca-certificates
+          # Ubuntu 24.04 LTS apt ships Node 18; the bundled dashboard (Next.js 16) needs >= 20.9,
+          # so use NodeSource Node 22 (what a user on an older LTS would also do). This provides
+          # the apt `nodejs` that satisfies the package dependency and runs the service.
+          curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+          sudo apt-get install -y nodejs
 
       - name: Build the combined .deb
         run: ./scripts/package.sh
@@ -40,15 +39,17 @@ jobs:
           deb=$(ls build-pkg/easy-failover_*_amd64.deb)
           dpkg-deb -I "$deb"
           c=$(dpkg-deb -c "$deb")
+          # Use here-strings (not `echo | grep -q`): grep -q closes the pipe on first match and
+          # the upstream echo then fails with EPIPE, which `set -o pipefail` turns into a false error.
           for f in /usr/bin/easy-failover \
                    /usr/lib/systemd/system/easy-failover.service \
                    /usr/lib/systemd/system/easy-failover-dashboard.service \
                    /usr/lib/easy-failover-dashboard/server.js \
                    /etc/easy-failover/config.example.toml \
                    /etc/easy-failover-dashboard/dashboard.env.example; do
-            echo "$c" | grep -qE "${f}\$" || { echo "::error::package missing $f"; exit 1; }
+            grep -qE "${f}\$" <<<"$c" || { echo "::error::package missing $f"; exit 1; }
           done
-          if echo "$c" | grep -E '/etc/(init\.d|sv|dinit\.d|s6)/'; then
+          if grep -qE '/etc/(init\.d|sv|dinit\.d|s6)/' <<<"$c"; then
             echo "::error::package unexpectedly contains alternative init-system files"; exit 1
           fi
 
@@ -120,8 +121,9 @@ jobs:
           rpm_file=$(ls build-pkg/easy-failover-*.rpm)
           name=$(rpm -qp --queryformat '%{NAME}' "$rpm_file")
           test "$name" = "easy-failover" || { echo "::error::unexpected RPM name: $name"; exit 1; }
-          rpm -qpl "$rpm_file" | grep -qE '/usr/lib/easy-failover-dashboard/server\.js$'
-          rpm -qpl "$rpm_file" | grep -qE '/usr/lib/systemd/system/easy-failover-dashboard\.service$'
+          files=$(rpm -qpl "$rpm_file")
+          grep -qE '/usr/lib/easy-failover-dashboard/server\.js$' <<<"$files"
+          grep -qE '/usr/lib/systemd/system/easy-failover-dashboard\.service$' <<<"$files"
 
       - name: Install (resolves iproute / iputils / nodejs)
         run: |
