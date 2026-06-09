@@ -42,9 +42,12 @@ easy-failover runs as a daemon on each node in a pool. It:
   network learns the new location fast.
 - **Exposes an optional read-only local API** for status, backing an optional web dashboard.
 
-**Safety first.** Real VIP changes are gated behind two independent controls — runtime dry-run
-mode and `mutation_safety.allow_network_mutation` — both off by default. You can run the full
-decision loop in dry-run and watch what it *would* do before letting it touch the network.
+**Safety first.** Real VIP changes are gated behind runtime dry-run mode and
+`mutation_safety.allow_network_mutation`. Mutation is **on by default**, but the package ships a
+**clean-slate config with no VIP**, so a freshly installed daemon starts and *idles* — it performs
+no network operations until you configure a VIP (via the dashboard onboarding or the config file).
+You can still run the full decision loop in dry-run (`--dry-run`) to watch what it *would* do before
+letting it touch the network.
 
 **Highlights**
 
@@ -82,11 +85,10 @@ Prebuilt `.deb` and `.rpm` packages are published to GitHub:
   tracks every push to `main` (version `YYYY.MM.DD.<build>`, e.g. `2026.06.08.342`);
 - tagged [stable releases](https://github.com/EEkebin/easy-failover/releases) (`vX.Y.Z`).
 
-Packages are built for **amd64** and **arm64** (daemon + dashboard); the **daemon** also has an
-experimental **riscv64** `.deb` (no riscv64 dashboard — the Next.js toolchain has no riscv64 build
-yet). Download one for your architecture and install it with your package manager, or build a package
-yourself — either way the package manager pulls in the runtime dependencies (`iproute2`,
-`iputils-arping`, and `nodejs >= 20.9` for the dashboard).
+Packages are built for **amd64** and **arm64** (daemon + dashboard). Download one for your
+architecture and install it with your package manager, or build a package yourself — either way the
+package manager pulls in the runtime dependencies (`iproute2`, `iputils-arping`, and
+`nodejs >= 20.9` for the dashboard).
 
 > The bundled dashboard needs **Node.js ≥ 20.9** (Next.js 16). Most current distros ship a new-enough
 > Node, but some older LTS releases (e.g. Ubuntu 24.04, default Node 18) don't — there, add a newer
@@ -195,7 +197,8 @@ or the election); **remote/STONITH fencing is not**. For a 2-node cluster, stric
 means a lone survivor will not take over unless you add a witness node or set `election.quorum_size`
 — see [`docs/failover-safety.md`](docs/failover-safety.md).
 
-Real VIP mutation is disabled by default and must be explicitly enabled. **Do not enable it until
-you have validated the node configuration, Linux capabilities, and failover behavior in your own
-target environment.** The software is provided "as is", without warranty of any kind, to the extent
-permitted by the Apache 2.0 license.
+Real VIP mutation is **on by default**, but the daemon ships a clean-slate config (no VIP) and
+**idles** until you configure one, so a fresh install performs no network operations on its own.
+**Validate the node configuration, Linux capabilities, and failover behavior in your own target
+environment before configuring a VIP** — and use `--dry-run` to rehearse first. The software is
+provided "as is", without warranty of any kind, to the extent permitted by the Apache 2.0 license.

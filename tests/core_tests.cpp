@@ -438,7 +438,7 @@ void testConfigValidationRequiredFields(TestRunner& runner) {
     auto config = validConfig();
     config.node_id.clear();
     config.priority = 0;
-    config.vip.address.clear();
+    config.vip.address = "10.0.0.50/24"; // address set but interface empty -> partial VIP (invalid)
     config.vip.interface.clear();
     config.heartbeat.bind.clear();
     config.heartbeat.interval_ms = 0;
@@ -452,8 +452,8 @@ void testConfigValidationRequiredFields(TestRunner& runner) {
     const auto errors = config.validate();
     runner.expect(contains(errors, "node_id must not be empty"), "node_id should be required");
     runner.expect(contains(errors, "priority must be positive"), "positive priority should be required");
-    runner.expect(contains(errors, "vip.address must not be empty"), "VIP address should be required");
-    runner.expect(contains(errors, "vip.interface must not be empty"), "VIP interface should be required");
+    runner.expect(contains(errors, "vip.address and vip.interface must be set together"),
+                  "partial VIP config should be rejected");
     runner.expect(contains(errors, "heartbeat.bind must not be empty"),
                   "heartbeat bind should be required");
     runner.expect(contains(errors, "heartbeat.interval_ms must be positive"),
@@ -775,13 +775,12 @@ void testLocalApiConfigValidateReportsValidationErrors(TestRunner& runner) {
                                                 "priority = 100\n"
                                                 "\n"
                                                 "[vip]\n"
-                                                "address = \"10.0.0.50/24\"\n"
-                                                "interface = \"eth0\"\n"});
+                                                "address = \"10.0.0.50/24\"\n"});
 
     runner.expect(response.outcome == LocalApiConfigValidateOutcome::Completed,
                   "well-formed invalid config should complete validation");
     runner.expect(!response.valid, "invalid candidate config should report invalid");
-    runner.expect(contains(response.errors, "at least one peer must be configured"),
+    runner.expect(contains(response.errors, "vip.address and vip.interface must be set together"),
                   "invalid candidate config should return validation errors");
     runner.expect(response.error_code.empty(),
                   "validation failure should not be modeled as request error");
@@ -1264,12 +1263,13 @@ void testMinimalConfigAppliesDefaults(TestRunner& runner) {
     runner.expect(config.validate().empty(), "minimal config with defaults should validate");
 }
 
-void testConfigRequiresAtLeastOnePeer(TestRunner& runner) {
+void testConfigAllowsZeroPeers(TestRunner& runner) {
     const auto config = loadConfigFromFile("tests/fixtures/config/no-peers.toml");
     const auto errors = config.validate();
 
-    runner.expect(contains(errors, "at least one peer must be configured"),
-                  "config without peers should fail validation");
+    // Zero peers is now allowed (clean-slate / single-node); peers are added later.
+    runner.expect(!contains(errors, "at least one peer must be configured"),
+                  "zero peers should be allowed");
 }
 
 void testConfigRejectsInvalidOptionalScalarType(TestRunner& runner) {
@@ -1304,18 +1304,21 @@ void testSampleConfigLoads(TestRunner& runner) {
 
     runner.expect(config.node_id == "node-a", "sample node_id should load");
     runner.expect(config.priority == 100, "sample priority should load");
-    runner.expect(config.vip.address == "10.0.0.50/24", "sample VIP address should load");
-    runner.expect(config.vip.interface == "eth0", "sample VIP interface should load");
+    // Clean slate: no VIP and no peers are set; the daemon idles until configured.
+    runner.expect(config.vip.address.empty(), "sample VIP address should be empty (clean slate)");
+    runner.expect(config.vip.interface.empty(),
+                  "sample VIP interface should be empty (clean slate)");
     runner.expect(config.heartbeat.bind == "0.0.0.0:7432", "sample heartbeat bind should load");
-    runner.expect(config.health.command == "curl -fsS http://127.0.0.1:8080/health",
-                  "sample health command should load");
+    runner.expect(config.health.command.empty(),
+                  "sample health command should be empty (clean slate)");
     runner.expect(config.election.preempt, "sample election preempt should load");
     runner.expect(!config.election.require_quorum, "sample election quorum should load");
     runner.expect(config.api.enabled, "sample API enabled flag should load (on by default)");
+    runner.expect(config.api.bind == "0.0.0.0:8743", "sample API bind should load (all interfaces)");
     runner.expect(config.api.read_only, "sample API read-only flag should load");
-    runner.expect(!config.mutation_safety.allow_network_mutation,
-                  "sample mutation safety gate should load disabled");
-    runner.expect(config.peers.size() == 2, "sample peers should load");
+    runner.expect(config.mutation_safety.allow_network_mutation,
+                  "sample mutation safety gate should load enabled (on by default)");
+    runner.expect(config.peers.empty(), "sample config should have no peers (clean slate)");
     runner.expect(config.validate().empty(), "loaded sample config should validate");
 }
 
@@ -3010,7 +3013,7 @@ void testDaemonRuntimeLoopUsesDelayForDefaultHeartbeatSendElapsed(TestRunner& ru
                   "default heartbeat send schedule should use inter-iteration delay as elapsed time");
 }
 
-void testDaemonRuntimeLoopRejectsHeartbeatSendWithEmptyPeers(TestRunner& runner) {
+void testDaemonRuntimeLoopAllowsEmptyPeers(TestRunner& runner) {
     FakeVipManager vip_manager;
     auto config = validConfig();
     config.peers.clear();
@@ -3021,14 +3024,14 @@ void testDaemonRuntimeLoopRejectsHeartbeatSendWithEmptyPeers(TestRunner& runner)
                                                        .max_iterations = 1}},
         vip_manager);
 
-    runner.expect(result.iterations_ran == 0,
-                  "daemon runtime loop should not run iterations for empty peers");
-    runner.expect(result.stop_reason == DaemonLoopStopReason::LifecycleFaulted,
-                  "daemon runtime loop should fault invalid empty peer config");
-    runner.expect(contains(result.validation_errors, "at least one peer must be configured"),
-                  "daemon runtime loop should preserve empty peer validation error");
-    runner.expect(result.heartbeat_send_schedules.empty(),
-                  "daemon runtime loop should not schedule heartbeat sends for invalid config");
+    // A VIP-configured single-node config (no peers) is valid: the node simply has no failover
+    // partner. The loop runs instead of faulting.
+    runner.expect(result.iterations_ran == 1,
+                  "daemon runtime loop should run iterations with empty peers");
+    runner.expect(result.stop_reason != DaemonLoopStopReason::LifecycleFaulted,
+                  "daemon runtime loop should not fault on empty peers");
+    runner.expect(!contains(result.validation_errors, "at least one peer must be configured"),
+                  "empty peers should not produce a peer validation error");
 }
 
 void testDaemonRuntimeLoopRecordsHeartbeatReceiveState(TestRunner& runner) {
@@ -3088,7 +3091,7 @@ void testDaemonRuntimeLoopHeartbeatReceiveStateTracksElapsed(TestRunner& runner)
 void testDaemonRuntimeLoopDoesNotRecordHeartbeatReceiveStateForInvalidConfig(TestRunner& runner) {
     FakeVipManager vip_manager;
     auto config = validConfig();
-    config.peers.clear();
+    config.vip.interface.clear(); // partial VIP (address set, interface empty) -> invalid
 
     const auto result = runDaemonRuntimeLoop(
         DaemonLoopRequest{.config = config,
@@ -3443,7 +3446,7 @@ void testDaemonRuntimeLoopPublishesObservedResults(TestRunner& runner) {
 void testDaemonRuntimeLoopDoesNotRecordFailoverDecisionForInvalidConfig(TestRunner& runner) {
     FakeVipManager vip_manager;
     auto config = validConfig();
-    config.peers.clear();
+    config.vip.interface.clear(); // partial VIP (address set, interface empty) -> invalid
 
     const auto result = runDaemonRuntimeLoop(
         DaemonLoopRequest{.config = config,
@@ -4215,8 +4218,9 @@ std::string readWholeFile(const std::string& path) {
 
 const std::string kValidApplyBody =
     R"({"format":"toml","config":"node_id = \"node-a\"\npriority = 100\n\n[vip]\naddress = \"10.0.0.50/24\"\ninterface = \"eth0\"\n\n[[peers]]\nid = \"node-b\"\naddress = \"10.0.0.12:7432\"\n"})";
+// Invalid: a partial VIP (address set, interface missing) — rejected by validate().
 const std::string kInvalidApplyBody =
-    R"({"format":"toml","config":"node_id = \"node-a\"\npriority = 100\n\n[vip]\naddress = \"10.0.0.50/24\"\ninterface = \"eth0\"\n"})";
+    R"({"format":"toml","config":"node_id = \"node-a\"\npriority = 100\n\n[vip]\naddress = \"10.0.0.50/24\"\n"})";
 
 void testConstantTimeTokenEquals(TestRunner& runner) {
     runner.expect(easyfailover::constantTimeTokenEquals("s3cret-token", "s3cret-token"),
@@ -4554,8 +4558,8 @@ int main() {
     runner.run("minimal config applies defaults", [&runner] {
         testMinimalConfigAppliesDefaults(runner);
     });
-    runner.run("config requires at least one peer", [&runner] {
-        testConfigRequiresAtLeastOnePeer(runner);
+    runner.run("config allows zero peers", [&runner] {
+        testConfigAllowsZeroPeers(runner);
     });
     runner.run("config rejects invalid optional scalar type", [&runner] {
         testConfigRejectsInvalidOptionalScalarType(runner);
@@ -4793,8 +4797,8 @@ int main() {
     runner.run("daemon runtime loop uses delay for default heartbeat send elapsed", [&runner] {
         testDaemonRuntimeLoopUsesDelayForDefaultHeartbeatSendElapsed(runner);
     });
-    runner.run("daemon runtime loop rejects heartbeat send with empty peers", [&runner] {
-        testDaemonRuntimeLoopRejectsHeartbeatSendWithEmptyPeers(runner);
+    runner.run("daemon runtime loop allows empty peers", [&runner] {
+        testDaemonRuntimeLoopAllowsEmptyPeers(runner);
     });
     runner.run("daemon runtime loop records heartbeat receive state", [&runner] {
         testDaemonRuntimeLoopRecordsHeartbeatReceiveState(runner);

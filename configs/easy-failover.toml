@@ -1,9 +1,17 @@
+# easy-failover configuration.
+#
+# This is a clean slate: no VIP and no peers are set. The daemon starts and idles
+# until you configure it — set the VIP and add peer nodes via the dashboard's
+# onboarding, or edit this file directly and restart `easy-failover`.
+
 node_id = "node-a"
 priority = 100
 
 [vip]
-address = "10.0.0.50/24"
-interface = "eth0"
+# The virtual IP this node may own, and the interface to put it on. Leave empty to
+# stay unconfigured/idle. Example: address = "10.0.0.50/24", interface = "eth0".
+address = ""
+interface = ""
 
 [heartbeat]
 bind = "0.0.0.0:7432"
@@ -11,38 +19,32 @@ interval_ms = 1000
 timeout_ms = 3000
 
 [health]
-command = "curl -fsS http://127.0.0.1:8080/health"
+# Optional health check; empty means "always healthy" (no check).
+command = ""
 interval_ms = 1000
 timeout_ms = 2000
 
 [election]
-# Enable quorum to require a majority of the cluster to be visible before owning the VIP.
-# A node that loses quorum releases the VIP (self-fencing). Off by default.
+# Require a majority of the cluster to be visible before owning the VIP; a node that
+# loses quorum releases it (self-fencing). Off by default.
 require_quorum = false
 # When false, defer to an existing healthy master instead of preempting it.
 preempt = true
 # Quorum threshold override: 0 = automatic strict majority (floor(N/2)+1, N = peers + 1).
-# For a 2-node cluster, majority is 2 (a lone survivor cannot own); add a witness node, or set
-# quorum_size = 1 to let a lone node own (accepts split-brain risk on a partition).
 quorum_size = 0
 
 [api]
-# Read-only status API on localhost, on by default so the bundled dashboard works
-# out of the box. It exposes no privileged actions. To reach it from a remote
-# dashboard, change bind to a routable address and front it with a proxy/SSH tunnel.
+# Read-only status API, bound to all interfaces so the dashboard (and remote dashboards)
+# can reach it. It exposes no privileged actions while read_only is true. NOTE: 0.0.0.0
+# means the status/config API is reachable from any address that can route to this host;
+# restrict with a firewall if that is not what you want.
 enabled = true
-bind = "127.0.0.1:8743"
+bind = "0.0.0.0:8743"
 read_only = true
 
 [mutation_safety]
-# Real VIP movement stays OFF by default. Enable only after validating the node
-# config, capabilities, and failover behavior in your environment.
-allow_network_mutation = false
+# Real VIP movement is ON by default. The daemon will perform actual `ip addr`/`arping`
+# changes once a VIP is configured. (It still does nothing while unconfigured.)
+allow_network_mutation = true
 
-[[peers]]
-id = "node-b"
-address = "10.0.0.12:7432"
-
-[[peers]]
-id = "node-c"
-address = "10.0.0.13:7432"
+# Peers are added via the dashboard (or here as [[peers]] entries). None by default.

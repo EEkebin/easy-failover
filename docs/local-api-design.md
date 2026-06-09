@@ -8,8 +8,8 @@ enabled and serves the latest daemon snapshot while the runtime loop is active.
 
 The first API implementation should be:
 
-- disabled by default with `api.enabled = false`;
-- bound to `127.0.0.1:8743` by default;
+- enabled by default with `api.enabled = true` (the bundled dashboard reads it);
+- bound to `0.0.0.0:8743` by default (all interfaces, so a remote dashboard can reach it);
 - read-only by default with `api.read_only = true`;
 - versioned under `/api/v1`;
 - JSON only;
@@ -24,8 +24,8 @@ The existing `[api]` config section controls whether the listener starts:
 
 ```toml
 [api]
-enabled = false
-bind = "127.0.0.1:8743"
+enabled = true
+bind = "0.0.0.0:8743"
 read_only = true
 ```
 
@@ -192,7 +192,7 @@ Draft response:
 {
   "valid": false,
   "errors": [
-    "at least one peer is required"
+    "vip.address and vip.interface must be set together"
   ]
 }
 ```

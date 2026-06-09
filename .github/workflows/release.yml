@@ -112,40 +112,13 @@ jobs:
           path: build-pkg/easy-failover-*.rpm
           if-no-files-found: error
 
-  # ---- riscv64 daemon-only .deb (emulated via QEMU; EXPERIMENTAL, non-blocking) --------------
-  # Daemon only: the dashboard's Next.js toolchain has no riscv64 build (no Turbopack/next-swc
-  # native bindings; the WASM fallback crashes under emulation), so EASY_FAILOVER_NO_DASHBOARD=1.
-  deb-riscv64:
-    name: .deb (riscv64, daemon-only, emulated)
-    needs: version
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v6
-      - uses: docker/setup-qemu-action@v3
-      - name: Build riscv64 daemon-only .deb in an emulated Debian container
-        env:
-          PKG_VERSION: ${{ needs.version.outputs.version }}
-        run: |
-          docker run --rm --platform linux/riscv64 \
-            -e PKG_VERSION="${PKG_VERSION}" \
-            -e EASY_FAILOVER_NO_DASHBOARD=1 \
-            -v "$PWD":/src -w /src debian:trixie bash -c '
-              set -e
-              apt-get update
-              apt-get install -y build-essential cmake git dpkg-dev fakeroot ca-certificates
-              ./scripts/package.sh
-            '
-      - uses: actions/upload-artifact@v6
-        with:
-          name: deb-riscv64
-          path: build-pkg/easy-failover_*.deb
-          if-no-files-found: warn
+  # riscv64 is disabled for now (the emulated build is slow). The daemon does cross-compile to
+  # riscv64 via QEMU if re-added later; the dashboard's Next.js toolchain has no riscv64 build.
 
   # ---- Publish --------------------------------------------------------------------------------
   publish:
     name: Publish release
-    needs: [version, deb, rpm, deb-riscv64]
+    needs: [version, deb, rpm]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -173,7 +146,7 @@ jobs:
         run: |
           set -euo pipefail
           title="Rolling build ${VERSION} (${SHORTSHA})"
-          notes="Automated rolling build of \`main\` at ${SHORTSHA} (version ${VERSION}). One combined daemon+dashboard package (.deb/.rpm) for amd64 and arm64, plus daemon-only source tarballs; riscv64 is a daemon-only .deb (experimental, may be absent)."
+          notes="Automated rolling build of \`main\` at ${SHORTSHA} (version ${VERSION}). One combined daemon+dashboard package (.deb/.rpm) for amd64 and arm64, plus daemon-only source tarballs."
           git tag -f latest "${GITHUB_SHA}"
           git push -f origin "refs/tags/latest"
           if gh release view latest --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
@@ -198,4 +171,4 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" dist/* \
             --repo "${GITHUB_REPOSITORY}" \
             --title "${GITHUB_REF_NAME}" \
-            --notes "easy-failover ${VERSION}: combined daemon+dashboard packages (.deb/.rpm) and daemon source tarballs for amd64 and arm64; riscv64 daemon .deb where available."
+            --notes "easy-failover ${VERSION}: combined daemon+dashboard packages (.deb/.rpm) and daemon source tarballs for amd64 and arm64."

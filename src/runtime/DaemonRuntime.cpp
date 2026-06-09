@@ -258,6 +258,18 @@ DaemonLifecycleResult runDaemonLifecycleOnce(const DaemonLifecycleRequest& reque
     result.started = request.initial_state == DaemonLifecycleState::Stopped;
     result.iteration_ran = true;
 
+    // Unconfigured clean slate: no VIP set yet. Idle this iteration — no ownership probe, no
+    // failover decision, no VIP mutation — and keep the service up (not a fault) until an operator
+    // configures vip.address (e.g. via the dashboard) and restarts. This is what lets the daemon
+    // auto-start safely on a fresh install even with mutation enabled.
+    if (request.config.vip.address.empty()) {
+        result.local_status =
+            localStatusFromOwnership(request.config, request.local_healthy, false);
+        result.final_state = DaemonLifecycleState::Stopped;
+        result.detail = "unconfigured: vip.address not set; daemon idle";
+        return result;
+    }
+
     const auto require_dry_run =
         request.options.dry_run || !request.config.mutation_safety.allow_network_mutation;
 
