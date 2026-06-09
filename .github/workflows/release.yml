@@ -112,13 +112,36 @@ jobs:
           path: build-pkg/easy-failover-*.rpm
           if-no-files-found: error
 
+  # ---- Cockpit plugin package (noarch .deb + .rpm) ------------------------------------------
+  cockpit:
+    name: Cockpit plugin package
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Install packaging tools
+        run: sudo apt-get update && sudo apt-get install -y dpkg-dev rpm
+      - name: Build the Cockpit plugin packages
+        env:
+          PKG_VERSION: ${{ needs.version.outputs.version }}
+        run: ./scripts/package-cockpit.sh
+      - uses: actions/upload-artifact@v6
+        with:
+          name: cockpit
+          path: |
+            build-cockpit/easy-failover-cockpit_*_all.deb
+            build-cockpit/easy-failover-cockpit-*.noarch.rpm
+          if-no-files-found: error
+
   # riscv64 is disabled for now (the emulated build is slow). The daemon does cross-compile to
   # riscv64 via QEMU if re-added later; the dashboard's Next.js toolchain has no riscv64 build.
 
   # ---- Publish --------------------------------------------------------------------------------
   publish:
     name: Publish release
-    needs: [version, deb, rpm]
+    needs: [version, deb, rpm, cockpit]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -146,7 +169,7 @@ jobs:
         run: |
           set -euo pipefail
           title="Rolling build ${VERSION} (${SHORTSHA})"
-          notes="Automated rolling build of \`main\` at ${SHORTSHA} (version ${VERSION}). One combined daemon+dashboard package (.deb/.rpm) for amd64 and arm64, plus daemon-only source tarballs."
+          notes="Automated rolling build of \`main\` at ${SHORTSHA} (version ${VERSION}). One combined daemon+dashboard package (.deb/.rpm) for amd64 and arm64, plus daemon-only source tarballs and the optional \`easy-failover-cockpit\` plugin package (noarch .deb/.rpm)."
           git tag -f latest "${GITHUB_SHA}"
           git push -f origin "refs/tags/latest"
           if gh release view latest --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
@@ -171,4 +194,4 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" dist/* \
             --repo "${GITHUB_REPOSITORY}" \
             --title "${GITHUB_REF_NAME}" \
-            --notes "easy-failover ${VERSION}: combined daemon+dashboard packages (.deb/.rpm) and daemon source tarballs for amd64 and arm64."
+            --notes "easy-failover ${VERSION}: combined daemon+dashboard packages (.deb/.rpm) and daemon source tarballs for amd64 and arm64, plus the optional easy-failover-cockpit plugin package (noarch .deb/.rpm)."

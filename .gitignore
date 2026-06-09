@@ -2,6 +2,7 @@
 build/
 build-pkg/
 build-dashboard-pkg/
+build-cockpit/
 cmake-build-*/
 out/
 web/dist-dashboard/

@@ -1,0 +1,16 @@
+{
+    "version": 0,
+    "name": "easy-failover",
+    "menu": {
+        "index": {
+            "label": "Failover",
+            "order": 70,
+            "keywords": [
+                {
+                    "matches": ["failover", "vip", "virtual ip", "easy-failover", "heartbeat"]
+                }
+            ]
+        }
+    },
+    "content-security-policy": "img-src 'self' data:; connect-src 'self' http://127.0.0.1:8743 ws://127.0.0.1:8743"
+}

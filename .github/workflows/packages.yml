@@ -211,3 +211,48 @@ jobs:
           name: easy-failover-rpm
           path: build-pkg/easy-failover-*.rpm
           if-no-files-found: error
+
+  cockpit:
+    name: Build and smoke-test the Cockpit plugin package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate plugin assets
+        run: |
+          set -euo pipefail
+          node --check cockpit/app.js
+          node -e "JSON.parse(require('fs').readFileSync('cockpit/manifest.json','utf8'))"
+
+      - name: Build the Cockpit packages
+        env:
+          PKG_VERSION: "0.0.0"   # hyphen-free: rpm Version forbids '-'
+        run: ./scripts/package-cockpit.sh
+
+      - name: Inspect + install (static assets land under /usr/share/cockpit)
+        run: |
+          set -euo pipefail
+          deb=$(ls build-cockpit/easy-failover-cockpit_*_all.deb)
+          c="$(dpkg-deb -f "$deb")"
+          grep -qE '^Architecture: all$'              <<<"$c" || { echo "::error::not arch:all"; exit 1; }
+          grep -qE '^Depends: .*easy-failover'        <<<"$c" || { echo "::error::missing easy-failover dep"; exit 1; }
+          grep -qE '^Depends: .*cockpit-bridge'       <<<"$c" || { echo "::error::missing cockpit-bridge dep"; exit 1; }
+          for f in manifest.json index.html app.js easy-failover.css; do
+            dpkg-deb -c "$deb" | grep -qE "usr/share/cockpit/easy-failover/${f}\$" \
+              || { echo "::error::package missing $f"; exit 1; }
+          done
+          # Deps (easy-failover, cockpit-bridge) aren't in apt here, so lay the files down
+          # directly to confirm the payload installs cleanly.
+          sudo dpkg -i --force-depends "$deb"
+          test -f /usr/share/cockpit/easy-failover/manifest.json
+          test -f /usr/share/cockpit/easy-failover/app.js
+          sudo dpkg -r --force-depends easy-failover-cockpit
+          test ! -e /usr/share/cockpit/easy-failover/manifest.json
+
+      - name: Upload Cockpit .deb artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: easy-failover-cockpit-deb
+          path: build-cockpit/easy-failover-cockpit_*_all.deb
+          if-no-files-found: error
