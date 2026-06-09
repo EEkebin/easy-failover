@@ -11,7 +11,6 @@ on:
 permissions:
   contents: write
 
-# Serialize per ref; a newer push to main supersedes an in-flight rolling build.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: true
@@ -28,7 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0 # full history for `git rev-list --count`
+          fetch-depth: 0
       - id: v
         run: |
           set -euo pipefail
@@ -39,81 +38,10 @@ jobs:
             refs/tags/*) echo "rolling=false" >> "$GITHUB_OUTPUT" ;;
             *)           echo "rolling=true"  >> "$GITHUB_OUTPUT" ;;
           esac
-          echo "Version: ${version}"
 
-  # ---- Daemon .deb (native amd64 / arm64) ----------------------------------------------------
-  daemon-deb:
-    name: Daemon .deb (${{ matrix.arch }})
-    needs: version
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-24.04
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v6
-      - name: Install build tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake git dpkg-dev fakeroot
-      - name: Build .deb
-        env:
-          PKG_VERSION: ${{ needs.version.outputs.version }}
-        run: ./scripts/package.sh
-      - name: Build tarball
-        env:
-          PKG_VERSION: ${{ needs.version.outputs.version }}
-        run: |
-          set -euo pipefail
-          arch="$(uname -m)"
-          name="easy-failover-linux-${arch}"
-          DESTDIR="$PWD/dist/${name}" cmake --install build-pkg --prefix /usr
-          tar -C dist -czf "dist/${name}.tar.gz" "${name}"
-          (cd dist && sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256")
-      - uses: actions/upload-artifact@v6
-        with:
-          name: daemon-deb-${{ matrix.arch }}
-          path: |
-            build-pkg/easy-failover_*.deb
-            dist/easy-failover-linux-*.tar.gz
-            dist/easy-failover-linux-*.tar.gz.sha256
-          if-no-files-found: error
-
-  # ---- Daemon .rpm (native amd64 / arm64, Fedora container) ----------------------------------
-  daemon-rpm:
-    name: Daemon .rpm (${{ matrix.arch }})
-    needs: version
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x86_64
-            runner: ubuntu-24.04
-          - arch: aarch64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.runner }}
-    container:
-      image: fedora:latest
-    steps:
-      - uses: actions/checkout@v6
-      - run: dnf install -y cmake gcc-c++ make rpm-build git
-      - name: Build .rpm
-        env:
-          PKG_VERSION: ${{ needs.version.outputs.version }}
-        run: ./scripts/package.sh
-      - uses: actions/upload-artifact@v6
-        with:
-          name: daemon-rpm-${{ matrix.arch }}
-          path: build-pkg/easy-failover-*.rpm
-          if-no-files-found: error
-
-  # ---- Dashboard .deb (native amd64 / arm64) -------------------------------------------------
-  dashboard-deb:
-    name: Dashboard .deb (${{ matrix.arch }})
+  # ---- Combined daemon+dashboard .deb (native amd64 / arm64) ---------------------------------
+  deb:
+    name: .deb (${{ matrix.arch }})
     needs: version
     strategy:
       fail-fast: false
@@ -131,22 +59,34 @@ jobs:
           node-version: "24"
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - run: |
+      - name: Install build tools
+        run: |
           sudo apt-get update
-          sudo apt-get install -y cmake git dpkg-dev fakeroot
-      - name: Build dashboard .deb
+          sudo apt-get install -y build-essential cmake git dpkg-dev fakeroot
+      - name: Build the combined .deb
         env:
           PKG_VERSION: ${{ needs.version.outputs.version }}
-        run: ./scripts/package-dashboard.sh
+        run: ./scripts/package.sh
+      - name: Build daemon-only tarball
+        run: |
+          set -euo pipefail
+          arch="$(uname -m)"
+          name="easy-failover-linux-${arch}"
+          DESTDIR="$PWD/dist/${name}" cmake --install build-pkg --prefix /usr --component daemon
+          tar -C dist -czf "dist/${name}.tar.gz" "${name}"
+          (cd dist && sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256")
       - uses: actions/upload-artifact@v6
         with:
-          name: dashboard-deb-${{ matrix.arch }}
-          path: build-dashboard-pkg/easy-failover-dashboard_*.deb
+          name: deb-${{ matrix.arch }}
+          path: |
+            build-pkg/easy-failover_*.deb
+            dist/easy-failover-linux-*.tar.gz
+            dist/easy-failover-linux-*.tar.gz.sha256
           if-no-files-found: error
 
-  # ---- Dashboard .rpm (native amd64 / arm64, Fedora container) --------------------------------
-  dashboard-rpm:
-    name: Dashboard .rpm (${{ matrix.arch }})
+  # ---- Combined daemon+dashboard .rpm (native amd64 / arm64, Fedora container) ---------------
+  rpm:
+    name: .rpm (${{ matrix.arch }})
     needs: version
     strategy:
       fail-fast: false
@@ -161,32 +101,35 @@ jobs:
       image: fedora:latest
     steps:
       - uses: actions/checkout@v6
-      - run: dnf install -y cmake rpm-build nodejs npm git
-      - name: Build dashboard .rpm
+      - run: dnf install -y cmake gcc-c++ make rpm-build git nodejs npm
+      - name: Build the combined .rpm
         env:
           PKG_VERSION: ${{ needs.version.outputs.version }}
-        run: ./scripts/package-dashboard.sh
+        run: ./scripts/package.sh
       - uses: actions/upload-artifact@v6
         with:
-          name: dashboard-rpm-${{ matrix.arch }}
-          path: build-dashboard-pkg/easy-failover-dashboard-*.rpm
+          name: rpm-${{ matrix.arch }}
+          path: build-pkg/easy-failover-*.rpm
           if-no-files-found: error
 
-  # ---- riscv64 (emulated via QEMU; EXPERIMENTAL, non-blocking) -------------------------------
-  daemon-deb-riscv64:
-    name: Daemon .deb (riscv64, emulated)
+  # ---- riscv64 daemon-only .deb (emulated via QEMU; EXPERIMENTAL, non-blocking) --------------
+  # Daemon only: the dashboard's Next.js toolchain has no riscv64 build (no Turbopack/next-swc
+  # native bindings; the WASM fallback crashes under emulation), so EASY_FAILOVER_NO_DASHBOARD=1.
+  deb-riscv64:
+    name: .deb (riscv64, daemon-only, emulated)
     needs: version
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
       - uses: actions/checkout@v6
       - uses: docker/setup-qemu-action@v3
-      - name: Build riscv64 .deb in an emulated Debian container
+      - name: Build riscv64 daemon-only .deb in an emulated Debian container
         env:
           PKG_VERSION: ${{ needs.version.outputs.version }}
         run: |
           docker run --rm --platform linux/riscv64 \
             -e PKG_VERSION="${PKG_VERSION}" \
+            -e EASY_FAILOVER_NO_DASHBOARD=1 \
             -v "$PWD":/src -w /src debian:trixie bash -c '
               set -e
               apt-get update
@@ -195,24 +138,14 @@ jobs:
             '
       - uses: actions/upload-artifact@v6
         with:
-          name: daemon-deb-riscv64
+          name: deb-riscv64
           path: build-pkg/easy-failover_*.deb
           if-no-files-found: warn
-
-  # Note: there is no riscv64 dashboard job. Next.js 16 has no riscv64 native binding for either
-  # Turbopack or next-swc; the WASM swc fallback crashes (`RuntimeError: unreachable`) under emulated
-  # riscv64. Revisit if upstream ships a riscv64 @next/swc. The riscv64 daemon package is built above.
 
   # ---- Publish --------------------------------------------------------------------------------
   publish:
     name: Publish release
-    needs:
-      - version
-      - daemon-deb
-      - daemon-rpm
-      - dashboard-deb
-      - dashboard-rpm
-      - daemon-deb-riscv64
+    needs: [version, deb, rpm, deb-riscv64]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -240,15 +173,12 @@ jobs:
         run: |
           set -euo pipefail
           title="Rolling build ${VERSION} (${SHORTSHA})"
-          notes="Automated rolling build of \`main\` at ${SHORTSHA} (version ${VERSION}). Daemon and dashboard packages for amd64 and arm64; riscv64 is experimental and may be absent."
-          # Re-point the rolling 'latest' tag at this commit WITHOUT deleting the release, so
-          # 'latest' is never missing even if a run is interrupted mid-publish.
+          notes="Automated rolling build of \`main\` at ${SHORTSHA} (version ${VERSION}). One combined daemon+dashboard package (.deb/.rpm) for amd64 and arm64, plus daemon-only source tarballs; riscv64 is a daemon-only .deb (experimental, may be absent)."
           git tag -f latest "${GITHUB_SHA}"
           git push -f origin "refs/tags/latest"
           if gh release view latest --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release edit latest --repo "${GITHUB_REPOSITORY}" \
               --prerelease --title "${title}" --notes "${notes}"
-            # Asset filenames are version-stamped, so drop stale assets before re-uploading.
             for a in $(gh release view latest --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name'); do
               gh release delete-asset latest "${a}" --repo "${GITHUB_REPOSITORY}" --yes || true
             done
@@ -268,4 +198,4 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" dist/* \
             --repo "${GITHUB_REPOSITORY}" \
             --title "${GITHUB_REF_NAME}" \
-            --notes "easy-failover ${VERSION}: daemon and dashboard packages (.deb/.rpm) and source tarballs for amd64 and arm64; riscv64 .deb where available."
+            --notes "easy-failover ${VERSION}: combined daemon+dashboard packages (.deb/.rpm) and daemon source tarballs for amd64 and arm64; riscv64 daemon .deb where available."

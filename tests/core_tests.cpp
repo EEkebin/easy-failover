@@ -1311,7 +1311,7 @@ void testSampleConfigLoads(TestRunner& runner) {
                   "sample health command should load");
     runner.expect(config.election.preempt, "sample election preempt should load");
     runner.expect(!config.election.require_quorum, "sample election quorum should load");
-    runner.expect(!config.api.enabled, "sample API enabled flag should load");
+    runner.expect(config.api.enabled, "sample API enabled flag should load (on by default)");
     runner.expect(config.api.read_only, "sample API read-only flag should load");
     runner.expect(!config.mutation_safety.allow_network_mutation,
                   "sample mutation safety gate should load disabled");

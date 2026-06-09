@@ -5,7 +5,10 @@ set -e
 case "$1" in
     purge)
         # `apt purge` removes all local config; plain `apt remove` keeps it.
-        rm -rf /etc/easy-failover
+        rm -rf /etc/easy-failover /etc/easy-failover-dashboard
+        if getent passwd easy-failover-dashboard >/dev/null 2>&1; then
+            userdel easy-failover-dashboard || true
+        fi
         if command -v systemctl >/dev/null 2>&1; then
             systemctl daemon-reload || true
         fi
@@ -14,6 +17,7 @@ case "$1" in
         if command -v systemctl >/dev/null 2>&1; then
             systemctl daemon-reload || true
             systemctl reset-failed easy-failover.service || true
+            systemctl reset-failed easy-failover-dashboard.service || true
         fi
         ;;
 esac

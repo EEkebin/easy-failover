@@ -114,18 +114,22 @@ cmake --build build
 sudo cmake --install build
 ```
 
-**Build dependencies:** a C++23 compiler (GCC or Clang), CMake, `make` or Ninja, Git. **Runtime
-dependencies:** `iproute2` and `arping` (declared by the package; install manually for source builds).
+**Build dependencies:** a C++23 compiler (GCC or Clang), CMake, `make` or Ninja, Git — plus
+**Node.js + npm** to build the bundled dashboard (`./scripts/package.sh`; not needed for a
+daemon-only `build.sh` or `EASY_FAILOVER_NO_DASHBOARD=1` build). **Runtime dependencies:** `iproute2`,
+`iputils-arping`, and `nodejs` for the dashboard — all declared by the package; install manually for
+source builds.
 
 **Not using systemd?** The packages target systemd, but the repo also ships OpenRC, runit, dinit, and
 s6 service files for source installs — see the per-init guides for
 [OpenRC](docs/service-openrc.md), [runit](docs/service-runit.md),
 [dinit](docs/service-dinit.md), and [s6](docs/service-s6.md).
 
-**Want the dashboard?** It's an optional read-only Next.js app shipped as a **separate**
-`easy-failover-dashboard` package (its own `.deb`/`.rpm`, attached to releases or built with
-`scripts/package-dashboard.sh`), running as an unprivileged service independent of the daemon —
-see [running the dashboard](docs/dashboard-service.md).
+**The dashboard is included.** The package bundles an optional read-only Next.js dashboard that runs
+as its own unprivileged `easy-failover-dashboard` service (and is started automatically on install).
+The local API is on by default (`127.0.0.1`, read-only) so it works out of the box. See
+[running the dashboard](docs/dashboard-service.md) to configure it (listen address, which nodes to
+show). Don't want it? Build a daemon-only package with `EASY_FAILOVER_NO_DASHBOARD=1 ./scripts/package.sh`.
 
 ## Uninstallation
 

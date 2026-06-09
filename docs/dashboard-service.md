@@ -1,43 +1,35 @@
 # Running the Dashboard as an Optional Service
 
-easy-failover includes an optional read-only Next.js dashboard under `web/`. It
-is a **separate package** from the daemon and runs as its own service. This
-document covers both installing it as a package and building/running it by hand.
+easy-failover ships an optional read-only Next.js dashboard **bundled in the same
+`easy-failover` package** as the daemon. It runs as its own service, as a dedicated
+unprivileged `easy-failover-dashboard` user, independent of the (root) daemon. This
+document covers configuring the packaged dashboard and building/running it by hand.
 
 The dashboard exposes no privileged actions by default: it reads each node's
-local API and proxies writes only when an operator has wired a write token. It
-is entirely optional, and runs as a dedicated unprivileged `easy-failover-dashboard`
-user, independent of the (root) daemon.
+local API and proxies writes only when an operator has wired a write token.
 
-## Install as a package (recommended)
+## Comes with the package
 
-Prebuilt `easy-failover-dashboard` `.deb`/`.rpm` packages are attached to each
-[GitHub release](https://github.com/EEkebin/easy-failover/releases), or build one
-yourself with `scripts/package-dashboard.sh` (needs Node.js + npm and
-`dpkg-deb`/`rpmbuild`). The package bundles a self-contained Next.js standalone
-server, so it only depends on `nodejs` at runtime.
+Installing the `easy-failover` `.deb`/`.rpm` lays down, alongside the daemon, the
+self-contained Next.js standalone server at `/usr/lib/easy-failover-dashboard`, its
+unit `easy-failover-dashboard.service`, and seeds `/etc/easy-failover-dashboard/dashboard.env`
+from the example. The package depends on `nodejs`. **The dashboard service is enabled
+and started automatically on install** (it's read-only and binds to localhost), and the
+daemon's local API is on by default, so the dashboard works out of the box.
 
-```sh
-# Debian / Ubuntu
-sudo apt install ./easy-failover-dashboard_*.deb
-
-# Fedora / RHEL / Rocky
-sudo dnf install ./easy-failover-dashboard-*.rpm
-```
-
-Install lays down the standalone server at `/usr/lib/easy-failover-dashboard`,
-the unit `easy-failover-dashboard.service`, and seeds
-`/etc/easy-failover-dashboard/dashboard.env` from the example. It does **not**
-auto-start. Edit the env file (listen address, roster, onboarding gate), then:
+Configure it by editing the env file (listen address, which nodes to show, onboarding
+gate) and restarting:
 
 ```sh
 sudoedit /etc/easy-failover-dashboard/dashboard.env
-sudo systemctl enable --now easy-failover-dashboard.service
+sudo systemctl restart easy-failover-dashboard.service
 ```
 
-`apt purge` / `dnf remove` stop and disable the service and remove the config
-directory and the dedicated user. The unit is ordered `After=easy-failover.service`
-but does not require it — the dashboard proxies to whatever nodes its roster lists.
+`apt purge` / `dnf remove` stop and disable the service and remove its config directory
+and the dedicated user. The unit is ordered `After=easy-failover.service` but does not
+require it — the dashboard proxies to whatever nodes its roster lists. For a daemon-only
+deployment (no dashboard, no `nodejs`), build the package with
+`EASY_FAILOVER_NO_DASHBOARD=1 ./scripts/package.sh`.
 
 ## Build and run by hand
 
@@ -101,16 +93,18 @@ environment variable). The `start` script runs `next start`.
 
 ## Run as a systemd service
 
-A unit template and an example environment file are provided under
-[`packaging/dashboard/`](../packaging/dashboard/):
+The package already installs and starts the dashboard as a service (see "Comes
+with the package" above). For a hand-rolled deployment, the unit template and an
+example env file live under [`packaging/dashboard/`](../packaging/dashboard/):
 
-- [`easy-failover-dashboard.service`](../packaging/dashboard/easy-failover-dashboard.service)
+- [`easy-failover-dashboard.service.in`](../packaging/dashboard/easy-failover-dashboard.service.in)
+  — a CMake `configure_file` template; the package substitutes the
+  `@EASY_FAILOVER_DASHBOARD_*@` paths at build time. For a manual setup, replace
+  those tokens with your install paths (e.g. `/usr/lib/easy-failover-dashboard`).
 - [`easy-failover-dashboard.env.example`](../packaging/dashboard/easy-failover-dashboard.env.example)
-- [`packaging/dashboard/README.md`](../packaging/dashboard/README.md)
 
-Because the dashboard is not CMake-installed, the unit uses documented
-placeholder paths rather than `@`-substituted CMake variables. Adjust them for
-your deployment.
+The unit runs the prebuilt standalone server directly (`node server.js`), not
+`npm run start`.
 
 ### Install layout
 

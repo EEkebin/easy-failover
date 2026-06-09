@@ -1,8 +1,9 @@
 # Distro Packaging Notes
 
-easy-failover builds `.deb` and `.rpm` packages via CPack, driven from the same CMake `install()`
-rules. Build them with `scripts/package.sh` (daemon) and `scripts/package-dashboard.sh` (dashboard);
-the `.deb` needs `dpkg-deb`, the `.rpm` needs `rpmbuild`. These notes record the layout and the
+easy-failover builds a single `.deb`/`.rpm` (daemon **and** dashboard) via CPack, driven from the
+CMake `install()` rules. Build it with `scripts/package.sh` (needs a C++ toolchain plus Node.js/npm
+for the bundled dashboard; the `.deb` needs `dpkg-deb`, the `.rpm` needs `rpmbuild`). Set
+`EASY_FAILOVER_NO_DASHBOARD=1` for a daemon-only package. These notes record the layout and the
 package lifecycle.
 
 ## Versioning and releases
@@ -18,22 +19,21 @@ package lifecycle.
 
 ## Architectures
 
-- **amd64** and **arm64** — built natively (GitHub `ubuntu-24.04` / `ubuntu-24.04-arm` runners),
-  daemon and dashboard, `.deb` and `.rpm`.
-- **riscv64** — **daemon `.deb` only**, built **emulated** (QEMU, Debian container; there are no
-  native riscv64 GitHub runners) and non-blocking in CI. There is **no riscv64 dashboard package**:
-  Next.js 16 ships no riscv64 native binding for Turbopack or `next-swc`, and the WASM `next-swc`
-  fallback crashes (`RuntimeError: unreachable`) under emulated riscv64, so the dashboard cannot be
-  built for riscv64 today. (`package-dashboard.sh` honors `DASHBOARD_BUILD_FLAGS=--webpack`, which
-  gets past the Turbopack bundler, but the swc compiler is the remaining blocker.) Revisit if
-  upstream publishes a riscv64 `@next/swc`.
+- **amd64** and **arm64** — built natively (GitHub `ubuntu-24.04` / `ubuntu-24.04-arm` runners), the
+  full combined package (`.deb` and `.rpm`).
+- **riscv64** — a **daemon-only `.deb`** (`EASY_FAILOVER_NO_DASHBOARD=1`), built **emulated** (QEMU,
+  Debian container; there are no native riscv64 GitHub runners) and non-blocking in CI. The dashboard
+  is excluded on riscv64: Next.js 16 ships no riscv64 native binding for Turbopack or `next-swc`, and
+  the WASM `next-swc` fallback crashes (`RuntimeError: unreachable`) under emulated riscv64. Revisit
+  if upstream publishes a riscv64 `@next/swc`.
 
 ## Scope
 
-The packages reuse the CMake install output via CPack components: only the `daemon` component
-(binary, example config, systemd unit, docs) is shipped — the OpenRC/runit/dinit/s6 service files
-stay out of the packages and remain available for source installs via
-`cmake --install --component <name>`.
+The package reuses the CMake install output via CPack components, grouped into one package: the
+`daemon` component (binary, example config, systemd unit, docs) and the `dashboard` component
+(standalone Next.js server, its unit, env example). The OpenRC/runit/dinit/s6 service files are their
+own components, kept out of the package but available for source installs via
+`cmake --install --component <name>`. The source tarball ships the `daemon` component only.
 
 Not yet covered here: official distro-repository submission (lintian/rpmlint-clean `debian/` and
 `.spec` sources), package signing, and repository publishing.
