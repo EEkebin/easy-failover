@@ -76,8 +76,14 @@ decision loop in dry-run and watch what it *would* do before letting it touch th
 
 ### Install as a package (recommended)
 
-Prebuilt `.deb` and `.rpm` packages are attached to each [GitHub release](https://github.com/EEkebin/easy-failover/releases) —
-download one and install it with your package manager. Or build a package yourself; either way the
+Prebuilt `.deb` and `.rpm` packages are published to GitHub:
+
+- the [**`latest`** rolling pre-release](https://github.com/EEkebin/easy-failover/releases/tag/latest)
+  tracks every push to `main` (version `YYYY.MM.DD.<build>`, e.g. `2026.06.08.342`);
+- tagged [stable releases](https://github.com/EEkebin/easy-failover/releases) (`vX.Y.Z`).
+
+Packages are built for **amd64** and **arm64** (riscv64 `.deb` is experimental). Download one for your
+architecture and install it with your package manager, or build a package yourself — either way the
 package manager pulls in the runtime dependencies (`iproute2`, `arping`):
 
 ```sh

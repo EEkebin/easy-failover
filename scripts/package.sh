@@ -10,11 +10,18 @@ set -euo pipefail
 
 BUILD_DIR="${BUILD_DIR:-build-pkg}"
 
+# Optional package version override (e.g. the rolling CalVer from scripts/version.sh).
+version_args=()
+if [ -n "${PKG_VERSION:-}" ]; then
+    version_args+=("-DCPACK_PACKAGE_VERSION=${PKG_VERSION}")
+fi
+
 cmake -S . -B "${BUILD_DIR}" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=/usr \
     -DCMAKE_INSTALL_SYSCONFDIR=/etc \
-    -DBUILD_TESTING=OFF
+    -DBUILD_TESTING=OFF \
+    "${version_args[@]}"
 cmake --build "${BUILD_DIR}" --parallel
 
 # Pick generators by available tooling: .deb needs dpkg-deb, .rpm needs rpmbuild.

@@ -1,9 +1,29 @@
 # Distro Packaging Notes
 
 easy-failover builds `.deb` and `.rpm` packages via CPack, driven from the same CMake `install()`
-rules. Build them with `scripts/package.sh` (the `.deb` needs `dpkg-deb`; the `.rpm` needs
-`rpmbuild`, so build the RPM on a Fedora/RHEL host or in CI). These notes record the layout and the
+rules. Build them with `scripts/package.sh` (daemon) and `scripts/package-dashboard.sh` (dashboard);
+the `.deb` needs `dpkg-deb`, the `.rpm` needs `rpmbuild`. These notes record the layout and the
 package lifecycle.
+
+## Versioning and releases
+
+- **Rolling:** every push to `main` runs `.github/workflows/release.yml`, which builds packages for
+  every architecture and updates a `latest` pre-release. The version is calendar-based:
+  `YYYY.MM.DD.<build>` where `<build>` is `git rev-list --count HEAD` (`scripts/version.sh`). The
+  count is strictly monotonic, so `apt`/`dnf` always upgrade to the newest rolling build; the short
+  commit hash is in the release title/notes for traceability (it is *not* in the orderable version,
+  because a hex hash does not sort monotonically).
+- **Stable:** pushing a `vX.Y.Z` tag publishes a normal release with version `X.Y.Z`.
+- Override the version on any build with `PKG_VERSION=<v> scripts/package.sh`.
+
+## Architectures
+
+- **amd64** and **arm64** — built natively (GitHub `ubuntu-24.04` / `ubuntu-24.04-arm` runners),
+  daemon and dashboard, `.deb` and `.rpm`.
+- **riscv64** — the daemon `.deb` is built emulated (QEMU, Debian container) and is **experimental**
+  (non-blocking in CI). The **dashboard** is harder on riscv64: its Next.js standalone bundle pulls
+  native node addons (`sharp`, `cpu-features`) that ship no riscv64 prebuilt, so a riscv64 dashboard
+  package is best-effort and may be absent.
 
 ## Scope
 

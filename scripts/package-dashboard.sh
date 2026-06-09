@@ -31,10 +31,15 @@ if [ -d "${WEB}/public" ]; then
 fi
 
 echo "==> Packaging via CPack"
+version_args=()
+if [ -n "${PKG_VERSION:-}" ]; then
+    version_args+=("-DCPACK_PACKAGE_VERSION=${PKG_VERSION}")
+fi
 cmake -S "${ROOT}/packaging/dashboard-pkg" -B "${BUILD_DIR}" \
     -DEASY_FAILOVER_DASHBOARD_DIST="${STAGE}" \
     -DCMAKE_INSTALL_PREFIX=/usr \
-    -DCMAKE_INSTALL_SYSCONFDIR=/etc
+    -DCMAKE_INSTALL_SYSCONFDIR=/etc \
+    "${version_args[@]}"
 cmake --build "${BUILD_DIR}"
 
 generators=""
