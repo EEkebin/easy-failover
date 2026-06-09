@@ -225,9 +225,9 @@ jobs:
           node --check cockpit/app.js
           node -e "JSON.parse(require('fs').readFileSync('cockpit/manifest.json','utf8'))"
 
-      - name: Build the Cockpit .deb
+      - name: Build the Cockpit packages
         env:
-          PKG_VERSION: "0.0.0-ci"
+          PKG_VERSION: "0.0.0"   # hyphen-free: rpm Version forbids '-'
         run: ./scripts/package-cockpit.sh
 
       - name: Inspect + install (static assets land under /usr/share/cockpit)
