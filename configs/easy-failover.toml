@@ -34,13 +34,20 @@ preempt = true
 quorum_size = 0
 
 [api]
-# Read-only status API, bound to all interfaces so the dashboard (and remote dashboards)
-# can reach it. It exposes no privileged actions while read_only is true. NOTE: 0.0.0.0
-# means the status/config API is reachable from any address that can route to this host;
-# restrict with a firewall if that is not what you want.
+# Status/config API, bound to all interfaces so the dashboard (and remote read-only
+# dashboards) can reach it. NOTE: 0.0.0.0 means it is reachable from any address that can
+# route to this host; restrict with a firewall if that is not what you want.
+#
+# This ships read-only. The .deb/.rpm AUTO-PROVISION write mode on first install: they
+# generate a random token in auth_token_file and flip read_only to false, so the bundled
+# (localhost-bound) dashboard can apply config out of the box. Building/running from source
+# stays read-only until you set a token yourself — see docs/config-reference.md.
 enabled = true
 bind = "0.0.0.0:8743"
 read_only = true
+# Bearer-token file that authenticates write requests. Required when read_only = false
+# (the API fails closed otherwise). Empty = no token (read-only).
+auth_token_file = ""
 
 [mutation_safety]
 # Real VIP movement is ON by default. The daemon will perform actual `ip addr`/`arping`

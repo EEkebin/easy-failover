@@ -70,6 +70,17 @@ jobs:
           test -f /etc/easy-failover-dashboard/dashboard.env           # seeded by postinst
           getent passwd easy-failover-dashboard                        # dashboard user created
           easy-failover --config /etc/easy-failover/config.toml --validate-config
+
+          # Auto-provisioned write token + wiring.
+          test -f /etc/easy-failover/api.token                         # token generated
+          grep -qE '^\s*read_only\s*=\s*false' /etc/easy-failover/config.toml
+          grep -qF 'auth_token_file = "/etc/easy-failover/api.token"' /etc/easy-failover/config.toml
+          test -f /var/lib/easy-failover-dashboard/nodes.json          # roster seeded
+          grep -q '"tokenEnv": "EASY_FAILOVER_TOKEN_LOCAL"' /var/lib/easy-failover-dashboard/nodes.json
+          sudo grep -qE '^EASY_FAILOVER_TOKEN_LOCAL=' /etc/easy-failover-dashboard/dashboard.env
+          # The dashboard env holds the secret, so it must not be world-readable.
+          perms="$(stat -c '%a' /etc/easy-failover-dashboard/dashboard.env)"
+          test "$perms" = "640" || { echo "::error::dashboard.env perms $perms (want 640)"; exit 1; }
           # Both services are auto-enabled+started by postinst. The daemon idles (clean-slate
           # config has no VIP) but its process stays up, so the unit is active.
           systemctl is-active --quiet easy-failover-dashboard.service \
@@ -83,6 +94,26 @@ jobs:
           done
           test "$ok" = "1" || { echo "::error::dashboard did not serve a request"; exit 1; }
 
+          # End-to-end write-token check: the apply endpoint must reject an unauthenticated
+          # write and accept one bearing the provisioned token. Wait for the daemon API first.
+          apiok=0
+          for _ in $(seq 1 20); do
+            if curl -fsS -o /dev/null http://127.0.0.1:8743/api/v1/status; then apiok=1; break; fi
+            sleep 1
+          done
+          test "$apiok" = "1" || { echo "::error::daemon API did not come up"; journalctl -u easy-failover --no-pager | tail -40; exit 1; }
+          body='{"format":"toml","config":"node_id = \"node-a\"\npriority = 100\n\n[vip]\naddress = \"\"\ninterface = \"\"\n"}'
+          code="$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8743/api/v1/config/apply \
+            -H 'Content-Type: application/json' -d "$body")"
+          { [ "$code" = "401" ] || [ "$code" = "403" ]; } \
+            || { echo "::error::unauthenticated apply returned $code (want 401/403)"; exit 1; }
+          token="$(sudo cat /etc/easy-failover/api.token)"
+          applied="$(curl -fsS -X POST http://127.0.0.1:8743/api/v1/config/apply \
+            -H "Authorization: Bearer ${token}" -H 'Content-Type: application/json' -d "$body")"
+          echo "apply result: $applied"
+          grep -q '"applied"[: ]*true' <<<"$applied" \
+            || { echo "::error::token-authenticated apply did not report applied:true"; exit 1; }
+
       - name: Remove keeps config; purge removes everything
         run: |
           set -euo pipefail
@@ -92,6 +123,7 @@ jobs:
           sudo apt-get purge -y easy-failover
           test ! -e /etc/easy-failover || { echo "::error::purge should remove /etc/easy-failover"; exit 1; }
           test ! -e /etc/easy-failover-dashboard || { echo "::error::purge should remove dashboard config"; exit 1; }
+          test ! -e /var/lib/easy-failover-dashboard || { echo "::error::purge should remove dashboard state"; exit 1; }
           ! getent passwd easy-failover-dashboard || { echo "::error::purge should remove the dashboard user"; exit 1; }
 
       - name: Upload .deb artifact
@@ -141,6 +173,17 @@ jobs:
           test -f /usr/lib/easy-failover-dashboard/server.js
           getent passwd easy-failover-dashboard
           easy-failover --config /etc/easy-failover/config.toml --validate-config
+
+          # Auto-provisioned write token + wiring (scriptlet runs during dnf install).
+          test -f /etc/easy-failover/api.token
+          grep -qE '^\s*read_only\s*=\s*false' /etc/easy-failover/config.toml
+          grep -qF 'auth_token_file = "/etc/easy-failover/api.token"' /etc/easy-failover/config.toml
+          test -f /var/lib/easy-failover-dashboard/nodes.json
+          grep -q '"tokenEnv": "EASY_FAILOVER_TOKEN_LOCAL"' /var/lib/easy-failover-dashboard/nodes.json
+          grep -qE '^EASY_FAILOVER_TOKEN_LOCAL=' /etc/easy-failover-dashboard/dashboard.env
+          perms="$(stat -c '%a' /etc/easy-failover-dashboard/dashboard.env)"
+          test "$perms" = "640" || { echo "::error::dashboard.env perms $perms (want 640)"; exit 1; }
+
           # systemd isn't running in the container, so the service isn't started here; the
           # standalone server itself is smoke-tested directly.
           node_bin=$(command -v node || command -v nodejs)
@@ -160,6 +203,7 @@ jobs:
           test ! -e /usr/bin/easy-failover
           test ! -e /etc/easy-failover || { echo "::error::erase should remove /etc/easy-failover"; exit 1; }
           test ! -e /etc/easy-failover-dashboard || { echo "::error::erase should remove dashboard config"; exit 1; }
+          test ! -e /var/lib/easy-failover-dashboard || { echo "::error::erase should remove dashboard state"; exit 1; }
 
       - name: Upload .rpm artifact
         uses: actions/upload-artifact@v6
