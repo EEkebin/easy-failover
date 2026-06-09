@@ -20,10 +20,11 @@ package lifecycle.
 
 - **amd64** and **arm64** — built natively (GitHub `ubuntu-24.04` / `ubuntu-24.04-arm` runners),
   daemon and dashboard, `.deb` and `.rpm`.
-- **riscv64** — the daemon `.deb` is built emulated (QEMU, Debian container) and is **experimental**
-  (non-blocking in CI). The **dashboard** is harder on riscv64: its Next.js standalone bundle pulls
-  native node addons (`sharp`, `cpu-features`) that ship no riscv64 prebuilt, so a riscv64 dashboard
-  package is best-effort and may be absent.
+- **riscv64** — built **emulated** (QEMU, Debian container) and **experimental** / non-blocking in
+  CI, since there are no native riscv64 GitHub runners. Both the daemon `.deb` and the dashboard
+  `.deb` are attempted: `sharp` ships a `linux-riscv64` prebuilt (in the lockfile) and `ssh2`'s
+  `cpu-features` is optional (pure-JS fallback), so the dashboard *should* build — but the emulated
+  build is slow and unverified, so treat riscv64 artifacts as best-effort and possibly absent.
 
 ## Scope
 
