@@ -207,18 +207,17 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: docker/setup-qemu-action@v3
-      - name: Build riscv64 dashboard .deb (native node deps may not exist for riscv64)
+      - name: Build riscv64 dashboard .deb (webpack bundler; Turbopack has no riscv64 bindings)
         env:
           PKG_VERSION: ${{ needs.version.outputs.version }}
         run: |
           docker run --rm --platform linux/riscv64 \
             -e PKG_VERSION="${PKG_VERSION}" \
+            -e DASHBOARD_BUILD_FLAGS="--webpack" \
             -v "$PWD":/src -w /src debian:trixie bash -c '
               set -e
               apt-get update
               apt-get install -y cmake git dpkg-dev fakeroot ca-certificates nodejs npm
-              # sharp has no riscv64 prebuilt; skip optional native deps and fall back to JS.
-              export npm_config_build_from_source=false
               ./scripts/package-dashboard.sh
             '
       - uses: actions/upload-artifact@v6
