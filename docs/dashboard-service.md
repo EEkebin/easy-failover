@@ -1,25 +1,26 @@
 # Running the Dashboard as an Optional Service
 
-easy-failover ships an optional Next.js dashboard **bundled in the same
-`easy-failover` package** as the daemon. It runs as its own service, as a dedicated
-unprivileged `easy-failover-dashboard` user, independent of the (root) daemon. This
-document covers configuring the packaged dashboard and building/running it by hand.
+easy-failover ships an optional Next.js dashboard as a **separate `easy-failover-dashboard`
+package** that depends on the `easy-failover` daemon package — so `apt install
+easy-failover-dashboard` (or `dnf install`) pulls in the daemon automatically. It runs as its
+own service, as a dedicated unprivileged `easy-failover-dashboard` user, independent of the
+(root) daemon. This document covers configuring the packaged dashboard and building/running it
+by hand. (The [Cockpit plugin](cockpit-plugin.md) is a different frontend package — pick one.)
 
 The dashboard has **no login of its own**. It reads each node's local API and proxies
 config writes using a server-side write token. Because anyone who can reach the dashboard
 can therefore use its **Apply** button, the packaged dashboard binds **localhost only** by
 default (see below).
 
-## Comes with the package
+## Comes with the dashboard package
 
-Installing the `easy-failover` `.deb`/`.rpm` lays down, alongside the daemon, the
-self-contained Next.js standalone server at `/usr/lib/easy-failover-dashboard`, its
-unit `easy-failover-dashboard.service`, and seeds `/etc/easy-failover-dashboard/dashboard.env`
-from the example. The package depends on `nodejs`. **The dashboard service is enabled
-and started automatically on install**, and the daemon's local API is on by default, so
-the dashboard works out of the box.
+Installing `easy-failover-dashboard` lays down the self-contained Next.js standalone server at
+`/usr/lib/easy-failover-dashboard`, its unit `easy-failover-dashboard.service`, and seeds
+`/etc/easy-failover-dashboard/dashboard.env` from the example. The package depends on
+`easy-failover` and `nodejs`. **The dashboard service is enabled and started automatically on
+install**, and the daemon's local API is on by default, so the dashboard works out of the box.
 
-**Write access is auto-provisioned.** On first install the package:
+**Write access is auto-provisioned.** On first install of the two packages:
 
 - generates a random write token at `/etc/easy-failover/api.token` (root, `0600`);
 - flips the daemon's seeded config to `read_only = false` with that `auth_token_file`;
@@ -50,11 +51,11 @@ sudoedit /etc/easy-failover-dashboard/dashboard.env
 sudo systemctl restart easy-failover-dashboard.service
 ```
 
-`apt purge` / `dnf remove` stop and disable the service and remove its config directory
-and the dedicated user. The unit is ordered `After=easy-failover.service` but does not
-require it — the dashboard proxies to whatever nodes its roster lists. For a daemon-only
-deployment (no dashboard, no `nodejs`), build the package with
-`EASY_FAILOVER_NO_DASHBOARD=1 ./scripts/package.sh`.
+`apt purge` / `dnf remove` of `easy-failover-dashboard` stop and disable the service and remove
+its config directory, state, and the dedicated user — the daemon package is untouched. The unit
+is ordered `After=easy-failover.service` but does not require it — the dashboard proxies to
+whatever nodes its roster lists. For a daemon-only deployment (no dashboard, no `nodejs`), simply
+don't install the `easy-failover-dashboard` package.
 
 ## Build and run by hand
 

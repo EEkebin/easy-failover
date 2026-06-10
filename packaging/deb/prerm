@@ -1,5 +1,6 @@
 #!/bin/sh
-# Debian/Ubuntu pre-remove: stop the service and release the VIP on real removal.
+# Debian/Ubuntu pre-remove for the easy-failover DAEMON: stop the service and release the VIP
+# on real removal.
 set -e
 
 case "$1" in
@@ -7,8 +8,6 @@ case "$1" in
         if command -v systemctl >/dev/null 2>&1; then
             systemctl stop easy-failover.service || true
             systemctl disable easy-failover.service || true
-            systemctl stop easy-failover-dashboard.service || true
-            systemctl disable easy-failover-dashboard.service || true
         fi
         # Best-effort: release the VIP from this host if it owns it, so a
         # decommissioned node does not leave the address stranded. Never fails the

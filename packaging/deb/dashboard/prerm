@@ -1,0 +1,17 @@
+#!/bin/sh
+# Debian/Ubuntu pre-remove for the easy-failover-dashboard package: stop the dashboard service
+# on real removal (not upgrade).
+set -e
+
+case "$1" in
+    remove)
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl stop easy-failover-dashboard.service || true
+            systemctl disable easy-failover-dashboard.service || true
+        fi
+        ;;
+    upgrade|deconfigure)
+        ;;
+esac
+
+exit 0

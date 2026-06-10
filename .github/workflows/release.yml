@@ -79,7 +79,7 @@ jobs:
         with:
           name: deb-${{ matrix.arch }}
           path: |
-            build-pkg/easy-failover_*.deb
+            build-pkg/easy-failover*.deb
             dist/easy-failover-linux-*.tar.gz
             dist/easy-failover-linux-*.tar.gz.sha256
           if-no-files-found: error

@@ -1,16 +1,13 @@
 #!/bin/sh
-# Debian/Ubuntu post-remove: drop config only on purge (Debian convention).
+# Debian/Ubuntu post-remove for the easy-failover DAEMON: drop config only on purge (Debian
+# convention). The dashboard package cleans up its own config/state/user.
 set -e
 
 case "$1" in
     purge)
-        # `apt purge` removes all local config; plain `apt remove` keeps it. This includes
-        # the generated write token (/etc/easy-failover/api.token), the dashboard env (which
-        # holds a copy of it), and the dashboard state dir (roster).
-        rm -rf /etc/easy-failover /etc/easy-failover-dashboard /var/lib/easy-failover-dashboard
-        if getent passwd easy-failover-dashboard >/dev/null 2>&1; then
-            userdel easy-failover-dashboard || true
-        fi
+        # `apt purge` removes all local config, including the generated write token
+        # (/etc/easy-failover/api.token).
+        rm -rf /etc/easy-failover
         if command -v systemctl >/dev/null 2>&1; then
             systemctl daemon-reload || true
         fi
@@ -19,7 +16,6 @@ case "$1" in
         if command -v systemctl >/dev/null 2>&1; then
             systemctl daemon-reload || true
             systemctl reset-failed easy-failover.service || true
-            systemctl reset-failed easy-failover-dashboard.service || true
         fi
         ;;
 esac

@@ -235,50 +235,61 @@ set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/EEkebin/easy-failover")
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
 set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
 
-# Package only the daemon component as a single package; the alternative init-system files
-# (openrc/runit/dinit/s6 components) stay out. Component-install mode is required for this filter
-# to apply, with ALL_COMPONENTS_IN_ONE grouping so it stays one package, not per-component.
+# Emit TWO packages from one build via component packaging (GROUPING=IGNORE -> one package per
+# component): the daemon (easy-failover) and, when built with it, the dashboard
+# (easy-failover-dashboard, which depends on the daemon). The alternative init-system components
+# (openrc/runit/dinit/s6) are not listed here, so they are excluded from packages; a plain
+# `cmake --install` still installs everything for source installs.
 set(CPACK_COMPONENTS_ALL daemon)
 if(EASY_FAILOVER_WITH_DASHBOARD)
     list(APPEND CPACK_COMPONENTS_ALL dashboard)
 endif()
-set(CPACK_COMPONENTS_GROUPING "ALL_COMPONENTS_IN_ONE")
+set(CPACK_COMPONENTS_GROUPING "IGNORE")
 set(CPACK_DEB_COMPONENT_INSTALL ON)
 set(CPACK_RPM_COMPONENT_INSTALL ON)
-# Without a main component the RPM generator suffixes the package name/file with the group name
-# (easy-failover-ALL_COMPONENTS_IN_ONE-...). Naming the main component keeps it "easy-failover".
-set(CPACK_RPM_MAIN_COMPONENT daemon)
 
 set(CPACK_GENERATOR "DEB;RPM")
 
-# Debian/Ubuntu
+# --- Debian/Ubuntu (common) ---
 set(CPACK_DEBIAN_PACKAGE_MAINTAINER "${CPACK_PACKAGE_CONTACT}")
 set(CPACK_DEBIAN_PACKAGE_SECTION "admin")
-# iputils-arping (not the conflicting Thomas-Habets `arping` package): the daemon invokes
-# `arping -A/-U -c N -I <iface> <addr>`, which is the iputils arping CLI.
-set(CPACK_DEBIAN_PACKAGE_DEPENDS "iproute2, iputils-arping")
-if(EASY_FAILOVER_WITH_DASHBOARD)
-    string(APPEND CPACK_DEBIAN_PACKAGE_DEPENDS ", nodejs (>= 20.9.0)")
-endif()
 set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "${CPACK_PACKAGE_HOMEPAGE_URL}")
 set(CPACK_DEBIAN_FILE_NAME "DEB-DEFAULT")
-set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
+
+# Daemon .deb. iputils-arping (not the conflicting Thomas-Habets `arping`): the daemon invokes
+# `arping -A/-U -c N -I <iface> <addr>`, the iputils arping CLI.
+set(CPACK_DEBIAN_DAEMON_PACKAGE_NAME "easy-failover")
+set(CPACK_DEBIAN_DAEMON_PACKAGE_DEPENDS "iproute2, iputils-arping")
+set(CPACK_DEBIAN_DAEMON_PACKAGE_CONTROL_EXTRA
     "${CMAKE_CURRENT_SOURCE_DIR}/packaging/deb/postinst;${CMAKE_CURRENT_SOURCE_DIR}/packaging/deb/prerm;${CMAKE_CURRENT_SOURCE_DIR}/packaging/deb/postrm")
 
-# Fedora/RHEL/Rocky (built where rpmbuild is available)
+# Dashboard .deb (depends on the daemon package + nodejs).
+set(CPACK_DEBIAN_DASHBOARD_PACKAGE_NAME "easy-failover-dashboard")
+set(CPACK_DEBIAN_DASHBOARD_PACKAGE_DEPENDS "easy-failover (>= ${CPACK_PACKAGE_VERSION}), nodejs (>= 20.9.0)")
+set(CPACK_DEBIAN_DASHBOARD_PACKAGE_CONTROL_EXTRA
+    "${CMAKE_CURRENT_SOURCE_DIR}/packaging/deb/dashboard/postinst;${CMAKE_CURRENT_SOURCE_DIR}/packaging/deb/dashboard/prerm;${CMAKE_CURRENT_SOURCE_DIR}/packaging/deb/dashboard/postrm")
+
+# --- Fedora/RHEL/Rocky (common; built where rpmbuild is available) ---
 set(CPACK_RPM_PACKAGE_LICENSE "Apache-2.0")
 set(CPACK_RPM_PACKAGE_GROUP "Applications/System")
-set(CPACK_RPM_PACKAGE_REQUIRES "iproute, iputils")
-if(EASY_FAILOVER_WITH_DASHBOARD)
-    string(APPEND CPACK_RPM_PACKAGE_REQUIRES ", nodejs >= 1:20.9")
-endif()
 set(CPACK_RPM_PACKAGE_URL "${CPACK_PACKAGE_HOMEPAGE_URL}")
 set(CPACK_RPM_FILE_NAME "RPM-DEFAULT")
-set(CPACK_RPM_POST_INSTALL_SCRIPT_FILE "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rpm/postinst.sh")
-set(CPACK_RPM_PRE_UNINSTALL_SCRIPT_FILE "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rpm/prerm.sh")
-set(CPACK_RPM_POST_UNINSTALL_SCRIPT_FILE "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rpm/postrm.sh")
-# Don't let the RPM claim ownership of system directories provided by other packages.
+# Don't let the RPMs claim ownership of system directories provided by other packages.
 set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION
     "/etc;/usr/lib;/usr/lib/systemd;/usr/lib/systemd/system;/usr/share;/usr/share/doc")
+
+# Daemon .rpm.
+set(CPACK_RPM_DAEMON_PACKAGE_NAME "easy-failover")
+set(CPACK_RPM_DAEMON_PACKAGE_REQUIRES "iproute, iputils")
+set(CPACK_RPM_DAEMON_POST_INSTALL_SCRIPT_FILE "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rpm/postinst.sh")
+set(CPACK_RPM_DAEMON_PRE_UNINSTALL_SCRIPT_FILE "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rpm/prerm.sh")
+set(CPACK_RPM_DAEMON_POST_UNINSTALL_SCRIPT_FILE "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rpm/postrm.sh")
+
+# Dashboard .rpm (requires the daemon package + nodejs).
+set(CPACK_RPM_DASHBOARD_PACKAGE_NAME "easy-failover-dashboard")
+set(CPACK_RPM_DASHBOARD_PACKAGE_REQUIRES "easy-failover, nodejs >= 1:20.9")
+set(CPACK_RPM_DASHBOARD_POST_INSTALL_SCRIPT_FILE "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rpm/dashboard-postinst.sh")
+set(CPACK_RPM_DASHBOARD_PRE_UNINSTALL_SCRIPT_FILE "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rpm/dashboard-prerm.sh")
+set(CPACK_RPM_DASHBOARD_POST_UNINSTALL_SCRIPT_FILE "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rpm/dashboard-postrm.sh")
 
 include(CPack)

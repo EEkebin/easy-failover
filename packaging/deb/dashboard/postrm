@@ -1,0 +1,25 @@
+#!/bin/sh
+# Debian/Ubuntu post-remove for the easy-failover-dashboard package: drop its config and state
+# and remove the dedicated user on purge.
+set -e
+
+case "$1" in
+    purge)
+        # The dashboard env holds a copy of the write token; the state dir holds the roster.
+        rm -rf /etc/easy-failover-dashboard /var/lib/easy-failover-dashboard
+        if getent passwd easy-failover-dashboard >/dev/null 2>&1; then
+            userdel easy-failover-dashboard || true
+        fi
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload || true
+        fi
+        ;;
+    remove)
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload || true
+            systemctl reset-failed easy-failover-dashboard.service || true
+        fi
+        ;;
+esac
+
+exit 0
