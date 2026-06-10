@@ -282,8 +282,9 @@ each box with the same `cluster` and shared secret and they find each other.
 When the daemon runs with discovery enabled it broadcasts a beacon each `interval_ms`, folds
 verified peers into the election, and expires silent ones — so the pool forms and elects a master
 with no static peers. Identity is the **MAC of `vip.interface`** (falling back to `node_id` when no
-interface is configured). See [`discovery-design.md`](discovery-design.md). The dashboard/Cockpit
-pool view (set priority / pick master) is the next phase.
+interface is configured). See [`discovery-design.md`](discovery-design.md). The daemon exposes the
+observed pool at `GET /api/v1/status` (a `pool` array), which the dashboard and Cockpit plugin render
+as the **failover pool** — each node's role, priority, and health.
 
 ## Validation Summary
 

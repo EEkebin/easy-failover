@@ -1,6 +1,7 @@
 #include "api/LocalApi.hpp"
 
 #include "config/Config.hpp"
+#include "core/FailoverDecision.hpp"
 #include "core/NodeState.hpp"
 #include "health/HealthCheck.hpp"
 #include "runtime/DaemonRuntime.hpp"
@@ -659,7 +660,16 @@ LocalApiStatusResponse buildLocalApiStatusResponse(const Config& config,
                                                    const HealthCheckResult& health,
                                                    const NodeState local_node_state,
                                                    const bool dry_run,
-                                                   const int peers_observed) {
+                                                   const int peers_observed,
+                                                   const std::vector<PeerStatus>& pool) {
+    auto pool_members = std::vector<LocalApiStatusPoolMember>{};
+    pool_members.reserve(pool.size());
+    for (const auto& peer : pool) {
+        pool_members.push_back(LocalApiStatusPoolMember{.node_id = peer.node_id,
+                                                        .priority = peer.priority,
+                                                        .healthy = peer.healthy,
+                                                        .state = std::string{toString(peer.state)}});
+    }
     return LocalApiStatusResponse{
         .node = LocalApiStatusNode{.id = config.node_id,
                                    .priority = config.priority,
@@ -681,7 +691,8 @@ LocalApiStatusResponse buildLocalApiStatusResponse(const Config& config,
                                              .timeout_ms = config.heartbeat.timeout_ms,
                                              .peers_observed = peers_observed},
         .health = LocalApiStatusHealth{.status = std::string{toString(health.status)},
-                                       .detail = healthDetailForStatusResponse(config, health)}};
+                                       .detail = healthDetailForStatusResponse(config, health)},
+        .pool = std::move(pool_members)};
 }
 
 LocalApiConfigResponse buildLocalApiConfigResponse(const Config& config) {
@@ -1030,7 +1041,18 @@ std::string serializeLocalApiStatusResponse(const LocalApiStatusResponse& respon
            << ",\"timeout_ms\":" << response.heartbeat.timeout_ms
            << ",\"peers_observed\":" << response.heartbeat.peers_observed
            << "},\"health\":{\"status\":" << jsonString(response.health.status)
-           << ",\"detail\":" << jsonString(response.health.detail) << "}}";
+           << ",\"detail\":" << jsonString(response.health.detail) << "},\"pool\":[";
+    for (std::size_t i = 0; i < response.pool.size(); ++i) {
+        const auto& member = response.pool[i];
+        if (i != 0) {
+            output << ",";
+        }
+        output << "{\"node_id\":" << jsonString(member.node_id)
+               << ",\"priority\":" << member.priority
+               << ",\"healthy\":" << jsonBool(member.healthy)
+               << ",\"state\":" << jsonString(member.state) << "}";
+    }
+    output << "]}";
     return output.str();
 }
 

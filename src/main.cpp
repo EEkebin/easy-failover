@@ -78,6 +78,9 @@ easyfailover::LocalApiHttpSnapshot buildHttpSnapshotFromLoopResult(
         loop_result.failover_decisions.empty()
             ? 0
             : static_cast<int>(loop_result.failover_decisions.back().peer_statuses.size());
+    const auto pool = loop_result.failover_decisions.empty()
+                          ? std::vector<easyfailover::PeerStatus>{}
+                          : loop_result.failover_decisions.back().peer_statuses;
     const auto health = easyfailover::HealthCheckResult{
         .status = config.health.command.empty() ? easyfailover::HealthStatus::Healthy
                                                 : easyfailover::HealthStatus::Unhealthy,
@@ -100,7 +103,7 @@ easyfailover::LocalApiHttpSnapshot buildHttpSnapshotFromLoopResult(
 
     return easyfailover::LocalApiHttpSnapshot{
         .status = easyfailover::buildLocalApiStatusResponse(
-            config, lifecycle_snapshot, health, local_node_state, dry_run, peers_observed),
+            config, lifecycle_snapshot, health, local_node_state, dry_run, peers_observed, pool),
         .config = easyfailover::buildLocalApiConfigResponse(config),
         .events = easyfailover::buildLocalApiEventsResponse(std::move(events))};
 }
