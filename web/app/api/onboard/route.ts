@@ -17,7 +17,8 @@
 
 import { onboard, type ProgressSink } from "../../../lib/onboarding/onboard";
 import type { NodeStateSummary, OnboardRequest, StepProgress } from "../../../lib/onboarding/types";
-import { appendNode } from "../../../lib/nodes/registry";
+import { appendNode, dashboardHasWriteAuthority } from "../../../lib/nodes/registry";
+import { inheritedClusterPeers, mergePeers } from "../../../lib/onboarding/cluster";
 
 // ssh2 is a Node-only dependency; pin this route to the Node.js runtime so it is
 // never bundled for the edge/browser and so native-ish deps resolve correctly.
@@ -26,23 +27,30 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Authorization extension point. MUST be replaced with the authenticated write
- * API check (see `docs/write-api-design.md`) before this route is enabled in any
- * deployment. Returns null when authorized, or a Response to short-circuit.
- *
- * Default posture: DENY. Onboarding is off by default and explicitly enabled.
- * Set `EASY_FAILOVER_ONBOARD_ENABLED=true` only in a deployment that has wired
- * the real authenticated write API in front of this route.
+ * Authorize an onboarding request. Onboarding is a privileged remote write, so it
+ * is gated on the dashboard holding a write token (the same token that authorizes
+ * config writes — see the local node's `tokenEnv`). On a packaged install the
+ * token is auto-provisioned, so onboarding works out of the box; a read-only
+ * dashboard cannot onboard. Set `EASY_FAILOVER_ONBOARD_ENABLED=false` to force it
+ * off regardless. Returns null when authorized, or a Response to short-circuit.
  */
 function authorizeWriteRequest(_request: Request): Response | null {
-  if (process.env.EASY_FAILOVER_ONBOARD_ENABLED !== "true") {
+  if (process.env.EASY_FAILOVER_ONBOARD_ENABLED === "false") {
     return Response.json(
-      { error: "onboarding is disabled; it must be enabled and gated by the authenticated write API" },
+      { error: "onboarding is disabled (EASY_FAILOVER_ONBOARD_ENABLED=false)" },
       { status: 403 }
     );
   }
-  // TODO(write-api): verify authenticated dashboard session + write authority
-  // here per docs/write-api-design.md before proceeding.
+  if (!dashboardHasWriteAuthority()) {
+    return Response.json(
+      {
+        error:
+          "onboarding requires a write token; this dashboard is read-only. " +
+          "Configure the local node's write token (tokenEnv) to enable it."
+      },
+      { status: 403 }
+    );
+  }
   return null;
 }
 
@@ -129,6 +137,24 @@ export async function POST(request: Request): Promise<Response> {
   const validated = validateRequest(body);
   if (!validated.ok) {
     return Response.json({ error: validated.error }, { status: 400 });
+  }
+
+  // Auto-join the cluster: the new node inherits the current node's peers plus the
+  // current node itself (addressed at the IP that routes to the target). Merged
+  // with any operator-entered peers and de-duplicated. Best-effort — if the current
+  // node's config can't be read, onboarding proceeds with the operator's peers.
+  try {
+    const inherited = await inheritedClusterPeers(validated.request.connection.host);
+    if (inherited.length > 0) {
+      validated.request.config.peers = mergePeers(
+        validated.request.config.peers,
+        inherited,
+        validated.request.config.nodeId,
+        validated.request.connection.host
+      );
+    }
+  } catch {
+    // Never block onboarding on the inheritance step.
   }
 
   // Stream redacted progress events as newline-delimited JSON (NDJSON), then a
