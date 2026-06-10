@@ -85,6 +85,30 @@ export type OnboardDeps = {
 
 const defaultDeps: OnboardDeps = { connect };
 
+/**
+ * Turn a confusing sudo failure into an actionable hint. Returns undefined when
+ * the stderr doesn't look like a sudo auth problem. No secrets are involved.
+ */
+function diagnoseSudoFailure(
+  stderr: string,
+  sudoKind: OnboardRequest["connection"]["sudo"]["kind"]
+): string | undefined {
+  const s = stderr.toLowerCase();
+  if (/not in the sudoers file|may not run sudo|user .* is not allowed/.test(s)) {
+    return "This user lacks sudo rights on the target. Use an account with sudo, or the 'already root' method.";
+  }
+  if (/a terminal is required to authenticate|sudo: a password is required|no askpass|tty/.test(s)) {
+    if (sudoKind === "passwordless") {
+      return "This account does not have passwordless sudo. Re-run with the 'password' sudo method and enter the sudo password.";
+    }
+    return "sudo could not authenticate without a terminal. Use the 'password' sudo method so the password is fed on stdin.";
+  }
+  if (/incorrect password|sorry, try again|authentication failure/.test(s)) {
+    return "The sudo password was rejected. Check the sudo password and try again.";
+  }
+  return undefined;
+}
+
 /** Build the run's redactor from its ephemeral secrets. */
 function redactorFor(req: OnboardRequest): Redactor {
   const sshPassword = req.connection.auth.kind === "password" ? req.connection.auth.password : undefined;
@@ -166,13 +190,18 @@ export async function onboard(
     await emit({ step, label: STEP_LABELS[step], status: "running", command: planned.command });
     const result = await runPlanned(runner!, planned, sudoPassword, extraStdin);
     if (result.code !== 0) {
+      const sudoHint = diagnoseSudoFailure(
+        result.stderr || result.stdout || "",
+        req.connection.sudo.kind
+      );
       await emit({
         step,
         label: STEP_LABELS[step],
         status: "failed",
         command: planned.command,
         exitCode: result.code,
-        stderr: result.stderr || result.stdout
+        stderr: result.stderr || result.stdout,
+        ...(sudoHint ? { detail: sudoHint } : {})
       });
       return undefined;
     }
@@ -407,7 +436,7 @@ export async function onboard(
         });
         return {
           steps,
-          summary: summarize(false, `service not confirmed active (allow_network_mutation=false)${apiDetail}`)
+          summary: summarize(false, `installed and configured, but the service was not confirmed active${apiDetail}`)
         };
       }
       await emit({
