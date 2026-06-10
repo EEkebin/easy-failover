@@ -26,8 +26,9 @@ sudo apt install ./easy-failover-cockpit_<version>_all.deb
 sudo dnf install ./easy-failover-cockpit-<version>-1.noarch.rpm
 ```
 
-Both pull in `easy-failover` and `cockpit-bridge` if they are not already present. Make sure
-Cockpit itself is running:
+Both pull in `easy-failover` and Cockpit itself (`cockpit` + `cockpit-bridge`, which provide the
+web console and the JS bridge) if they are not already present. Then make sure Cockpit's socket is
+enabled:
 
 ```sh
 sudo systemctl enable --now cockpit.socket
