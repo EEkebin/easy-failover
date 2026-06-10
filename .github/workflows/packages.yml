@@ -169,24 +169,29 @@ jobs:
 
       - name: Identify + inspect packages (daemon + dashboard)
         run: |
-          set -euo pipefail
+          set -e
+          daemon_rpm=
+          dash_rpm=
           for f in build-pkg/easy-failover-*.rpm; do
-            case "$(rpm -qp --queryformat '%{NAME}' "$f")" in
-              easy-failover)           echo "DAEMON_RPM=$f" >> "$GITHUB_ENV" ;;
-              easy-failover-dashboard) echo "DASH_RPM=$f"   >> "$GITHUB_ENV" ;;
-            esac
+            n=$(rpm -qp --queryformat '%{NAME}' "$f")
+            if [ "$n" = easy-failover ]; then daemon_rpm=$f; fi
+            if [ "$n" = easy-failover-dashboard ]; then dash_rpm=$f; fi
           done
-          # re-resolve here for the asserts in this step
-          daemon_rpm=$(for f in build-pkg/easy-failover-*.rpm; do [ "$(rpm -qp --queryformat '%{NAME}' "$f")" = easy-failover ] && echo "$f"; done)
-          dash_rpm=$(for f in build-pkg/easy-failover-*.rpm; do [ "$(rpm -qp --queryformat '%{NAME}' "$f")" = easy-failover-dashboard ] && echo "$f"; done)
-          test -n "$daemon_rpm" && test -n "$dash_rpm" || { echo "::error::expected two rpms"; exit 1; }
+          if [ -z "$daemon_rpm" ] || [ -z "$dash_rpm" ]; then
+            echo "::error::expected two rpms (daemon=$daemon_rpm dashboard=$dash_rpm)"; exit 1
+          fi
+          echo "DAEMON_RPM=$daemon_rpm" >> "$GITHUB_ENV"
+          echo "DASH_RPM=$dash_rpm" >> "$GITHUB_ENV"
           # The daemon rpm must not carry dashboard files.
-          rpm -qpl "$daemon_rpm" | grep -qE 'easy-failover-dashboard' \
-            && { echo "::error::daemon rpm contains dashboard files"; exit 1; } || true
-          rpm -qpl "$dash_rpm" | grep -qE '/usr/lib/easy-failover-dashboard/server\.js$' \
-            || { echo "::error::dashboard rpm missing server.js"; exit 1; }
-          rpm -qp --requires "$dash_rpm" | grep -qE '^easy-failover( |$|>)' \
-            || { echo "::error::dashboard rpm must require easy-failover"; exit 1; }
+          if rpm -qpl "$daemon_rpm" | grep -qE 'easy-failover-dashboard'; then
+            echo "::error::daemon rpm contains dashboard files"; exit 1
+          fi
+          if ! rpm -qpl "$dash_rpm" | grep -qE '/usr/lib/easy-failover-dashboard/server\.js$'; then
+            echo "::error::dashboard rpm missing server.js"; exit 1
+          fi
+          if ! rpm -qp --requires "$dash_rpm" | grep -qE '^easy-failover([[:space:]]|$)'; then
+            echo "::error::dashboard rpm must require easy-failover"; exit 1
+          fi
 
       - name: Install daemon only
         run: dnf install -y "./$DAEMON_RPM"

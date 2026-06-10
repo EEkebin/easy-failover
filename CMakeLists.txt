@@ -265,7 +265,7 @@ set(CPACK_DEBIAN_DAEMON_PACKAGE_CONTROL_EXTRA
 
 # Dashboard .deb (depends on the daemon package + nodejs).
 set(CPACK_DEBIAN_DASHBOARD_PACKAGE_NAME "easy-failover-dashboard")
-set(CPACK_DEBIAN_DASHBOARD_PACKAGE_DEPENDS "easy-failover (>= ${CPACK_PACKAGE_VERSION}), nodejs (>= 20.9.0)")
+set(CPACK_DEBIAN_DASHBOARD_PACKAGE_DEPENDS "easy-failover, nodejs (>= 20.9.0)")
 set(CPACK_DEBIAN_DASHBOARD_PACKAGE_CONTROL_EXTRA
     "${CMAKE_CURRENT_SOURCE_DIR}/packaging/deb/dashboard/postinst;${CMAKE_CURRENT_SOURCE_DIR}/packaging/deb/dashboard/prerm;${CMAKE_CURRENT_SOURCE_DIR}/packaging/deb/dashboard/postrm")
 
