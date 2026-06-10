@@ -250,7 +250,38 @@ address = "10.0.0.12:7432"
 
 Each peer entry must be a TOML table. Peers are **optional**: zero peers is valid (a clean-slate or
 single-node config — the node simply has no failover partner). Add peers via the dashboard onboarding
-or by editing this file.
+or by editing this file. With **discovery** enabled (below), peers are learned automatically and you
+usually don't list any here.
+
+## Discovery (LAN auto-clustering)
+
+```toml
+[discovery]
+enabled = false
+cluster = "default"
+bind = "0.0.0.0:7433"
+interval_ms = 1000
+timeout_ms = 3000
+secret_file = "/etc/easy-failover/cluster.key"
+```
+
+When enabled, the node periodically broadcasts a small **beacon** on the LAN and learns of other
+nodes from theirs, so a failover pool forms with **no static `[[peers]]`** — install the service on
+each box with the same `cluster` and shared secret and they find each other.
+
+- `enabled`: optional boolean. Defaults to `false`.
+- `cluster`: pool name; only nodes with the same name (and secret) join each other.
+- `bind`: `host:port` the beacon socket uses. Defaults to `0.0.0.0:7433`.
+- `interval_ms` / `timeout_ms`: beacon period and how long a silent node stays in the pool before
+  it expires out of the election.
+- `secret_file`: path to a file holding the **shared cluster secret**. Every beacon is HMAC-SHA256
+  signed with it, and nodes reject beacons that don't verify — so a rogue host on the LAN can't join
+  the pool or hijack the VIP. **Required** when `enabled = true` (the daemon fails closed otherwise).
+  Generate one with `openssl rand -hex 32` and copy the same file to every node in the pool.
+
+> Status: the config, the signed-beacon protocol, and the dynamic peer table are implemented and
+> tested; the broadcast socket + runtime wiring (so it discovers live) land in a follow-up. See
+> [`discovery-design.md`](discovery-design.md).
 
 ## Validation Summary
 

@@ -2,6 +2,9 @@
 #include "config/Config.hpp"
 #include "core/Election.hpp"
 #include "core/FailoverDecision.hpp"
+#include "discovery/Beacon.hpp"
+#include "discovery/Hmac.hpp"
+#include "discovery/PeerTable.hpp"
 #include "heartbeat/HeartbeatLoop.hpp"
 #include "heartbeat/HeartbeatMessage.hpp"
 #include "heartbeat/HeartbeatTransport.hpp"
@@ -113,6 +116,12 @@ using easyfailover::serveLocalApiHttpOnce;
 using easyfailover::loadConfigFromFile;
 using easyfailover::loadConfigFromTomlString;
 using easyfailover::UdpHeartbeatTransport;
+using easyfailover::Beacon;
+using easyfailover::constantTimeEquals;
+using easyfailover::hmacSha256Hex;
+using easyfailover::PeerTable;
+using easyfailover::signBeacon;
+using easyfailover::verifySignedBeacon;
 
 class TestRunner {
   public:
@@ -4404,6 +4413,133 @@ void testLocalApiConfigResponseExposesTokenConfiguredFlag(TestRunner& runner) {
                   "serialized config must not expose the token file path or its contents");
 }
 
+// ---- Discovery: HMAC, beacon protocol, peer table ----
+
+void testHmacKnownAnswer(TestRunner& runner) {
+    // RFC 4231 Test Case 2 — proves the vendored SHA-256 + HMAC are correct.
+    const auto mac = hmacSha256Hex("Jefe", "what do ya want for nothing?");
+    runner.expect(mac == "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843",
+                  "HMAC-SHA256 matches RFC 4231 test vector");
+    runner.expect(constantTimeEquals("abc", "abc"), "constant-time equal matches");
+    runner.expect(!constantTimeEquals("abc", "abd"), "constant-time equal detects diff");
+    runner.expect(!constantTimeEquals("abc", "abcd"), "constant-time equal detects length diff");
+}
+
+void testBeaconRoundTrip(TestRunner& runner) {
+    Beacon beacon;
+    beacon.cluster = "prod-lan";
+    beacon.node_id = "node-a";
+    beacon.mac = "aa:bb:cc:dd:ee:ff";
+    beacon.priority = 150;
+    beacon.address = "10.0.0.11:7432";
+    beacon.healthy = true;
+    beacon.state = NodeState::Master;
+    beacon.seq = 7;
+
+    const std::string wire = signBeacon(beacon, "s3cr3t");
+    const auto result = verifySignedBeacon(wire, "s3cr3t", "prod-lan");
+    runner.expect(result.beacon.has_value(), "valid beacon verifies");
+    if (result.beacon) {
+        runner.expect(result.beacon->node_id == "node-a", "beacon node_id round-trips");
+        runner.expect(result.beacon->mac == "aa:bb:cc:dd:ee:ff", "beacon mac round-trips");
+        runner.expect(result.beacon->priority == 150, "beacon priority round-trips");
+        runner.expect(result.beacon->address == "10.0.0.11:7432", "beacon address round-trips");
+        runner.expect(result.beacon->healthy, "beacon healthy round-trips");
+        runner.expect(result.beacon->state == NodeState::Master, "beacon state round-trips");
+        runner.expect(result.beacon->seq == 7, "beacon seq round-trips");
+    }
+}
+
+void testBeaconRejectsForgery(TestRunner& runner) {
+    Beacon beacon;
+    beacon.cluster = "prod-lan";
+    beacon.node_id = "node-a";
+    beacon.mac = "aa:bb";
+    beacon.priority = 100;
+    beacon.address = "10.0.0.11:7432";
+    const std::string wire = signBeacon(beacon, "secret");
+
+    runner.expect(!verifySignedBeacon(wire, "wrong-secret", "prod-lan").beacon.has_value(),
+                  "beacon with wrong secret is rejected");
+    runner.expect(!verifySignedBeacon(wire, "secret", "other-cluster").beacon.has_value(),
+                  "beacon for a different cluster is rejected");
+    runner.expect(!verifySignedBeacon("garbage", "secret", "prod-lan").beacon.has_value(),
+                  "malformed payload is rejected");
+
+    // Tamper the signature (flip the last hex char before the trailing newline).
+    std::string badSig = wire;
+    const std::size_t i = badSig.size() - 2;
+    badSig[i] = (badSig[i] == 'a') ? 'b' : 'a';
+    runner.expect(!verifySignedBeacon(badSig, "secret", "prod-lan").beacon.has_value(),
+                  "tampered signature is rejected");
+
+    // Tamper the body (same length so only the HMAC, not the structure, breaks).
+    std::string badBody = wire;
+    const std::size_t p = badBody.find("prio=100");
+    runner.expect(p != std::string::npos, "priority field present in wire");
+    if (p != std::string::npos) {
+        badBody.replace(p, 8, "prio=999");
+        runner.expect(!verifySignedBeacon(badBody, "secret", "prod-lan").beacon.has_value(),
+                      "tampered body (priority bump) is rejected");
+    }
+}
+
+void testPeerTableObserveExcludeExpire(TestRunner& runner) {
+    PeerTable table;
+    Beacon a;
+    a.mac = "aa";
+    a.node_id = "node-a";
+    a.priority = 100;
+    Beacon b;
+    b.mac = "bb";
+    b.node_id = "node-b";
+    b.priority = 200;
+    b.healthy = true;
+
+    table.observe(a, 1000);
+    table.observe(b, 1000);
+    runner.expect(table.activePeers(1500, 3000).size() == 2, "two discovered peers active");
+
+    const auto excluded = table.activePeers(1500, 3000, "aa");
+    runner.expect(excluded.size() == 1, "self is excluded from the peer list");
+    if (excluded.size() == 1) {
+        runner.expect(excluded[0].node_id == "node-b", "remaining peer is node-b");
+        runner.expect(excluded[0].priority == 200, "discovered peer carries priority");
+        runner.expect(excluded[0].heartbeat_seen, "discovered peer counts as heartbeat-seen");
+    }
+
+    runner.expect(table.activePeers(5000, 3000).empty(), "silent peers expire past the timeout");
+    table.observe(a, 4500);
+    runner.expect(table.activePeers(5000, 3000).size() == 1, "a refreshed beacon keeps a peer active");
+}
+
+void testDiscoveryConfigParsesAndValidates(TestRunner& runner) {
+    const auto config = loadConfigFromTomlString(
+        "node_id = \"n\"\npriority = 100\n\n[vip]\naddress = \"\"\ninterface = \"\"\n\n"
+        "[discovery]\nenabled = true\ncluster = \"prod-lan\"\nbind = \"0.0.0.0:7433\"\n"
+        "interval_ms = 500\ntimeout_ms = 2000\nsecret_file = \"/etc/easy-failover/cluster.key\"\n");
+    runner.expect(config.discovery.enabled, "discovery.enabled parses");
+    runner.expect(config.discovery.cluster == "prod-lan", "discovery.cluster parses");
+    runner.expect(config.discovery.bind == "0.0.0.0:7433", "discovery.bind parses");
+    runner.expect(config.discovery.interval_ms == 500, "discovery.interval_ms parses");
+    runner.expect(config.discovery.secret_file == "/etc/easy-failover/cluster.key",
+                  "discovery.secret_file parses");
+
+    Config without_secret = validConfig();
+    without_secret.discovery.enabled = true;
+    without_secret.discovery.secret_file.clear();
+    runner.expect(contains(without_secret.validate(),
+                           "discovery.secret_file must be set when discovery.enabled is true"),
+                  "enabled discovery without a secret is rejected");
+
+    Config with_secret = validConfig();
+    with_secret.discovery.enabled = true;
+    with_secret.discovery.secret_file = "/etc/easy-failover/cluster.key";
+    runner.expect(!contains(with_secret.validate(),
+                            "discovery.secret_file must be set when discovery.enabled is true"),
+                  "enabled discovery with a secret passes the secret check");
+}
+
 int main() {
     TestRunner runner;
 
@@ -4983,6 +5119,22 @@ int main() {
     });
     runner.run("peer status from heartbeat carries state", [&runner] {
         testPeerStatusFromHeartbeatCarriesState(runner);
+    });
+
+    runner.run("discovery HMAC matches known-answer vector", [&runner] {
+        testHmacKnownAnswer(runner);
+    });
+    runner.run("discovery beacon signs and round-trips", [&runner] {
+        testBeaconRoundTrip(runner);
+    });
+    runner.run("discovery beacon rejects forgery and tampering", [&runner] {
+        testBeaconRejectsForgery(runner);
+    });
+    runner.run("discovery peer table observes, excludes self, and expires", [&runner] {
+        testPeerTableObserveExcludeExpire(runner);
+    });
+    runner.run("discovery config parses and validates", [&runner] {
+        testDiscoveryConfigParsesAndValidates(runner);
     });
 
     if (runner.failures() != 0) {

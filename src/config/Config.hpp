@@ -44,6 +44,18 @@ struct MutationSafetyConfig {
     bool allow_network_mutation = false;
 };
 
+// Zero-config LAN discovery: when enabled, the node broadcasts an HMAC-signed beacon and learns of
+// other nodes from theirs, so a pool forms with no static [[peers]]. The shared secret
+// (secret_file) authenticates membership — a node only joins if its beacon verifies.
+struct DiscoveryConfig {
+    bool enabled = false;
+    std::string cluster = "default";
+    std::string bind = "0.0.0.0:7433";
+    std::int64_t interval_ms = 1000;
+    std::int64_t timeout_ms = 3000;
+    std::string secret_file;
+};
+
 struct PeerConfig {
     std::string id;
     std::string address;
@@ -58,6 +70,7 @@ struct Config {
     ElectionConfig election;
     ApiConfig api;
     MutationSafetyConfig mutation_safety;
+    DiscoveryConfig discovery;
     std::vector<PeerConfig> peers;
 
     [[nodiscard]] std::vector<std::string> validate() const;

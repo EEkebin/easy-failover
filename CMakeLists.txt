@@ -110,6 +110,9 @@ add_library(
     src/core/Election.cpp
     src/core/FailoverDecision.cpp
     src/core/FailoverNode.cpp
+    src/discovery/Beacon.cpp
+    src/discovery/Hmac.cpp
+    src/discovery/PeerTable.cpp
     src/health/HealthCheck.cpp
     src/heartbeat/HeartbeatLoop.cpp
     src/heartbeat/HeartbeatMessage.cpp
