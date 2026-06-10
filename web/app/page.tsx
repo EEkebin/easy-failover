@@ -901,14 +901,66 @@ function StepRow({ step }: { step: StepProgress }) {
   );
 }
 
+/** Parse the host out of a node's apiBase (e.g. "http://10.0.0.12:8743" -> "10.0.0.12"). */
+function hostFromApiBase(apiBase: string): string {
+  try {
+    return new URL(apiBase).hostname;
+  } catch {
+    return "";
+  }
+}
+
+/** Loopback hosts are only reachable from the same machine, so not usable as a peer address. */
+function isLoopbackHost(host: string): boolean {
+  return host === "" || host === "127.0.0.1" || host === "localhost" || host === "::1";
+}
+
+/** Default heartbeat port (matches the daemon's `[heartbeat].bind` default of 0.0.0.0:7432). */
+const DEFAULT_HEARTBEAT_PORT = 7432;
+
+/**
+ * Seed the onboarding peer list from the dashboard's current fleet — every node
+ * the dashboard already knows about, including the node hosting the dashboard —
+ * so a freshly onboarded child joins the existing cluster instead of having its
+ * peers entered by hand. Heartbeat addresses are derived from each node's API
+ * host plus the default heartbeat port; the operator can still edit them.
+ *
+ * The current node usually appears with a loopback apiBase (the dashboard reads
+ * its own node over 127.0.0.1), which is NOT reachable from the child — we keep
+ * its row but leave the address blank for the operator to fill with this node's
+ * reachable IP.
+ */
+function peersFromFleet(fleet: NodeSummary[]): PeerInput[] {
+  const peers: PeerInput[] = [];
+  const seen = new Set<string>();
+  for (const node of fleet) {
+    const id = (node.label ?? node.id).trim();
+    if (id.length === 0 || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    const host = hostFromApiBase(node.apiBase);
+    const address = isLoopbackHost(host) ? "" : `${host}:${DEFAULT_HEARTBEAT_PORT}`;
+    peers.push({ id, address });
+  }
+  return peers.length > 0 ? peers : [{ id: "", address: "" }];
+}
+
 function OnboardWizard({
   onClose,
-  onSucceeded
+  onSucceeded,
+  fleet
 }: {
   onClose: () => void;
   onSucceeded: () => void;
+  fleet: NodeSummary[];
 }) {
-  const [form, setForm] = useState<WizardForm>(emptyWizardForm);
+  // Prefill the peer list from the current fleet + the node hosting the dashboard,
+  // so the child is onboarded as a member of the existing cluster.
+  const [form, setForm] = useState<WizardForm>(() => ({
+    ...emptyWizardForm(),
+    peers: peersFromFleet(fleet)
+  }));
   const [submitting, setSubmitting] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [steps, setSteps] = useState<StepProgress[]>([]);
@@ -1178,6 +1230,12 @@ function OnboardWizard({
 
           <div className="configSection">
             <h3>Peers</h3>
+            <p className="configHint">
+              Prefilled from this dashboard&apos;s fleet plus the current node, so the new node
+              joins the existing cluster. Addresses are <code>host:7432</code> (the heartbeat port) —
+              edit if a node uses a different one. The current node&apos;s address is blank because
+              the dashboard only knows it as localhost; set this node&apos;s reachable IP.
+            </p>
             {form.peers.map((peer, index) => (
               <div className="peerEditRow" key={index}>
                 <TextField
@@ -1704,6 +1762,7 @@ export default function DashboardPage() {
 
       {wizardOpen ? (
         <OnboardWizard
+          fleet={nodes}
           onClose={() => setWizardOpen(false)}
           onSucceeded={() => refreshNodes(true)}
         />
