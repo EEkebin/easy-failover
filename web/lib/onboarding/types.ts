@@ -98,9 +98,9 @@ export type ApiInput = {
 
 /**
  * The easy-failover config fields collected from the operator. These render to a
- * `config.toml` per `docs/config-reference.md`. `[mutation_safety]` is NOT part
- * of this shape: `allow_network_mutation = false` is always forced by config
- * generation and is never operator-controllable during onboarding.
+ * `config.toml` per `docs/config-reference.md`. `[mutation_safety]` is NOT part of
+ * this shape: config generation forces `allow_network_mutation = true` to match a
+ * packaged install, so an onboarded node participates in failover immediately.
  */
 export type ConfigInput = {
   /** Defaults to the target hostname when blank. */

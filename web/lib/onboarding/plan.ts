@@ -299,8 +299,19 @@ export function configPath(sysconfdir: string): string {
 export function writeConfigCommand(sysconfdir: string): string {
   const dir = `${sysconfdir.replace(/\/$/, "")}/easy-failover`;
   const path = configPath(sysconfdir);
+  const token = `${dir}/api.token`;
+  // Generate the write token once if absent (matches the package's auto-
+  // provisioning) so a write-mode config (read_only = false) doesn't fail closed.
+  // Prefer openssl; fall back to /dev/urandom. None of these read stdin, so the
+  // config text fed on stdin is still available for the trailing `cat`.
+  const genToken =
+    `[ -e ${shellQuote(token)} ] || { umask 077; ` +
+    `{ openssl rand -hex 32 2>/dev/null || ` +
+    `head -c 32 /dev/urandom | od -An -tx1 | tr -d '[:space:]'; } > ${shellQuote(token)}; }`;
   return [
     `install -d -m 0755 ${shellQuote(dir)}`,
+    genToken,
+    `chmod 0600 ${shellQuote(token)}`,
     `cat > ${shellQuote(path)}`,
     `chmod 0644 ${shellQuote(path)}`
   ].join(" && ");
@@ -360,7 +371,10 @@ export function verifyServiceCommand(initSystem: TargetFacts["initSystem"]): str
 
 /** Build the API poll command (read-only status snapshot) if api is enabled. */
 export function verifyApiCommand(apiBind: string): string {
-  // apiBind is like `127.0.0.1:8743`; query the status endpoint locally.
-  const url = `http://${apiBind}/api/v1/status`;
+  // apiBind is like `0.0.0.0:8743` or `127.0.0.1:8743`; query the status endpoint
+  // locally. A 0.0.0.0 (all-interfaces) bind isn't a connectable address, so poll
+  // loopback instead.
+  const target = apiBind.replace(/^0\.0\.0\.0:/, "127.0.0.1:");
+  const url = `http://${target}/api/v1/status`;
   return `{ curl -fsS ${shellQuote(url)} || wget -qO- ${shellQuote(url)}; }`;
 }

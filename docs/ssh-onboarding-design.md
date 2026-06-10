@@ -8,7 +8,8 @@ nothing here changes the daemon, the installer scripts, or the existing read-onl
 
 The onboarding flow deliberately mirrors the source install flow: it builds
 a Release binary, installs under a prefix, keeps configuration under `/etc/easy-failover`, validates
-the config with `--validate-config`, and never enables real VIP mutation as part of installation.
+the config with `--validate-config`, and lands a node configured like a packaged install (real VIP
+mutation on, API on in write mode, joined to the cluster).
 
 See also: [`config-reference.md`](config-reference.md) for the TOML schema the generated config must
 satisfy, [`failover-safety.md`](failover-safety.md) for the safety posture this flow must preserve,
@@ -22,8 +23,8 @@ satisfy, [`failover-safety.md`](failover-safety.md) for the safety posture this 
   TOML schema in [`config-reference.md`](config-reference.md) rather than inventing a parallel one.
 - Keep all SSH and all secret handling on the dashboard server. Never ship credentials, key
   material, or SSH logic to the browser.
-- Leave a freshly onboarded node in a safe state: installed, validated, running, but with real VIP
-  mutation disabled until the operator validates it.
+- Leave a freshly onboarded node installed, validated, and running as a full failover member
+  (configured like a packaged install), relying on the daemon's own warmup/heartbeat safety gates.
 - Surface clear, redacted progress and clear failures, with retry that is safe to run again.
 
 ## Non-Goals
@@ -180,8 +181,9 @@ below) and leaves the run in a known state.
    non-zero exit fails the run before the service is enabled. Reports: validation pass/fail and the
    validator's error output.
 7. **Enable and start the service** — using the **target's** init system (see below), install/enable
-   the unit and start it. The daemon starts with `allow_network_mutation = false`, so it runs without
-   moving a real VIP. Reports: service manager, unit name, enabled/started result.
+   the unit and start it. The daemon starts with `allow_network_mutation = true` (packaged-install
+   default) and moves the VIP once it wins the election and completes heartbeat warmup. Reports:
+   service manager, unit name, enabled/started result.
 8. **Verify** — confirm the service is active and, if `[api].enabled = true` was configured, poll the
    node's read-only API for a status snapshot and confirm heartbeat activity. Reports: service active
    state, API reachability, observed heartbeat/peer state. This is a verification step, not a VIP
@@ -206,17 +208,18 @@ should pick the service manager from detection, not assume systemd.
 
 ## Safety Posture
 
-Onboarding never enables real VIP mutation. This preserves the project's safety model from
-[`failover-safety.md`](failover-safety.md) and [`config-reference.md`](config-reference.md):
+Onboarding produces a node configured like a **packaged install** (see
+[`config-reference.md`](config-reference.md)): the generated config sets
+`[mutation_safety].allow_network_mutation = true` and enables the API on `0.0.0.0` in write mode (a
+token file is generated alongside the config). The node is given a real VIP and peers, so it
+participates in failover immediately. The daemon's own safety controls still apply:
 
-- The generated config sets `[mutation_safety].allow_network_mutation = false`. The node installs,
-  validates, and runs, but every VIP operation stays in dry-run command form.
-- Turning on real mutation is a separate, explicit operator decision made after the node has been
-  validated in the target environment. Onboarding must not flip that flag, and the dashboard must
-  not offer to flip it as part of onboarding.
-- Even if a future operator enables mutation later, the daemon still requires a non-dry-run runtime
-  and a successful heartbeat warmup cycle before moving a real VIP, and fails closed on heartbeat
-  errors. Onboarding does nothing to weaken those controls.
+- The daemon requires a non-dry-run runtime **and** a successful heartbeat warmup cycle before moving
+  a real VIP, and fails closed on heartbeat errors. Onboarding does nothing to weaken those controls.
+- A node with no VIP configured idles and performs no network operations, so the clean-slate posture
+  still holds for an unconfigured node.
+- The write API is reachable on `0.0.0.0` but is gated by the generated bearer token (the same model
+  as a packaged install); the token lives only on the target.
 
 ## Failure Handling
 
@@ -232,8 +235,8 @@ Each step records what it changed so the operator knows the node's state:
 - Failure in **Write config / Validate** leaves easy-failover installed but the service not enabled;
   an invalid config never reaches an enabled service because validation gates enablement.
 - Failure in **Enable / Verify** leaves the service installed and, depending on the failure, possibly
-  started — but always with `allow_network_mutation = false`, so a freshly onboarded node can never
-  fight over a real VIP, validated or not.
+  started. A node only contends for a VIP once it is running with that VIP configured and has
+  completed a heartbeat warmup; a node that never reached a healthy running state does not move a VIP.
 
 The run summary states the reached step and the node's resulting state explicitly.
 
@@ -259,10 +262,10 @@ where it failed.
 - The operator can **retry** the run after fixing the cause (wrong password, missing repo access,
   unreachable peer), or fall back to **manual recovery** using the same documented manual flow in
   [`../README.md`](../README.md) (install, write config, `--validate-config`, enable the service).
-- Because real VIP mutation stays disabled, a half-finished or abandoned onboarding never endangers
-  an existing VIP owner. Cleanup of a partially installed node uses
-  package removal (which keeps `config.toml` unless
-  `--purge-config` is passed).
+- A half-finished run that never reached a healthy running state does not move a VIP (the daemon
+  needs a non-dry-run runtime plus a heartbeat warmup first), so an abandoned onboarding does not
+  endanger an existing VIP owner. Cleanup of a partially installed node uses package removal (which
+  keeps `config.toml` unless `--purge-config` is passed).
 
 ## Integration with the Authenticated Write API
 

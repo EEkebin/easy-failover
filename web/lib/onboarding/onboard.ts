@@ -318,7 +318,8 @@ export async function onboard(
 
     // Step 5: Write config (do not clobber a divergent existing config silently).
     {
-      const generated = generateConfigToml(req.config);
+      const tokenPath = `${sysconfdir.replace(/\/$/, "")}/easy-failover/api.token`;
+      const generated = generateConfigToml(req.config, { authTokenFile: tokenPath });
       reachedStep = "write-config";
       // First, read any existing config to detect divergence. Run privileged: a
       // root-only (0600) existing config would otherwise read empty under the
@@ -372,7 +373,7 @@ export async function onboard(
       if (!result) {
         return {
           steps,
-          summary: summarize(false, "installed and validated, but enable/start failed (allow_network_mutation=false)")
+          summary: summarize(false, "installed and validated, but enable/start failed")
         };
       }
     }
@@ -386,8 +387,10 @@ export async function onboard(
       const active = svc.code === 0 && /active|running|up|true/i.test(svc.stdout);
 
       let apiDetail = "";
-      if (req.config.api?.enabled) {
-        const bind = req.config.api.bind ?? "127.0.0.1:8743";
+      // The generated config always enables the API (matching a packaged install),
+      // unless the operator explicitly disabled it.
+      if (req.config.api?.enabled !== false) {
+        const bind = req.config.api?.bind ?? "0.0.0.0:8743";
         const apiPlanned = privileged(verifyApiCommand(bind), req.connection.sudo);
         const apiResult = await runPlanned(runner, apiPlanned, sudoPassword);
         apiDetail = apiResult.code === 0 ? `; API reachable at ${bind}` : `; API not yet reachable at ${bind}`;
@@ -420,7 +423,7 @@ export async function onboard(
       steps,
       summary: summarize(
         true,
-        "onboarded: installed, validated, running with allow_network_mutation=false (real VIP mutation disabled)"
+        "onboarded: installed, validated, and running as a full failover node (mutation on, API on)"
       )
     };
   } catch (err) {

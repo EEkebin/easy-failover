@@ -710,7 +710,7 @@ function emptyWizardForm(): WizardForm {
     electionPreempt: true,
     apiEnabled: true,
     apiBind: "",
-    apiReadOnly: true
+    apiReadOnly: false
   };
 }
 
