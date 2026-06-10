@@ -114,6 +114,18 @@ Config configFromTable(const toml::table& root) {
                          config.mutation_safety.allow_network_mutation);
     }
 
+    if (const auto* discovery = optionalTable(root, "discovery"); discovery != nullptr) {
+        config.discovery.enabled = optionalBool(*discovery, "enabled", config.discovery.enabled);
+        config.discovery.cluster = optionalString(*discovery, "cluster", config.discovery.cluster);
+        config.discovery.bind = optionalString(*discovery, "bind", config.discovery.bind);
+        config.discovery.interval_ms =
+            optionalInt(*discovery, "interval_ms", config.discovery.interval_ms);
+        config.discovery.timeout_ms =
+            optionalInt(*discovery, "timeout_ms", config.discovery.timeout_ms);
+        config.discovery.secret_file =
+            optionalString(*discovery, "secret_file", config.discovery.secret_file);
+    }
+
     if (const auto* peers_node = root.get("peers"); peers_node != nullptr) {
         const auto* peers = peers_node->as_array();
         if (peers == nullptr) {
@@ -187,6 +199,25 @@ std::vector<std::string> Config::validate() const {
     }
     if (api.enabled && api.bind.empty()) {
         errors.emplace_back("api.bind must not be empty when api.enabled is true");
+    }
+    if (discovery.enabled) {
+        // Beacons are authenticated, so a secret is mandatory: fail closed (like the write API).
+        if (discovery.secret_file.empty()) {
+            errors.emplace_back(
+                "discovery.secret_file must be set when discovery.enabled is true");
+        }
+        if (discovery.cluster.empty()) {
+            errors.emplace_back("discovery.cluster must not be empty when discovery.enabled is true");
+        }
+        if (discovery.bind.empty()) {
+            errors.emplace_back("discovery.bind must not be empty when discovery.enabled is true");
+        }
+        if (discovery.interval_ms <= 0) {
+            errors.emplace_back("discovery.interval_ms must be positive");
+        }
+        if (discovery.timeout_ms <= 0) {
+            errors.emplace_back("discovery.timeout_ms must be positive");
+        }
     }
 
     return errors;
