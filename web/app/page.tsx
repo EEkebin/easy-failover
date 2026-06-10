@@ -1317,10 +1317,11 @@ function OnboardWizard({
 
           <div className="configSection">
             <h3>Mutation safety</h3>
-            <p className="configHint warn">
-              <code>allow_network_mutation</code> is always forced{" "}
-              <strong>off</strong> by onboarding. Real VIP movement must be
-              enabled later via the config editor after it has been tested.
+            <p className="configHint">
+              The node is configured like a packaged install:{" "}
+              <code>allow_network_mutation</code> is <strong>on</strong>, so it
+              takes over the VIP once it wins the election (after the daemon&apos;s
+              heartbeat warmup). It idles harmlessly until then.
             </p>
             <CheckField
               label="allow overwriting a divergent existing config on the target"
