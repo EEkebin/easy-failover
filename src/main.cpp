@@ -1,8 +1,10 @@
 #include "api/LocalApi.hpp"
 #include "config/Config.hpp"
 #include "health/HealthCheck.hpp"
+#include "discovery/LinuxUdpDiscoveryTransport.hpp"
 #include "heartbeat/HeartbeatTransport.hpp"
 #include "heartbeat/UdpHeartbeatTransport.hpp"
+#include "platform/MacAddress.hpp"
 #include "platform/linux/LinuxVipOwnershipProbe.hpp"
 #include "platform/linux/LinuxVipManager.hpp"
 #include "runtime/DaemonRuntime.hpp"
@@ -14,7 +16,9 @@
 #include <cstdint>
 #include <condition_variable>
 #include <exception>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -287,6 +291,43 @@ int main(int argc, char** argv) {
             .dry_run = dry_run}};
         easyfailover::LinuxVipOwnershipProbe ownership_probe;
         easyfailover::UdpHeartbeatTransport heartbeat_transport{config.heartbeat.bind};
+
+        // Discovery (opt-in): broadcast signed beacons so nodes auto-join the pool. The shared
+        // secret authenticates membership; without it (validate already requires it) we fail closed.
+        std::optional<easyfailover::LinuxUdpDiscoveryTransport> discovery_transport;
+        easyfailover::DiscoveryContext discovery_context;
+        if (config.discovery.enabled) {
+            std::string secret;
+            if (std::ifstream secret_file{config.discovery.secret_file}) {
+                std::stringstream buffer;
+                buffer << secret_file.rdbuf();
+                secret = buffer.str();
+            }
+            while (!secret.empty() && (secret.back() == '\n' || secret.back() == '\r' ||
+                                       secret.back() == ' ' || secret.back() == '\t')) {
+                secret.pop_back();
+            }
+            if (secret.empty()) {
+                spdlog::error("discovery enabled but secret_file is empty or unreadable: {}",
+                              config.discovery.secret_file);
+                return EXIT_FAILURE;
+            }
+            const std::string mac = easyfailover::readInterfaceMac(config.vip.interface);
+            discovery_transport.emplace(config.discovery.bind);
+            if (!discovery_transport->ok()) {
+                spdlog::warn("discovery socket bind failed bind={}; discovery disabled this run",
+                             config.discovery.bind);
+            } else {
+                discovery_context = easyfailover::DiscoveryContext{
+                    .transport = &*discovery_transport,
+                    .self_mac = mac.empty() ? config.node_id : mac,
+                    .secret = secret};
+                spdlog::info("discovery enabled cluster=\"{}\" bind={} identity={}",
+                             config.discovery.cluster, config.discovery.bind,
+                             discovery_context.self_mac);
+            }
+        }
+
         auto shutdown_state = easyfailover::ShutdownSignalState{};
         easyfailover::pollShutdownSignals(shutdown_state);
         auto api_snapshot_mutex = std::mutex{};
@@ -375,7 +416,8 @@ int main(int argc, char** argv) {
                 .initial_state = easyfailover::DaemonLifecycleState::Stopped,
                 .shutdown_state = &shutdown_state,
                 .config_prevalidated = true},
-            vip_manager, ownership_probe, heartbeat_transport, update_api_snapshot);
+            vip_manager, ownership_probe, heartbeat_transport, update_api_snapshot,
+            discovery_context);
         update_api_snapshot(loop_result);
         spdlog::info("{}", easyfailover::formatRuntimeLoopEvent(
                               loop_result,

@@ -46,11 +46,20 @@ Built and unit-tested (pure, no sockets):
   expire stale entries, project to the decision layer's `PeerStatus`.
 - `[discovery]` config + validation.
 
+Also built and wired (phase 2):
+
+- `src/discovery/LinuxUdpDiscoveryTransport.{hpp,cpp}` — a UDP broadcast socket
+  (SO_REUSEADDR/REUSEPORT/BROADCAST, non-blocking drain, broadcast to 255.255.255.255); degrades to
+  a no-op if the socket can't bind, so it never crashes the daemon.
+- `src/platform/MacAddress.hpp` + `LinuxMacAddress.cpp` — reads the VIP interface's MAC for identity.
+- Runtime loop wiring (`DiscoveryContext`): each tick the daemon drains + verifies beacons into the
+  peer table, broadcasts its own signed beacon on the interval, and folds the discovered peers into
+  the election. Opt-in (`[discovery].enabled` + a transport), so existing behavior is unchanged.
+- `main.cpp` constructs the transport, loads the secret (fail-closed if empty), reads the MAC, and
+  passes the context to the loop.
+
 Remaining (follow-up PRs):
 
-1. **Transport + runtime wiring** — a UDP broadcast socket (send + receive), reading the VIP
-   interface MAC for identity, and feeding the peer table into the decision loop each tick so the
-   pool forms live.
-2. **Dashboard + Cockpit pool view** — show every discovered node with its priority/state/VIP, and
+1. **Dashboard + Cockpit pool view** — show every discovered node with its priority/state/VIP, and
    let an operator set priority / designate the master.
-3. **Cockpit "add node"** — SSH-install on a new host (it then auto-joins); seed the cluster secret.
+2. **Cockpit "add node"** — SSH-install on a new host (it then auto-joins); seed the cluster secret.

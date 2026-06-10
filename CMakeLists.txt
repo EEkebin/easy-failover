@@ -112,6 +112,7 @@ add_library(
     src/core/FailoverNode.cpp
     src/discovery/Beacon.cpp
     src/discovery/Hmac.cpp
+    src/discovery/LinuxUdpDiscoveryTransport.cpp
     src/discovery/PeerTable.cpp
     src/health/HealthCheck.cpp
     src/heartbeat/HeartbeatLoop.cpp
@@ -121,6 +122,7 @@ add_library(
     src/platform/NetworkCommandRunner.cpp
     src/platform/linux/LinuxHealthCommandRunner.cpp
     src/platform/linux/LinuxHostname.cpp
+    src/platform/linux/LinuxMacAddress.cpp
     src/platform/linux/LinuxNetworkCommandRunner.cpp
     src/platform/linux/LinuxVipOwnershipProbe.cpp
     src/platform/linux/LinuxVipManager.cpp
