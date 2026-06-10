@@ -28,9 +28,11 @@ the **backend only** (issue #100); the dashboard wizard UI is a separate issue
 `connect → detect → install-prereqs → fetch-build-install → write-config →
 validate-config → enable-start → verify`. Each step yields a redacted progress
 event and the sequence stops on the first failure, recording the node's
-resulting state. The generated config always forces
-`[mutation_safety].allow_network_mutation = false`, so an onboarded node never
-moves a real VIP.
+resulting state. The generated config matches a packaged install's
+auto-provisioned defaults: `[mutation_safety].allow_network_mutation = true` and
+the API enabled on `0.0.0.0` in write mode (a token file is generated alongside
+the config). The new node also inherits the current node's peers, so it joins the
+cluster and participates in failover immediately.
 
 ## Host-key policy: TOFU-with-pinning + optional strict mode
 
