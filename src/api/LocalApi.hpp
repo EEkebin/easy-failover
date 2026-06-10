@@ -15,6 +15,7 @@ struct ApiConfig;
 struct Config;
 struct DaemonLifecycleResult;
 struct HealthCheckResult;
+struct PeerStatus;
 struct RuntimeLogContext;
 class ShutdownSignalState;
 struct VipOperationResult;
@@ -67,12 +68,22 @@ struct LocalApiStatusHealth {
     std::string detail;
 };
 
+// One other node this node currently observes (via configured heartbeats or LAN discovery). The
+// `pool` is the local node plus these — what the dashboard/Cockpit render as the failover pool.
+struct LocalApiStatusPoolMember {
+    std::string node_id;
+    int priority = 0;
+    bool healthy = false;
+    std::string state;
+};
+
 struct LocalApiStatusResponse {
     LocalApiStatusNode node;
     LocalApiStatusVip vip;
     LocalApiStatusLifecycle lifecycle;
     LocalApiStatusHeartbeat heartbeat;
     LocalApiStatusHealth health;
+    std::vector<LocalApiStatusPoolMember> pool;
 };
 
 struct LocalApiConfigVip {
@@ -287,7 +298,8 @@ using LocalApiHttpStartupObserver = std::function<void(const LocalApiHttpServeRe
     const HealthCheckResult& health,
     NodeState local_node_state,
     bool dry_run,
-    int peers_observed = 0);
+    int peers_observed = 0,
+    const std::vector<PeerStatus>& pool = {});
 
 [[nodiscard]] LocalApiConfigResponse buildLocalApiConfigResponse(const Config& config);
 

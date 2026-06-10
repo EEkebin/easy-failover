@@ -58,8 +58,16 @@ Also built and wired (phase 2):
 - `main.cpp` constructs the transport, loads the secret (fail-closed if empty), reads the MAC, and
   passes the context to the loop.
 
+Also built (phase 3, pool view):
+
+- The daemon exposes the observed pool at `GET /api/v1/status` as a `pool` array
+  (`node_id`/`priority`/`healthy`/`state`), sourced from the merged peer set used by the election.
+- The dashboard and the Cockpit plugin render it as the **failover pool** (this node + the observed
+  members, each with role, priority, health).
+
 Remaining (follow-up PRs):
 
-1. **Dashboard + Cockpit pool view** — show every discovered node with its priority/state/VIP, and
-   let an operator set priority / designate the master.
+1. **Set priority / designate master from the UI** — editing a *remote* node's priority needs that
+   node's write token in the dashboard roster (a per-node token store); the local node's priority is
+   already editable via the config editor.
 2. **Cockpit "add node"** — SSH-install on a new host (it then auto-joins); seed the cluster secret.

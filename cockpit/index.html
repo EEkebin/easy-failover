@@ -39,6 +39,20 @@
         </section>
 
         <section class="ef-card">
+            <h2>Failover pool</h2>
+            <p class="ef-muted">
+                This node plus every other node it observes (configured peers and/or LAN discovery).
+                The highest-priority healthy node owns the VIP.
+            </p>
+            <table class="ef-pool">
+                <thead>
+                    <tr><th>Node</th><th>Role</th><th>Priority</th><th>Health</th></tr>
+                </thead>
+                <tbody id="pool-rows"></tbody>
+            </table>
+        </section>
+
+        <section class="ef-card">
             <h2>Virtual IP</h2>
             <p class="ef-muted">
                 Set the address and interface this node may own, then apply. Applying

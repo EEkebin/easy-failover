@@ -29,6 +29,14 @@ export type StatusResponse = {
     status: string;
     detail: string;
   };
+  // Other nodes this node currently observes (configured peers and/or LAN discovery). The pool is
+  // this node plus these. Absent on older daemons.
+  pool?: Array<{
+    node_id: string;
+    priority: number;
+    healthy: boolean;
+    state: string;
+  }>;
 };
 
 export type ConfigResponse = {
@@ -88,6 +96,7 @@ export type PeerStatus = {
   state: string;
   healthy: boolean;
   last_seen: string;
+  priority?: number;
 };
 
 export type DashboardData = {
@@ -281,6 +290,22 @@ export function peersFromConfig(config: ConfigResponse, observed: number): PeerS
 }
 
 /**
+ * Build the peer rows from the daemon's observed pool (configured heartbeats and/or LAN
+ * discovery). Used in preference to the static config peers when the daemon reports a pool, so a
+ * discovery-formed cluster shows its live members.
+ */
+export function peersFromPool(status: StatusResponse): PeerStatus[] {
+  return (status.pool ?? []).map((member) => ({
+    id: member.node_id,
+    address: "",
+    state: member.state,
+    healthy: member.healthy,
+    last_seen: "live",
+    priority: member.priority
+  }));
+}
+
+/**
  * Adapt a reachable NodeView into the DashboardData shape the existing panels
  * consume. Returns null when the view lacks the status/config needed to render
  * (e.g. an unreachable node), letting the caller show an "unreachable" state.
@@ -294,7 +319,12 @@ export function dashboardDataFromView(view: NodeView): DashboardData | null {
     api_base: "/api/nodes",
     status: view.status,
     config: view.config,
-    peers: peersFromConfig(view.config, view.status.heartbeat.peers_observed),
+    // Prefer the daemon's observed pool (covers discovery, where there are no config peers);
+    // fall back to the static config peers for older daemons.
+    peers:
+      (view.status.pool?.length ?? 0) > 0
+        ? peersFromPool(view.status)
+        : peersFromConfig(view.config, view.status.heartbeat.peers_observed),
     events: view.events ?? []
   };
 }

@@ -85,10 +85,11 @@ function PeerRow({ peer }: { peer: PeerStatus }) {
     <li className="peerRow">
       <div className="peerMain">
         <span className="peerName">{peer.id}</span>
-        <span className="peerAddress">{peer.address}</span>
+        {peer.address ? <span className="peerAddress">{peer.address}</span> : null}
       </div>
       <div className="peerMeta">
         <Pill value={peer.state} />
+        {peer.priority !== undefined ? <span>priority {peer.priority}</span> : null}
         <span>{peer.healthy ? "healthy" : "unhealthy"}</span>
         <span>{peer.last_seen}</span>
       </div>
@@ -1640,16 +1641,23 @@ export default function DashboardPage() {
             <section className="panel widePanel">
               <div className="panelHeader">
                 <div>
-                  <span className="eyebrow">Peers</span>
-                  <h2>Configured nodes</h2>
+                  <span className="eyebrow">Pool</span>
+                  <h2>Failover pool</h2>
                 </div>
                 <Clock3 aria-hidden="true" className="panelIcon" />
               </div>
-              <ul className="peerList">
-                {data.peers.map((peer) => (
-                  <PeerRow key={peer.id} peer={peer} />
-                ))}
-              </ul>
+              {data.peers.length > 0 ? (
+                <ul className="peerList">
+                  {data.peers.map((peer) => (
+                    <PeerRow key={peer.id} peer={peer} />
+                  ))}
+                </ul>
+              ) : (
+                <p className="configHint">
+                  No other nodes yet — this is the only node in the pool. Add peers (or enable LAN
+                  discovery so nodes join automatically), and they&apos;ll appear here.
+                </p>
+              )}
             </section>
 
             <section className="panel">

@@ -62,6 +62,24 @@
         $("s-vip").textContent = vipText;
         $("s-owner").innerHTML = pill(vip.local_owner ? "yes" : "no", !!vip.local_owner);
         $("s-detail").textContent = lifecycle.detail || "—";
+
+        renderPool(node, status.pool || []);
+    }
+
+    function poolRow(id, state, priority, healthy, isSelf) {
+        const name = escapeHtml(id || "—") + (isSelf ? " <span class=\"ef-muted\">(this node)</span>" : "");
+        const healthGood = healthy === true;
+        return "<tr><td>" + name + "</td><td>" + pill(state || "unknown") +
+            "</td><td>" + (priority === undefined ? "—" : escapeHtml(String(priority))) +
+            "</td><td>" + pill(healthGood ? "healthy" : "unhealthy", healthGood) + "</td></tr>";
+    }
+
+    function renderPool(node, pool) {
+        const rows = [poolRow(node.id, node.state, node.priority, node.healthy, true)];
+        for (const member of pool) {
+            rows.push(poolRow(member.node_id, member.state, member.priority, member.healthy, false));
+        }
+        $("pool-rows").innerHTML = rows.join("");
     }
 
     function loadStatus() {
