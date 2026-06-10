@@ -279,9 +279,11 @@ each box with the same `cluster` and shared secret and they find each other.
   the pool or hijack the VIP. **Required** when `enabled = true` (the daemon fails closed otherwise).
   Generate one with `openssl rand -hex 32` and copy the same file to every node in the pool.
 
-> Status: the config, the signed-beacon protocol, and the dynamic peer table are implemented and
-> tested; the broadcast socket + runtime wiring (so it discovers live) land in a follow-up. See
-> [`discovery-design.md`](discovery-design.md).
+When the daemon runs with discovery enabled it broadcasts a beacon each `interval_ms`, folds
+verified peers into the election, and expires silent ones — so the pool forms and elects a master
+with no static peers. Identity is the **MAC of `vip.interface`** (falling back to `node_id` when no
+interface is configured). See [`discovery-design.md`](discovery-design.md). The dashboard/Cockpit
+pool view (set priority / pick master) is the next phase.
 
 ## Validation Summary
 

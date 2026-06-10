@@ -2,6 +2,7 @@
 
 #include "config/Config.hpp"
 #include "core/FailoverDecision.hpp"
+#include "discovery/DiscoveryTransport.hpp"
 #include "health/HealthCheck.hpp"
 #include "heartbeat/HeartbeatLoop.hpp"
 #include "platform/VipManager.hpp"
@@ -165,11 +166,22 @@ struct DaemonLoopResult {
                                                    VipOwnershipProbe& ownership_probe,
                                                    HeartbeatTransport& heartbeat_transport);
 
+// Live discovery wiring for the loop. When `transport` is non-null and `[discovery].enabled` is
+// set, the loop broadcasts a signed beacon each interval and folds verified beacons from peers
+// into the election. A default (transport == nullptr) disables discovery, so existing callers and
+// tests are unaffected.
+struct DiscoveryContext {
+    DiscoveryTransport* transport = nullptr;
+    std::string self_mac; // this node's stable identity (MAC of the VIP interface)
+    std::string secret;   // shared cluster secret, already loaded from secret_file
+};
+
 [[nodiscard]] DaemonLoopResult runDaemonRuntimeLoop(
     const DaemonLoopRequest& request,
     VipManager& vip_manager,
     VipOwnershipProbe& ownership_probe,
     HeartbeatTransport& heartbeat_transport,
-    const std::function<void(const DaemonLoopResult&)>& result_observer);
+    const std::function<void(const DaemonLoopResult&)>& result_observer,
+    const DiscoveryContext& discovery = {});
 
 } // namespace easyfailover

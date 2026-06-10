@@ -1,7 +1,11 @@
 #include "runtime/DaemonRuntime.hpp"
 
+#include "discovery/Beacon.hpp"
+#include "discovery/PeerTable.hpp"
+
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <map>
 #include <thread>
 #include <utility>
@@ -216,6 +220,21 @@ void expirePeers(std::map<std::string, RecentPeerStatus>& recent_peers,
                        });
 }
 
+// Build the beacon this node advertises from its current runtime status + identity.
+[[nodiscard]] Beacon makeBeacon(const Config& config, const std::string& self_mac,
+                                const LocalNodeStatus& local_status, std::uint64_t seq) {
+    Beacon beacon;
+    beacon.cluster = config.discovery.cluster;
+    beacon.node_id = local_status.node_id.empty() ? config.node_id : local_status.node_id;
+    beacon.mac = self_mac;
+    beacon.priority = local_status.priority;
+    beacon.address = config.heartbeat.bind; // informational; discovery routes via broadcast
+    beacon.healthy = local_status.healthy;
+    beacon.state = local_status.state;
+    beacon.seq = seq;
+    return beacon;
+}
+
 } // namespace
 
 DaemonLifecycleResult runDaemonLifecycleOnce(const DaemonLifecycleRequest& request,
@@ -333,7 +352,8 @@ DaemonLoopResult runDaemonRuntimeLoop(
     VipManager& vip_manager,
     VipOwnershipProbe& ownership_probe,
     HeartbeatTransport& heartbeat_transport,
-    const std::function<void(const DaemonLoopResult&)>& result_observer) {
+    const std::function<void(const DaemonLoopResult&)>& result_observer,
+    const DiscoveryContext& discovery) {
     auto result = DaemonLoopResult{.initial_state = request.initial_state,
                                    .final_state = request.initial_state,
                                    .stop_reason = DaemonLoopStopReason::MaxIterations,
@@ -377,6 +397,14 @@ DaemonLoopResult runDaemonRuntimeLoop(
                                         .healthy = true,
                                         .state = NodeState::Backup};
     auto real_mutation_warmup_complete = false;
+
+    // Discovery: active only when enabled in config and a transport was supplied.
+    const bool discovery_active =
+        request.config.discovery.enabled && discovery.transport != nullptr;
+    auto discovery_peers = PeerTable{};
+    auto discovery_seq = std::uint64_t{0};
+    auto discovery_send_was_due = false;
+    auto last_discovery_send_elapsed_ms = std::int64_t{0};
     for (std::size_t index = 0;
          request.options.run_until_shutdown || index < request.options.max_iterations; ++index) {
         if (request.shutdown_state != nullptr) {
@@ -435,7 +463,36 @@ DaemonLoopResult runDaemonRuntimeLoop(
         }
         expirePeers(recent_peers, elapsed_ms, request.config.heartbeat.timeout_ms);
 
-        const auto peer_statuses = activePeerStatuses(recent_peers);
+        // Discovery: ingest verified beacons from the LAN and broadcast our own. Best-effort —
+        // a transport hiccup never faults the failover loop.
+        if (discovery_active) {
+            for (const auto& payload : discovery.transport->drain()) {
+                const auto verified = verifySignedBeacon(payload, discovery.secret,
+                                                         request.config.discovery.cluster);
+                if (verified.beacon.has_value() &&
+                    PeerTable::identityOf(*verified.beacon) != discovery.self_mac) {
+                    discovery_peers.observe(*verified.beacon, elapsed_ms);
+                }
+            }
+            const bool discovery_send_due =
+                !discovery_send_was_due ||
+                elapsed_ms - last_discovery_send_elapsed_ms >= request.config.discovery.interval_ms;
+            if (discovery_send_due) {
+                discovery_send_was_due = true;
+                last_discovery_send_elapsed_ms = elapsed_ms;
+                const auto beacon =
+                    makeBeacon(request.config, discovery.self_mac, local_status, ++discovery_seq);
+                discovery.transport->broadcast(signBeacon(beacon, discovery.secret));
+            }
+            discovery_peers.prune(elapsed_ms, request.config.discovery.timeout_ms);
+        }
+
+        auto peer_statuses = activePeerStatuses(recent_peers);
+        if (discovery_active) {
+            const auto discovered = discovery_peers.activePeers(
+                elapsed_ms, request.config.discovery.timeout_ms, discovery.self_mac);
+            peer_statuses.insert(peer_statuses.end(), discovered.begin(), discovered.end());
+        }
         auto lifecycle_config = request.config;
         const auto heartbeat_cycle_warmed_up =
             heartbeat_schedule.due && heartbeat_receive_state.receive_attempted &&

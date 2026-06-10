@@ -55,3 +55,15 @@ auth_token_file = ""
 allow_network_mutation = true
 
 # Peers are added via the dashboard (or here as [[peers]] entries). None by default.
+
+# Zero-config LAN auto-clustering (off by default). When enabled, nodes broadcast a
+# signed beacon and discover each other automatically — no static [[peers]] needed.
+# Every node in the pool needs the SAME cluster name and secret file. Generate the
+# secret once with `openssl rand -hex 32` and copy it to each node.
+# [discovery]
+# enabled = true
+# cluster = "default"
+# bind = "0.0.0.0:7433"
+# interval_ms = 1000
+# timeout_ms = 3000
+# secret_file = "/etc/easy-failover/cluster.key"

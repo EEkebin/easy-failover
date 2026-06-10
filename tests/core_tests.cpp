@@ -118,6 +118,8 @@ using easyfailover::loadConfigFromTomlString;
 using easyfailover::UdpHeartbeatTransport;
 using easyfailover::Beacon;
 using easyfailover::constantTimeEquals;
+using easyfailover::DiscoveryContext;
+using easyfailover::DiscoveryTransport;
 using easyfailover::hmacSha256Hex;
 using easyfailover::PeerTable;
 using easyfailover::signBeacon;
@@ -161,6 +163,12 @@ class TestRunner {
 
 bool contains(const std::vector<std::string>& values, const std::string_view expected) {
     return std::find(values.begin(), values.end(), expected) != values.end();
+}
+
+[[nodiscard]] bool contains_peer(const std::vector<easyfailover::PeerStatus>& peers,
+                                 const std::string_view node_id) {
+    return std::any_of(peers.begin(), peers.end(),
+                       [&](const easyfailover::PeerStatus& peer) { return peer.node_id == node_id; });
 }
 
 bool containsText(const std::string& value, const std::string_view expected) {
@@ -412,6 +420,30 @@ class FakeVipOwnershipProbe final : public VipOwnershipProbe {
     HeartbeatTransport& heartbeat_transport) {
     return easyfailover::runDaemonRuntimeLoop(request, vip_manager, ownership_probe,
                                              heartbeat_transport);
+}
+
+// Scripted discovery transport: returns queued payloads once on drain(), records broadcasts.
+class FakeDiscoveryTransport final : public DiscoveryTransport {
+  public:
+    std::vector<std::string> to_deliver;
+    std::vector<std::string> broadcasts;
+
+    void broadcast(const std::string& payload) override { broadcasts.push_back(payload); }
+    [[nodiscard]] std::vector<std::string> drain() override {
+        auto out = to_deliver;
+        to_deliver.clear();
+        return out;
+    }
+};
+
+[[nodiscard]] easyfailover::DaemonLoopResult runDaemonRuntimeLoopWithDiscovery(
+    const DaemonLoopRequest& request,
+    VipManager& vip_manager,
+    const DiscoveryContext& discovery) {
+    auto ownership_probe = FakeVipOwnershipProbe{};
+    auto heartbeat_transport = DisabledHeartbeatTransport{};
+    return easyfailover::runDaemonRuntimeLoop(request, vip_manager, ownership_probe,
+                                             heartbeat_transport, {}, discovery);
 }
 
 Config validConfig() {
@@ -4540,6 +4572,63 @@ void testDiscoveryConfigParsesAndValidates(TestRunner& runner) {
                   "enabled discovery with a secret passes the secret check");
 }
 
+void testDiscoveryFoldsBeaconsIntoElection(TestRunner& runner) {
+    // No static peers; a higher-priority healthy master is discovered via a signed beacon. The
+    // local node must broadcast its own beacon and must NOT become master (the peer wins).
+    auto config = validConfig();
+    config.peers.clear();
+    config.discovery.enabled = true;
+    config.discovery.cluster = "test-pool";
+    config.discovery.secret_file = "/etc/easy-failover/cluster.key"; // non-empty for validate()
+    config.discovery.interval_ms = 1;
+    config.discovery.timeout_ms = 100000;
+
+    Beacon peer;
+    peer.cluster = "test-pool";
+    peer.node_id = "node-b";
+    peer.mac = "bb:bb:bb:bb:bb:bb";
+    peer.priority = 200;
+    peer.address = "10.0.0.12:7432";
+    peer.healthy = true;
+    peer.state = NodeState::Master;
+    peer.seq = 1;
+
+    FakeDiscoveryTransport transport;
+    transport.to_deliver = {signBeacon(peer, "shared-secret")};
+    // A beacon signed with the WRONG secret must be ignored (defense in depth).
+    Beacon forged = peer;
+    forged.node_id = "evil";
+    forged.mac = "ee:ee:ee:ee:ee:ee";
+    forged.priority = 9999;
+    transport.to_deliver.push_back(signBeacon(forged, "attacker-secret"));
+
+    FakeVipManager vip_manager;
+    const DiscoveryContext discovery{
+        .transport = &transport, .self_mac = "aa:aa:aa:aa:aa:aa", .secret = "shared-secret"};
+
+    const auto result = runDaemonRuntimeLoopWithDiscovery(
+        DaemonLoopRequest{
+            .config = config,
+            .options = DaemonLoopOptions{.runtime_options = {.dry_run = true},
+                                         .max_iterations = 1,
+                                         .max_recorded_observations = 10}},
+        vip_manager, discovery);
+
+    runner.expect(!transport.broadcasts.empty(), "node broadcasts its own signed beacon");
+    runner.expect(!result.failover_decisions.empty(), "a failover decision was recorded");
+    if (!result.failover_decisions.empty()) {
+        const auto& peers = result.failover_decisions.back().peer_statuses;
+        runner.expect(contains_peer(peers, "node-b"),
+                      "verified discovered peer is folded into the election");
+        runner.expect(!contains_peer(peers, "evil"),
+                      "beacon signed with the wrong secret is rejected");
+        const auto& decision = result.failover_decisions.back().decision;
+        runner.expect(decision.selected_master.has_value() &&
+                          *decision.selected_master == "node-b",
+                      "the higher-priority discovered peer is elected master");
+    }
+}
+
 int main() {
     TestRunner runner;
 
@@ -5135,6 +5224,9 @@ int main() {
     });
     runner.run("discovery config parses and validates", [&runner] {
         testDiscoveryConfigParsesAndValidates(runner);
+    });
+    runner.run("discovery folds verified beacons into the election", [&runner] {
+        testDiscoveryFoldsBeaconsIntoElection(runner);
     });
 
     if (runner.failures() != 0) {
