@@ -68,9 +68,9 @@ export function validateConfigInput(input: ConfigInput): string[] {
   if (input.priority !== undefined && (!Number.isInteger(input.priority) || input.priority <= 0)) {
     errors.push("priority must be a positive integer");
   }
-  if (!Array.isArray(input.peers) || input.peers.length === 0) {
-    errors.push("at least one peer is required");
-  } else {
+  // Zero peers is allowed (clean-slate / single-node); the onboarding flow normally
+  // fills these in automatically from the current node's cluster (see cluster.ts).
+  if (Array.isArray(input.peers)) {
     input.peers.forEach((peer, index) => {
       if (!peer.id || peer.id.trim().length === 0) {
         errors.push(`peers[${index}].id is required and must be non-empty`);

@@ -166,6 +166,49 @@ export function getNode(id: string): NodeEntry | null {
   return null;
 }
 
+/** True when an apiBase points at the local host (so it represents "this" node). */
+function isLoopbackApiBase(apiBase: string): boolean {
+  try {
+    const host = new URL(apiBase).hostname;
+    return host === "127.0.0.1" || host === "localhost" || host === "::1";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The "current" node the dashboard is running alongside: the first roster entry
+ * whose apiBase is loopback (the auto-provisioned `local` node), falling back to
+ * the first node. Used to inherit the current node's peers during onboarding.
+ */
+export function localNode(): NodeEntry | null {
+  const nodes = listNodes();
+  for (const node of nodes) {
+    if (isLoopbackApiBase(node.apiBase)) {
+      return node;
+    }
+  }
+  return nodes[0] ?? null;
+}
+
+/**
+ * True when the dashboard holds a usable write token for at least one node — i.e.
+ * it is write-capable. Privileged actions (config apply, SSH onboarding) are gated
+ * on this. On a packaged install the token is auto-provisioned, so this is true
+ * out of the box; a read-only dashboard (no token) returns false.
+ */
+export function dashboardHasWriteAuthority(): boolean {
+  for (const node of listNodes()) {
+    if (typeof node.tokenEnv === "string" && node.tokenEnv.length > 0) {
+      const value = process.env[node.tokenEnv];
+      if (typeof value === "string" && value.length > 0) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 /**
  * Append a node to the roster JSON file, creating the file (and parent dir) if
  * missing. Used later by the onboarding wizard (#101).

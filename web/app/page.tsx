@@ -755,9 +755,13 @@ function validateWizard(form: WizardForm): string | null {
   if (form.vipAddress.trim().length === 0 || form.vipInterface.trim().length === 0) {
     return "VIP address and interface are required.";
   }
-  const peers = form.peers.filter((p) => p.id.trim().length > 0 && p.address.trim().length > 0);
-  if (peers.length === 0) {
-    return "At least one peer (id + address) is required.";
+  // Peers are optional here: the server adds the current node and its peers
+  // automatically. Any rows the operator does fill in must be complete.
+  const partialPeer = form.peers.some(
+    (p) => (p.id.trim().length > 0) !== (p.address.trim().length > 0)
+  );
+  if (partialPeer) {
+    return "Each extra peer needs both an id and an address (or leave the row blank).";
   }
   return null;
 }
@@ -901,66 +905,17 @@ function StepRow({ step }: { step: StepProgress }) {
   );
 }
 
-/** Parse the host out of a node's apiBase (e.g. "http://10.0.0.12:8743" -> "10.0.0.12"). */
-function hostFromApiBase(apiBase: string): string {
-  try {
-    return new URL(apiBase).hostname;
-  } catch {
-    return "";
-  }
-}
-
-/** Loopback hosts are only reachable from the same machine, so not usable as a peer address. */
-function isLoopbackHost(host: string): boolean {
-  return host === "" || host === "127.0.0.1" || host === "localhost" || host === "::1";
-}
-
-/** Default heartbeat port (matches the daemon's `[heartbeat].bind` default of 0.0.0.0:7432). */
-const DEFAULT_HEARTBEAT_PORT = 7432;
-
-/**
- * Seed the onboarding peer list from the dashboard's current fleet — every node
- * the dashboard already knows about, including the node hosting the dashboard —
- * so a freshly onboarded child joins the existing cluster instead of having its
- * peers entered by hand. Heartbeat addresses are derived from each node's API
- * host plus the default heartbeat port; the operator can still edit them.
- *
- * The current node usually appears with a loopback apiBase (the dashboard reads
- * its own node over 127.0.0.1), which is NOT reachable from the child — we keep
- * its row but leave the address blank for the operator to fill with this node's
- * reachable IP.
- */
-function peersFromFleet(fleet: NodeSummary[]): PeerInput[] {
-  const peers: PeerInput[] = [];
-  const seen = new Set<string>();
-  for (const node of fleet) {
-    const id = (node.label ?? node.id).trim();
-    if (id.length === 0 || seen.has(id)) {
-      continue;
-    }
-    seen.add(id);
-    const host = hostFromApiBase(node.apiBase);
-    const address = isLoopbackHost(host) ? "" : `${host}:${DEFAULT_HEARTBEAT_PORT}`;
-    peers.push({ id, address });
-  }
-  return peers.length > 0 ? peers : [{ id: "", address: "" }];
-}
-
 function OnboardWizard({
   onClose,
-  onSucceeded,
-  fleet
+  onSucceeded
 }: {
   onClose: () => void;
   onSucceeded: () => void;
-  fleet: NodeSummary[];
 }) {
-  // Prefill the peer list from the current fleet + the node hosting the dashboard,
-  // so the child is onboarded as a member of the existing cluster.
-  const [form, setForm] = useState<WizardForm>(() => ({
-    ...emptyWizardForm(),
-    peers: peersFromFleet(fleet)
-  }));
+  // Peers are filled in automatically on the server (the new node inherits the
+  // current node's peers + the current node itself), so the form starts with an
+  // empty list; the operator only adds EXTRA peers here if needed.
+  const [form, setForm] = useState<WizardForm>(emptyWizardForm);
   const [submitting, setSubmitting] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [steps, setSteps] = useState<StepProgress[]>([]);
@@ -1062,9 +1017,9 @@ function OnboardWizard({
 
         <p className="configHint">
           Onboarding connects to the target over SSH, installs easy-failover,
-          writes its config, and starts it. It is disabled unless{" "}
-          <code>EASY_FAILOVER_ONBOARD_ENABLED=true</code> is set on the dashboard
-          server. Secrets you enter here are sent once and never shown back.
+          writes its config, and starts it. It requires the dashboard&apos;s write
+          token (set <code>EASY_FAILOVER_ONBOARD_ENABLED=false</code> to force it
+          off). Secrets you enter here are sent once and never shown back.
         </p>
 
         <div className="configForm">
@@ -1231,10 +1186,9 @@ function OnboardWizard({
           <div className="configSection">
             <h3>Peers</h3>
             <p className="configHint">
-              Prefilled from this dashboard&apos;s fleet plus the current node, so the new node
-              joins the existing cluster. Addresses are <code>host:7432</code> (the heartbeat port) —
-              edit if a node uses a different one. The current node&apos;s address is blank because
-              the dashboard only knows it as localhost; set this node&apos;s reachable IP.
+              The new node automatically inherits this node&apos;s peers plus this node itself
+              (addressed at the IP that routes to it), so it joins the existing cluster. Add extra
+              peers below only if you need them — otherwise leave this empty.
             </p>
             {form.peers.map((peer, index) => (
               <div className="peerEditRow" key={index}>
@@ -1755,14 +1709,13 @@ export default function DashboardPage() {
         <span>API base: {apiBase}</span>
         <span>
           Config edits apply on daemon restart. Write tokens stay server-side
-          and never reach the browser. Onboarding is disabled unless{" "}
-          <code>EASY_FAILOVER_ONBOARD_ENABLED=true</code> on the dashboard server.
+          and never reach the browser. Onboarding requires the dashboard&apos;s
+          write token (auto-provisioned on a packaged install).
         </span>
       </footer>
 
       {wizardOpen ? (
         <OnboardWizard
-          fleet={nodes}
           onClose={() => setWizardOpen(false)}
           onSucceeded={() => refreshNodes(true)}
         />
