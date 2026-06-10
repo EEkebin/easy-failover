@@ -50,7 +50,7 @@ Architecture: all
 Maintainer: ${MAINTAINER}
 Section: admin
 Priority: optional
-Depends: easy-failover, cockpit-bridge
+Depends: easy-failover, cockpit, cockpit-bridge
 Description: ${DESC_SHORT}
  A Cockpit module for managing an easy-failover node from the Cockpit web
  console. It shows the local node's failover status and lets an authenticated
@@ -77,6 +77,7 @@ Summary:        ${DESC_SHORT}
 License:        Apache-2.0
 BuildArch:      noarch
 Requires:       easy-failover
+Requires:       cockpit
 Requires:       cockpit-bridge
 
 %description

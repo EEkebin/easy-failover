@@ -98,7 +98,7 @@ frontend you want; the daemon is pulled in automatically:**
 
 The daemon `.deb`/`.rpm` are built for **amd64** and **arm64**; the Cockpit plugin is
 architecture-independent. Your package manager pulls in the runtime dependencies (`iproute2`,
-`iputils-arping`; `nodejs >= 20.9` for the dashboard; `cockpit-bridge` for the plugin).
+`iputils-arping`; `nodejs >= 20.9` for the dashboard; `cockpit` + `cockpit-bridge` for the plugin).
 
 > The dashboard needs **Node.js ≥ 20.9** (Next.js 16). Most current distros ship a new-enough Node,
 > but some older LTS releases (e.g. Ubuntu 24.04, default Node 18) don't — there, add a newer Node
