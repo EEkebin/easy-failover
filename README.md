@@ -87,34 +87,44 @@ Prebuilt `.deb` and `.rpm` packages are published to GitHub:
   tracks every push to `main` (version `YYYY.MM.DD.<build>`, e.g. `2026.06.08.342`);
 - tagged [stable releases](https://github.com/EEkebin/easy-failover/releases) (`vX.Y.Z`).
 
-Packages are built for **amd64** and **arm64** (daemon + dashboard). Download one for your
-architecture and install it with your package manager, or build a package yourself — either way the
-package manager pulls in the runtime dependencies (`iproute2`, `iputils-arping`, and
-`nodejs >= 20.9` for the dashboard).
+There are three packages — a daemon base and two optional frontends that depend on it. **Pick the
+frontend you want; the daemon is pulled in automatically:**
 
-> The bundled dashboard needs **Node.js ≥ 20.9** (Next.js 16). Most current distros ship a new-enough
-> Node, but some older LTS releases (e.g. Ubuntu 24.04, default Node 18) don't — there, add a newer
-> Node (e.g. NodeSource) before installing, or build a daemon-only package with
-> `EASY_FAILOVER_NO_DASHBOARD=1 ./scripts/package.sh`.
+| Install this | You get |
+| --- | --- |
+| `easy-failover` | the daemon only (no UI) |
+| `easy-failover-dashboard` | daemon **+** the bundled Next.js dashboard |
+| `easy-failover-cockpit` | daemon **+** the [Cockpit plugin](docs/cockpit-plugin.md) |
+
+The daemon `.deb`/`.rpm` are built for **amd64** and **arm64**; the Cockpit plugin is
+architecture-independent. Your package manager pulls in the runtime dependencies (`iproute2`,
+`iputils-arping`; `nodejs >= 20.9` for the dashboard; `cockpit-bridge` for the plugin).
+
+> The dashboard needs **Node.js ≥ 20.9** (Next.js 16). Most current distros ship a new-enough Node,
+> but some older LTS releases (e.g. Ubuntu 24.04, default Node 18) don't — there, add a newer Node
+> (e.g. NodeSource) before installing the dashboard package.
 
 ```sh
-./scripts/package.sh        # produces build-pkg/easy-failover_<ver>_amd64.deb (+ .rpm where rpmbuild exists)
-
-# Debian / Ubuntu
-sudo apt install ./build-pkg/easy-failover_*.deb
+# Debian / Ubuntu — daemon + dashboard (the daemon is pulled in as a dependency)
+sudo apt install ./easy-failover-dashboard_*.deb ./easy-failover_*.deb
 
 # Fedora / RHEL / Rocky
-sudo dnf install ./build-pkg/easy-failover-*.rpm
+sudo dnf install ./easy-failover-dashboard-*.rpm ./easy-failover-*.rpm
+
+# Daemon only: install just easy-failover_*.deb / easy-failover-*.rpm.
 ```
 
-Installing seeds `/etc/easy-failover/config.toml` from the example but does **not** auto-start the
-service. Edit the node config, validate it, then enable:
+Both the daemon and the dashboard **start automatically** on install. The daemon ships a clean-slate
+config (no VIP) and idles until you configure one; set the VIP via the dashboard onboarding or:
 
 ```sh
 sudoedit /etc/easy-failover/config.toml                      # set VIP, interface, peers
 easy-failover --config /etc/easy-failover/config.toml --validate-config
-sudo systemctl enable --now easy-failover.service            # only after the config is valid
+sudo systemctl restart easy-failover.service
 ```
+
+Build the packages yourself with `./scripts/package.sh` (daemon + dashboard `.deb`/`.rpm`) and
+`./scripts/package-cockpit.sh` (the Cockpit plugin).
 
 ### Build from source without packaging
 
@@ -135,11 +145,12 @@ s6 service files for source installs — see the per-init guides for
 [OpenRC](docs/service-openrc.md), [runit](docs/service-runit.md),
 [dinit](docs/service-dinit.md), and [s6](docs/service-s6.md).
 
-**The dashboard is included.** The package bundles an optional read-only Next.js dashboard that runs
-as its own unprivileged `easy-failover-dashboard` service (and is started automatically on install).
-The local API is on by default (`127.0.0.1`, read-only) so it works out of the box. See
-[running the dashboard](docs/dashboard-service.md) to configure it (listen address, which nodes to
-show). Don't want it? Build a daemon-only package with `EASY_FAILOVER_NO_DASHBOARD=1 ./scripts/package.sh`.
+**Frontends are separate packages.** The `easy-failover-dashboard` package adds a Next.js dashboard
+that runs as its own unprivileged `easy-failover-dashboard` service (started automatically, bound to
+localhost, with its Apply button auto-wired to the daemon's write token). The `easy-failover-cockpit`
+package adds a [Cockpit plugin](docs/cockpit-plugin.md) instead. Both depend on `easy-failover`, so
+installing either pulls in the daemon. Want neither? Just install `easy-failover`. See
+[running the dashboard](docs/dashboard-service.md) for configuration.
 
 ## Uninstallation
 

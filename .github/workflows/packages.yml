@@ -33,69 +33,59 @@ jobs:
       - name: Build the combined .deb
         run: ./scripts/package.sh
 
-      - name: Inspect package
+      - name: Inspect packages (daemon + dashboard)
         run: |
           set -euo pipefail
-          deb=$(ls build-pkg/easy-failover_*_amd64.deb)
-          dpkg-deb -I "$deb"
-          c=$(dpkg-deb -c "$deb")
-          # Use here-strings (not `echo | grep -q`): grep -q closes the pipe on first match and
-          # the upstream echo then fails with EPIPE, which `set -o pipefail` turns into a false error.
+          daemon_deb=$(ls build-pkg/easy-failover_*_amd64.deb)
+          dash_deb=$(ls build-pkg/easy-failover-dashboard_*_amd64.deb)
+          dpkg-deb -I "$daemon_deb"; dpkg-deb -I "$dash_deb"
+          dc=$(dpkg-deb -c "$daemon_deb")
+          wc=$(dpkg-deb -c "$dash_deb")
+          # Use here-strings (not `echo | grep -q`): grep -q closes the pipe on first match and the
+          # upstream echo then fails with EPIPE, which `set -o pipefail` turns into a false error.
           for f in /usr/bin/easy-failover \
                    /usr/lib/systemd/system/easy-failover.service \
-                   /usr/lib/systemd/system/easy-failover-dashboard.service \
-                   /usr/lib/easy-failover-dashboard/server.js \
-                   /etc/easy-failover/config.example.toml \
-                   /etc/easy-failover-dashboard/dashboard.env.example; do
-            grep -qE "${f}\$" <<<"$c" || { echo "::error::package missing $f"; exit 1; }
+                   /etc/easy-failover/config.example.toml; do
+            grep -qE "${f}\$" <<<"$dc" || { echo "::error::daemon package missing $f"; exit 1; }
           done
-          if grep -qE '/etc/(init\.d|sv|dinit\.d|s6)/' <<<"$c"; then
-            echo "::error::package unexpectedly contains alternative init-system files"; exit 1
+          # The daemon package must NOT carry any dashboard files (that is the split).
+          if grep -qE 'easy-failover-dashboard' <<<"$dc"; then
+            echo "::error::daemon package unexpectedly contains dashboard files"; exit 1
           fi
+          if grep -qE '/etc/(init\.d|sv|dinit\.d|s6)/' <<<"$dc"; then
+            echo "::error::daemon package unexpectedly contains alternative init-system files"; exit 1
+          fi
+          for f in /usr/lib/systemd/system/easy-failover-dashboard.service \
+                   /usr/lib/easy-failover-dashboard/server.js \
+                   /etc/easy-failover-dashboard/dashboard.env.example; do
+            grep -qE "${f}\$" <<<"$wc" || { echo "::error::dashboard package missing $f"; exit 1; }
+          done
+          dpkg-deb -f "$dash_deb" Depends | grep -qE 'easy-failover( |,|\()' \
+            || { echo "::error::dashboard package must depend on easy-failover"; exit 1; }
 
-      - name: Install (resolves iproute2 / iputils-arping / nodejs)
+      - name: Install daemon only (resolves iproute2 / iputils-arping)
         run: |
           set -euo pipefail
-          deb=$(ls build-pkg/easy-failover_*_amd64.deb)
-          sudo apt-get install -y "./$deb"
+          sudo apt-get install -y "./$(ls build-pkg/easy-failover_*_amd64.deb)"
 
-      - name: Verify install (daemon + dashboard + both services auto-started)
+      - name: Verify daemon-only install (no dashboard; write token provisioned)
         run: |
           set -euo pipefail
           test -x /usr/bin/easy-failover
           test -f /etc/easy-failover/config.toml                       # seeded by postinst
-          grep -qE '^\s*enabled\s*=\s*true' /etc/easy-failover/config.toml   # API on by default
-          test -f /usr/lib/systemd/system/easy-failover.service
-          test -f /usr/lib/easy-failover-dashboard/server.js
-          test -f /etc/easy-failover-dashboard/dashboard.env           # seeded by postinst
-          getent passwd easy-failover-dashboard                        # dashboard user created
+          grep -qE '^\s*enabled\s*=\s*true' /etc/easy-failover/config.toml
           easy-failover --config /etc/easy-failover/config.toml --validate-config
-
-          # Auto-provisioned write token + wiring.
-          test -f /etc/easy-failover/api.token                         # token generated
+          # Daemon-only: the dashboard must NOT be present.
+          ! getent passwd easy-failover-dashboard || { echo "::error::dashboard user present in daemon-only install"; exit 1; }
+          test ! -e /usr/lib/easy-failover-dashboard || { echo "::error::dashboard files present in daemon-only install"; exit 1; }
+          test ! -e /etc/easy-failover-dashboard || { echo "::error::dashboard config present in daemon-only install"; exit 1; }
+          # Auto-provisioned write token.
+          test -f /etc/easy-failover/api.token
           grep -qE '^\s*read_only\s*=\s*false' /etc/easy-failover/config.toml
           grep -qF 'auth_token_file = "/etc/easy-failover/api.token"' /etc/easy-failover/config.toml
-          sudo test -f /var/lib/easy-failover-dashboard/nodes.json     # roster seeded
-          sudo grep -q '"tokenEnv": "EASY_FAILOVER_TOKEN_LOCAL"' /var/lib/easy-failover-dashboard/nodes.json
-          sudo grep -qE '^EASY_FAILOVER_TOKEN_LOCAL=' /etc/easy-failover-dashboard/dashboard.env
-          # The dashboard env holds the secret, so it must not be world-readable.
-          perms="$(stat -c '%a' /etc/easy-failover-dashboard/dashboard.env)"
-          test "$perms" = "640" || { echo "::error::dashboard.env perms $perms (want 640)"; exit 1; }
-          # Both services are auto-enabled+started by postinst. The daemon idles (clean-slate
-          # config has no VIP) but its process stays up, so the unit is active.
-          systemctl is-active --quiet easy-failover-dashboard.service \
-            || { echo "::error::dashboard service not active"; journalctl -u easy-failover-dashboard --no-pager | tail -40; exit 1; }
           systemctl is-active --quiet easy-failover.service \
             || { echo "::error::daemon service not active"; journalctl -u easy-failover --no-pager | tail -40; exit 1; }
-          ok=0
-          for _ in $(seq 1 20); do
-            if curl -fsS -o /dev/null http://127.0.0.1:3000/; then ok=1; break; fi
-            sleep 1
-          done
-          test "$ok" = "1" || { echo "::error::dashboard did not serve a request"; exit 1; }
-
-          # End-to-end write-token check: the apply endpoint must reject an unauthenticated
-          # write and accept one bearing the provisioned token. Wait for the daemon API first.
+          # End-to-end write-token check: reject unauthenticated, accept the provisioned token.
           apiok=0
           for _ in $(seq 1 20); do
             if curl -fsS -o /dev/null http://127.0.0.1:8743/api/v1/status; then apiok=1; break; fi
@@ -114,23 +104,51 @@ jobs:
           grep -q '"applied"[: ]*true' <<<"$applied" \
             || { echo "::error::token-authenticated apply did not report applied:true"; exit 1; }
 
-      - name: Remove keeps config; purge removes everything
+      - name: Install dashboard (pulls in nodejs; daemon already present)
         run: |
           set -euo pipefail
+          sudo apt-get install -y "./$(ls build-pkg/easy-failover-dashboard_*_amd64.deb)"
+
+      - name: Verify dashboard install (user/env/roster wired; service serves)
+        run: |
+          set -euo pipefail
+          test -f /usr/lib/easy-failover-dashboard/server.js
+          test -f /etc/easy-failover-dashboard/dashboard.env
+          getent passwd easy-failover-dashboard
+          sudo test -f /var/lib/easy-failover-dashboard/nodes.json
+          sudo grep -q '"tokenEnv": "EASY_FAILOVER_TOKEN_LOCAL"' /var/lib/easy-failover-dashboard/nodes.json
+          # The dashboard gets the same token the daemon generated.
+          sudo grep -qE '^EASY_FAILOVER_TOKEN_LOCAL=' /etc/easy-failover-dashboard/dashboard.env
+          perms="$(stat -c '%a' /etc/easy-failover-dashboard/dashboard.env)"
+          test "$perms" = "640" || { echo "::error::dashboard.env perms $perms (want 640)"; exit 1; }
+          systemctl is-active --quiet easy-failover-dashboard.service \
+            || { echo "::error::dashboard service not active"; journalctl -u easy-failover-dashboard --no-pager | tail -40; exit 1; }
+          ok=0
+          for _ in $(seq 1 20); do
+            if curl -fsS -o /dev/null http://127.0.0.1:3000/; then ok=1; break; fi
+            sleep 1
+          done
+          test "$ok" = "1" || { echo "::error::dashboard did not serve a request"; exit 1; }
+
+      - name: Purge dashboard keeps the daemon; purge daemon removes everything
+        run: |
+          set -euo pipefail
+          sudo apt-get purge -y easy-failover-dashboard
+          test -x /usr/bin/easy-failover || { echo "::error::purging dashboard should not remove the daemon"; exit 1; }
+          test ! -e /etc/easy-failover-dashboard || { echo "::error::purge should remove dashboard config"; exit 1; }
+          test ! -e /var/lib/easy-failover-dashboard || { echo "::error::purge should remove dashboard state"; exit 1; }
+          ! getent passwd easy-failover-dashboard || { echo "::error::purge should remove the dashboard user"; exit 1; }
           sudo apt-get remove -y easy-failover
           test ! -e /usr/bin/easy-failover
           test -f /etc/easy-failover/config.toml || { echo "::error::remove should keep config"; exit 1; }
           sudo apt-get purge -y easy-failover
           test ! -e /etc/easy-failover || { echo "::error::purge should remove /etc/easy-failover"; exit 1; }
-          test ! -e /etc/easy-failover-dashboard || { echo "::error::purge should remove dashboard config"; exit 1; }
-          test ! -e /var/lib/easy-failover-dashboard || { echo "::error::purge should remove dashboard state"; exit 1; }
-          ! getent passwd easy-failover-dashboard || { echo "::error::purge should remove the dashboard user"; exit 1; }
 
-      - name: Upload .deb artifact
+      - name: Upload .deb artifacts
         uses: actions/upload-artifact@v6
         with:
           name: easy-failover-deb
-          path: build-pkg/easy-failover_*_amd64.deb
+          path: build-pkg/easy-failover*_amd64.deb
           if-no-files-found: error
 
   rpm:
@@ -146,46 +164,64 @@ jobs:
       - name: Install build tools
         run: dnf install -y cmake gcc-c++ make rpm-build git nodejs npm
 
-      - name: Build the combined .rpm
+      - name: Build the .rpm packages
         run: ./scripts/package.sh
 
-      - name: Inspect package
+      - name: Identify + inspect packages (daemon + dashboard)
         run: |
-          set -euo pipefail
-          rpm_file=$(ls build-pkg/easy-failover-*.rpm)
-          name=$(rpm -qp --queryformat '%{NAME}' "$rpm_file")
-          test "$name" = "easy-failover" || { echo "::error::unexpected RPM name: $name"; exit 1; }
-          files=$(rpm -qpl "$rpm_file")
-          grep -qE '/usr/lib/easy-failover-dashboard/server\.js$' <<<"$files"
-          grep -qE '/usr/lib/systemd/system/easy-failover-dashboard\.service$' <<<"$files"
+          set -e
+          daemon_rpm=
+          dash_rpm=
+          for f in build-pkg/easy-failover-*.rpm; do
+            n=$(rpm -qp --queryformat '%{NAME}' "$f")
+            if [ "$n" = easy-failover ]; then daemon_rpm=$f; fi
+            if [ "$n" = easy-failover-dashboard ]; then dash_rpm=$f; fi
+          done
+          if [ -z "$daemon_rpm" ] || [ -z "$dash_rpm" ]; then
+            echo "::error::expected two rpms (daemon=$daemon_rpm dashboard=$dash_rpm)"; exit 1
+          fi
+          echo "DAEMON_RPM=$daemon_rpm" >> "$GITHUB_ENV"
+          echo "DASH_RPM=$dash_rpm" >> "$GITHUB_ENV"
+          # The daemon rpm must not carry dashboard files.
+          if rpm -qpl "$daemon_rpm" | grep -qE 'easy-failover-dashboard'; then
+            echo "::error::daemon rpm contains dashboard files"; exit 1
+          fi
+          if ! rpm -qpl "$dash_rpm" | grep -qE '/usr/lib/easy-failover-dashboard/server\.js$'; then
+            echo "::error::dashboard rpm missing server.js"; exit 1
+          fi
+          if ! rpm -qp --requires "$dash_rpm" | grep -qE '^easy-failover([[:space:]]|$)'; then
+            echo "::error::dashboard rpm must require easy-failover"; exit 1
+          fi
 
-      - name: Install (resolves iproute / iputils / nodejs)
-        run: |
-          set -euo pipefail
-          rpm_file=$(ls build-pkg/easy-failover-*.rpm)
-          dnf install -y "./$rpm_file"
+      - name: Install daemon only
+        run: dnf install -y "./$DAEMON_RPM"
 
-      - name: Verify install
+      - name: Verify daemon-only install (no dashboard; token provisioned)
         run: |
           set -euo pipefail
           test -x /usr/bin/easy-failover
           test -f /etc/easy-failover/config.toml
-          test -f /usr/lib/easy-failover-dashboard/server.js
-          getent passwd easy-failover-dashboard
           easy-failover --config /etc/easy-failover/config.toml --validate-config
-
-          # Auto-provisioned write token + wiring (scriptlet runs during dnf install).
+          ! getent passwd easy-failover-dashboard || { echo "::error::dashboard user present in daemon-only install"; exit 1; }
+          test ! -e /usr/lib/easy-failover-dashboard || { echo "::error::dashboard files present in daemon-only install"; exit 1; }
           test -f /etc/easy-failover/api.token
           grep -qE '^\s*read_only\s*=\s*false' /etc/easy-failover/config.toml
           grep -qF 'auth_token_file = "/etc/easy-failover/api.token"' /etc/easy-failover/config.toml
+
+      - name: Install dashboard (requires the daemon, already present)
+        run: dnf install -y "./$DASH_RPM"
+
+      - name: Verify dashboard install (wiring + standalone server serves)
+        run: |
+          set -euo pipefail
+          test -f /usr/lib/easy-failover-dashboard/server.js
+          getent passwd easy-failover-dashboard
           test -f /var/lib/easy-failover-dashboard/nodes.json
           grep -q '"tokenEnv": "EASY_FAILOVER_TOKEN_LOCAL"' /var/lib/easy-failover-dashboard/nodes.json
           grep -qE '^EASY_FAILOVER_TOKEN_LOCAL=' /etc/easy-failover-dashboard/dashboard.env
           perms="$(stat -c '%a' /etc/easy-failover-dashboard/dashboard.env)"
           test "$perms" = "640" || { echo "::error::dashboard.env perms $perms (want 640)"; exit 1; }
-
-          # systemd isn't running in the container, so the service isn't started here; the
-          # standalone server itself is smoke-tested directly.
+          # systemd isn't running in the container, so smoke-test the standalone server directly.
           node_bin=$(command -v node || command -v nodejs)
           runuser -u easy-failover-dashboard -- env PORT=3000 HOSTNAME=127.0.0.1 \
             "$node_bin" /usr/lib/easy-failover-dashboard/server.js &
@@ -196,16 +232,18 @@ jobs:
           done
           test "$ok" = "1" || { echo "::error::dashboard did not serve a request"; exit 1; }
 
-      - name: Erase removes config and user
+      - name: Erase dashboard keeps daemon; erase daemon removes config
         run: |
           set -euo pipefail
+          dnf remove -y easy-failover-dashboard
+          test -x /usr/bin/easy-failover || { echo "::error::erasing dashboard should not remove the daemon"; exit 1; }
+          test ! -e /etc/easy-failover-dashboard || { echo "::error::erase should remove dashboard config"; exit 1; }
+          test ! -e /var/lib/easy-failover-dashboard || { echo "::error::erase should remove dashboard state"; exit 1; }
           dnf remove -y easy-failover
           test ! -e /usr/bin/easy-failover
           test ! -e /etc/easy-failover || { echo "::error::erase should remove /etc/easy-failover"; exit 1; }
-          test ! -e /etc/easy-failover-dashboard || { echo "::error::erase should remove dashboard config"; exit 1; }
-          test ! -e /var/lib/easy-failover-dashboard || { echo "::error::erase should remove dashboard state"; exit 1; }
 
-      - name: Upload .rpm artifact
+      - name: Upload .rpm artifacts
         uses: actions/upload-artifact@v6
         with:
           name: easy-failover-rpm

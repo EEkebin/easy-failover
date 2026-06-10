@@ -1,10 +1,21 @@
 # Distro Packaging Notes
 
-easy-failover builds a single `.deb`/`.rpm` (daemon **and** dashboard) via CPack, driven from the
-CMake `install()` rules. Build it with `scripts/package.sh` (needs a C++ toolchain plus Node.js/npm
-for the bundled dashboard; the `.deb` needs `dpkg-deb`, the `.rpm` needs `rpmbuild`). Set
-`EASY_FAILOVER_NO_DASHBOARD=1` for a daemon-only package. These notes record the layout and the
-package lifecycle.
+easy-failover builds **two** `.deb`/`.rpm` packages from one CPack run (component packaging,
+`CPACK_COMPONENTS_GROUPING=IGNORE`), driven from the CMake `install()` rules:
+
+- **`easy-failover`** — the daemon (binary, example config, systemd unit, docs). Depends on
+  `iproute2`/`iputils-arping`.
+- **`easy-failover-dashboard`** — the bundled Next.js dashboard (standalone server, unit, env
+  example). Depends on `easy-failover` and `nodejs`.
+
+A third, independent package, **`easy-failover-cockpit`** (a Cockpit plugin, also `Depends:
+easy-failover`), is built separately by `scripts/package-cockpit.sh` — Cockpit plugins are static
+assets, so it is architecture-independent and not part of the CMake build.
+
+Build the daemon + dashboard packages with `scripts/package.sh` (needs a C++ toolchain plus
+Node.js/npm for the dashboard; the `.deb` needs `dpkg-deb`, the `.rpm` needs `rpmbuild`). Set
+`EASY_FAILOVER_NO_DASHBOARD=1` to build only the `easy-failover` daemon package. These notes record
+the layout and the package lifecycle.
 
 ## Versioning and releases
 
@@ -19,8 +30,8 @@ package lifecycle.
 
 ## Architectures
 
-- **amd64** and **arm64** — built natively (GitHub `ubuntu-24.04` / `ubuntu-24.04-arm` runners), the
-  full combined package (`.deb` and `.rpm`).
+- **amd64** and **arm64** — built natively (GitHub `ubuntu-24.04` / `ubuntu-24.04-arm` runners), both
+  the daemon and dashboard packages (`.deb` and `.rpm`).
 - **riscv64** — disabled for now. The emulated (QEMU) build is slow, and Next.js 16 ships no riscv64
   native binding for Turbopack or `next-swc` (the WASM `next-swc` fallback crashes,
   `RuntimeError: unreachable`, under emulated riscv64), so there is no riscv64 dashboard. The daemon
@@ -29,10 +40,10 @@ package lifecycle.
 
 ## Scope
 
-The package reuses the CMake install output via CPack components, grouped into one package: the
-`daemon` component (binary, example config, systemd unit, docs) and the `dashboard` component
-(standalone Next.js server, its unit, env example). The OpenRC/runit/dinit/s6 service files are their
-own components, kept out of the package but available for source installs via
+The packages reuse the CMake install output via CPack components, one package per component
+(`GROUPING=IGNORE`): the `daemon` component → `easy-failover`, and the `dashboard` component →
+`easy-failover-dashboard` (which `Depends: easy-failover`). The OpenRC/runit/dinit/s6 service files
+are their own components, kept out of the packages but available for source installs via
 `cmake --install --component <name>`. The source tarball ships the `daemon` component only.
 
 Not yet covered here: official distro-repository submission (lintian/rpmlint-clean `debian/` and
@@ -40,13 +51,17 @@ Not yet covered here: official distro-repository submission (lintian/rpmlint-cle
 
 ## Lifecycle (maintainer scripts)
 
-- **install** (`postinst` / `%post`): seed `/etc/easy-failover/config.toml` from the shipped example
-  if absent; `systemctl daemon-reload`. The service is **not** auto-started — edit and validate the
-  config first.
-- **remove**: the service is stopped and, if this host owns the VIP, it is released
-  (`easy-failover --release-vip`, best-effort).
-- **config removal**: `apt purge` removes `/etc/easy-failover` on Debian/Ubuntu (plain `apt remove`
-  keeps it, per Debian convention); on RPM, erase removes it.
+- **daemon install** (`postinst` / `%post`): seed `/etc/easy-failover/config.toml` from the example
+  if absent; generate a write token (`/etc/easy-failover/api.token`) and enable token-auth write
+  mode on a freshly seeded config; `systemctl daemon-reload`; enable + start the daemon. It ships a
+  clean-slate config (no VIP) and **idles** until configured, so auto-start is safe.
+- **dashboard install** (separate package): create the `easy-failover-dashboard` user, seed its env,
+  copy in the daemon's write token + a local roster entry, enable + start the dashboard service.
+- **remove**: the daemon package stops the daemon and, if this host owns the VIP, releases it
+  (`easy-failover --release-vip`, best-effort); the dashboard package stops its own service.
+- **config removal**: `apt purge` removes `/etc/easy-failover` (daemon, incl. the token) and
+  `/etc/easy-failover-dashboard` + `/var/lib/easy-failover-dashboard` (dashboard) on Debian/Ubuntu
+  (plain `apt remove` keeps config, per Debian convention); on RPM, erase removes them.
 
 ## Installed Files
 
